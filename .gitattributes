@@ -1,0 +1,10 @@
+# Normalize line endings: repo stores LF, checkout is platform-native for
+# most files. Keeps the Linux (Railway) deploy consistent with Windows dev.
+* text=auto eol=lf
+
+# Binary assets — never munge.
+*.ico binary
+*.png binary
+*.jpg binary
+*.woff binary
+*.woff2 binary

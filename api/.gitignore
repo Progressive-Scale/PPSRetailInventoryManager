@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+# Angular build copied here for single-service production
+client/
+*.tsbuildinfo

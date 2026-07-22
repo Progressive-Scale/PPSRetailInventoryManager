@@ -1,0 +1,27 @@
+# Local development database.
+# Brings up a Postgres instance matching api/.env.example's DATABASE_URL.
+#
+#   docker compose up -d      # start
+#   docker compose down       # stop (keeps data)
+#   docker compose down -v    # stop and wipe data
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pps-retail-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pps
+      POSTGRES_PASSWORD: pps
+      POSTGRES_DB: pps_retail
+    ports:
+      - "5432:5432"
+    volumes:
+      - pps_retail_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pps -d pps_retail"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pps_retail_pgdata:
