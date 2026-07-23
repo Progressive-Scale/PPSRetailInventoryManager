@@ -8,31 +8,31 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { SyncApiKeyGuard } from './sync-api-key.guard';
+import { ApiKeyGuard } from './api-key.guard';
+import { ApiCompany } from './api-company.decorator';
 import { SyncService } from './sync.service';
-import { SyncPushDto } from './dto/sync-push.dto';
-import { SyncAckDto } from './dto/sync-ack.dto';
+import { HandoffsDto, ReturnsAckDto } from './dto/sync.dto';
 
-@UseGuards(SyncApiKeyGuard)
+@UseGuards(ApiKeyGuard)
 @Controller('sync')
 export class SyncController {
-  constructor(private readonly service: SyncService) {}
+  constructor(private readonly sync: SyncService) {}
 
-  @Post('push')
+  @Post('handoffs')
   @HttpCode(HttpStatus.OK)
-  push(@Body() dto: SyncPushDto) {
-    return this.service.push(dto);
+  handoffs(@ApiCompany() companyId: number, @Body() dto: HandoffsDto) {
+    return this.sync.handoffs(companyId, dto.handoffs);
   }
 
-  @Get('pending')
-  pending(@Query('limit') limit?: string) {
-    const parsed = limit ? Number(limit) : undefined;
-    return this.service.pending(Number.isFinite(parsed) ? parsed : undefined);
+  @Get('returns')
+  returns(@ApiCompany() companyId: number, @Query('limit') limit?: string) {
+    const n = limit ? Number(limit) : undefined;
+    return this.sync.pendingReturns(companyId, Number.isFinite(n) ? n : undefined);
   }
 
-  @Post('ack')
+  @Post('returns/ack')
   @HttpCode(HttpStatus.OK)
-  ack(@Body() dto: SyncAckDto) {
-    return this.service.ack(dto.ids);
+  ackReturns(@ApiCompany() companyId: number, @Body() dto: ReturnsAckDto) {
+    return this.sync.ackReturns(companyId, dto.ids);
   }
 }

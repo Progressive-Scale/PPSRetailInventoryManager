@@ -1,17 +1,28 @@
-export type Role = 'ADMIN' | 'STORE_USER';
+export type Role = 'PLATFORM_ADMIN' | 'COMPANY_ADMIN' | 'STORE_USER';
 
-/** Shape of the JWT payload we sign. */
 export interface JwtPayload {
   sub: number;
-  email: string;
+  companyId: number | null;
   storeId: number | null;
   role: Role;
 }
 
-/** The authenticated user attached to the request by JwtAuthGuard. */
+/** Authenticated principal attached to the request by JwtAuthGuard. */
 export interface AuthUser {
   userId: number;
-  email: string;
+  companyId: number | null;
   storeId: number | null;
   role: Role;
+}
+
+/**
+ * Tenant data-access context. companyId is always present for tenant work.
+ * storeId is set for STORE_USER (pinned to one store); null means "all stores
+ * in the company" (COMPANY_ADMIN).
+ */
+export interface DataContext {
+  companyId: number;
+  storeId: number | null;
+  role: Role;
+  userId: number;
 }

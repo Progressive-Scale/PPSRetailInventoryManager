@@ -1,13 +1,24 @@
 // Seed script — run with: npm run db:seed  (tsx scripts/seed.ts)
+// Connects via DATABASE_URL (owner/superuser) so it can write across tenants.
 // Idempotent: safe to run multiple times.
 import 'dotenv/config';
 import { hash } from 'bcryptjs';
-import { eq } from 'drizzle-orm';
+import { createHash, randomBytes } from 'node:crypto';
+import { and, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from '../src/db/schema';
 
-const { stores, users, inventoryItems } = schema;
+const {
+  companies,
+  stores,
+  users,
+  apiKeys,
+  inventoryItems,
+  inventoryTransactions,
+} = schema;
+
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
@@ -18,70 +29,163 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString });
   const db = drizzle(pool, { schema });
 
-  // --- Demo store ---
+  // --- Platform admin (no company) ---
+  await db
+    .insert(users)
+    .values({
+      companyId: null,
+      storeId: null,
+      email: 'admin@platform.test',
+      passwordHash: await hash('platform123', 10),
+      role: 'PLATFORM_ADMIN',
+      status: 'ACTIVE',
+    })
+    .onConflictDoNothing({ target: [users.companyId, users.email] });
+
+  // --- Demo company ---
+  await db
+    .insert(companies)
+    .values({
+      name: 'Demo Retail Co',
+      slug: 'demo',
+      branding: { logoUrl: null, primaryColor: '#2563eb' },
+      status: 'ACTIVE',
+    })
+    .onConflictDoNothing({ target: companies.slug });
+
+  const [demo] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.slug, 'demo'))
+    .limit(1);
+  if (!demo) throw new Error('Failed to create/find demo company.');
+
+  // --- Store ---
   await db
     .insert(stores)
-    .values({ name: 'Demo Store', code: 'DEMO' })
-    .onConflictDoNothing({ target: stores.code });
+    .values({
+      companyId: demo.id,
+      name: 'Downtown',
+      code: 'DT',
+      externalBuildingId: 'BLDG-001',
+    })
+    .onConflictDoNothing({ target: [stores.companyId, stores.code] });
 
-  const [demoStore] = await db
+  const [store] = await db
     .select()
     .from(stores)
-    .where(eq(stores.code, 'DEMO'))
+    .where(and(eq(stores.companyId, demo.id), eq(stores.code, 'DT')))
     .limit(1);
+  if (!store) throw new Error('Failed to create/find demo store.');
 
-  if (!demoStore) throw new Error('Failed to create/find demo store.');
-
-  // --- Store user ---
+  // --- Company admin + store user ---
   await db
     .insert(users)
     .values({
-      email: 'demo@store.test',
-      passwordHash: await hash('password123', 10),
-      storeId: demoStore.id,
-      role: 'STORE_USER',
-    })
-    .onConflictDoNothing({ target: users.email });
-
-  // --- Admin user (not tied to a store; sees all) ---
-  await db
-    .insert(users)
-    .values({
-      email: 'admin@pps.test',
-      passwordHash: await hash('admin123', 10),
+      companyId: demo.id,
       storeId: null,
-      role: 'ADMIN',
+      email: 'admin@demo.test',
+      passwordHash: await hash('admin123', 10),
+      role: 'COMPANY_ADMIN',
+      status: 'ACTIVE',
     })
-    .onConflictDoNothing({ target: users.email });
+    .onConflictDoNothing({ target: [users.companyId, users.email] });
 
-  // --- A couple of demo items so the inventory page isn't empty ---
   await db
-    .insert(inventoryItems)
-    .values([
-      {
-        storeId: demoStore.id,
-        sku: 'SKU-001',
-        name: 'Widget',
-        description: 'A sample widget.',
-        quantity: 25,
-        price: '9.99',
-      },
-      {
-        storeId: demoStore.id,
-        sku: 'SKU-002',
-        name: 'Gadget',
-        description: 'A sample gadget.',
-        quantity: 10,
-        price: '19.50',
-      },
-    ])
-    .onConflictDoNothing({
-      target: [inventoryItems.storeId, inventoryItems.sku],
+    .insert(users)
+    .values({
+      companyId: demo.id,
+      storeId: store.id,
+      email: 'user@demo.test',
+      passwordHash: await hash('store123', 10),
+      role: 'STORE_USER',
+      status: 'ACTIVE',
+    })
+    .onConflictDoNothing({ target: [users.companyId, users.email] });
+
+  // --- Inventory items + ledger history ---
+  const now = new Date();
+  const itemSeeds = [
+    { serial: 'SN-1001', sku: 'TS-BLK-M', name: 'T-Shirt Black M', price: '19.99', sell: false },
+    { serial: 'SN-1002', sku: 'TS-BLK-L', name: 'T-Shirt Black L', price: '19.99', sell: false },
+    { serial: 'SN-1003', sku: 'HD-GRY-L', name: 'Hoodie Grey L', price: '49.00', sell: true },
+    { serial: 'SN-1004', sku: 'CAP-RED', name: 'Cap Red', price: '14.50', sell: false },
+  ];
+
+  for (const s of itemSeeds) {
+    const [item] = await db
+      .insert(inventoryItems)
+      .values({
+        companyId: demo.id,
+        storeId: store.id,
+        serial: s.serial,
+        sku: s.sku,
+        name: s.name,
+        price: s.price,
+        status: s.sell ? 'SOLD' : 'ON_HAND',
+        receivedAt: now,
+      })
+      .onConflictDoNothing({
+        target: [inventoryItems.companyId, inventoryItems.serial],
+      })
+      .returning();
+
+    if (!item) continue; // already seeded
+
+    // RECEIPT ledger row (as if delivered by the sync agent).
+    await db.insert(inventoryTransactions).values({
+      companyId: demo.id,
+      storeId: store.id,
+      itemId: item.id,
+      type: 'RECEIPT',
+      quantityDelta: 1,
+      note: 'Seeded handoff',
+      source: 'SYNC',
     });
 
-  console.log('Seed complete.');
-  console.log('  Store user: demo@store.test / password123  (store DEMO)');
-  console.log('  Admin:      admin@pps.test  / admin123');
+    // Optional SALE for history.
+    if (s.sell) {
+      await db.insert(inventoryTransactions).values({
+        companyId: demo.id,
+        storeId: store.id,
+        itemId: item.id,
+        type: 'SALE',
+        quantityDelta: -1,
+        note: 'Seeded sale',
+        source: 'PORTAL',
+      });
+    }
+  }
+
+  // --- API key for the demo company's sync agent (plaintext shown once) ---
+  const [existingKey] = await db
+    .select()
+    .from(apiKeys)
+    .where(and(eq(apiKeys.companyId, demo.id), isNull(apiKeys.revokedAt)))
+    .limit(1);
+
+  let plaintextKey: string | null = null;
+  if (!existingKey) {
+    plaintextKey = `pps_${randomBytes(24).toString('hex')}`;
+    await db.insert(apiKeys).values({
+      companyId: demo.id,
+      name: 'Demo sync agent',
+      keyHash: sha256(plaintextKey),
+    });
+  }
+
+  console.log('Seed complete.\n');
+  console.log('Platform admin (admin host):');
+  console.log('  admin@platform.test / platform123\n');
+  console.log('Demo company (slug "demo"):');
+  console.log('  Company admin: admin@demo.test / admin123');
+  console.log('  Store user:    user@demo.test  / store123\n');
+  if (plaintextKey) {
+    console.log('Demo sync API key (shown ONCE — copy it now):');
+    console.log(`  ${plaintextKey}\n`);
+  } else {
+    console.log('Demo sync API key already exists (plaintext not recoverable).\n');
+  }
 
   await pool.end();
 }

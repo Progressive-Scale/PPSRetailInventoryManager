@@ -22,13 +22,11 @@ async function bootstrap() {
   const isProd = process.env.NODE_ENV === 'production';
 
   if (isProd) {
-    // Serve the built Angular app so the whole thing is ONE Railway service.
-    // dist/main.js -> ../client == api/client (populated by scripts/copy-client.mjs).
+    // Serve the built Angular app so the whole thing is ONE service.
     const clientDir = join(__dirname, '..', 'client');
     if (existsSync(join(clientDir, 'index.html'))) {
       const server = app.getHttpAdapter().getInstance();
       server.use(express.static(clientDir));
-      // SPA fallback: any non-/api GET returns index.html (client-side routing).
       server.use((req, res, next) => {
         if (req.method === 'GET' && !req.path.startsWith('/api')) {
           res.sendFile(join(clientDir, 'index.html'));
@@ -38,16 +36,13 @@ async function bootstrap() {
       });
       logger.log(`Serving static client from ${clientDir}`);
     } else {
-      logger.warn(
-        `No built client at ${clientDir}; run "npm run build" from the repo root.`,
-      );
+      logger.warn(`No built client at ${clientDir}; run "npm run build".`);
     }
   } else {
-    // Dev: Angular runs on :4200 with a proxy, but allow direct cross-origin too.
+    // Dev: allow the Angular dev server (and tenant subdomains) cross-origin.
     app.enableCors({ origin: true, credentials: true });
   }
 
-  // Railway assigns PORT; fall back to 3000 for local dev.
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);
   logger.log(`API listening on port ${port} (routes under /api)`);

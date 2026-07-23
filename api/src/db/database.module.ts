@@ -1,9 +1,10 @@
-import { Global, Module, Logger } from '@nestjs/common';
+import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from './schema';
 import { DRIZZLE } from './drizzle.constants';
+import { TenantDbService } from './tenant-db.service';
 
 @Global()
 @Module({
@@ -13,20 +14,29 @@ import { DRIZZLE } from './drizzle.constants';
       provide: DRIZZLE,
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const connectionString = config.get<string>('DATABASE_URL');
+        const logger = new Logger('Database');
+        // Runtime connection MUST be a non-superuser role for RLS to apply.
+        const appUrl = config.get<string>('APP_DATABASE_URL');
+        const ownerUrl = config.get<string>('DATABASE_URL');
+        const connectionString = appUrl ?? ownerUrl;
         if (!connectionString) {
-          throw new Error(
-            'DATABASE_URL is not set. Copy api/.env.example to api/.env.',
+          throw new Error('APP_DATABASE_URL/DATABASE_URL is not set.');
+        }
+        if (!appUrl) {
+          logger.warn(
+            'APP_DATABASE_URL not set — using DATABASE_URL. If that role is a ' +
+              'superuser/owner, Postgres RLS will NOT be enforced.',
           );
         }
         const pool = new Pool({ connectionString });
         pool.on('error', (err) =>
-          new Logger('Database').error('Unexpected PG pool error', err.stack),
+          logger.error('Unexpected PG pool error', err.stack),
         );
         return drizzle(pool, { schema });
       },
     },
+    TenantDbService,
   ],
-  exports: [DRIZZLE],
+  exports: [DRIZZLE, TenantDbService],
 })
 export class DatabaseModule {}

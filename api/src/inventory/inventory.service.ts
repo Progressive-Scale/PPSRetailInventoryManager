@@ -1,188 +1,313 @@
 import {
   BadRequestException,
   ConflictException,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, isNull, SQL } from 'drizzle-orm';
-import { DRIZZLE, Database } from '../db/drizzle.constants';
-import { InventoryItem, inventoryItems, outboxChanges } from '../db/schema';
-import { AuthUser } from '../auth/auth.types';
-import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
-import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
+import { and, desc, eq, sql, SQL } from 'drizzle-orm';
+import { TenantDbService, Tx } from '../db/tenant-db.service';
+import {
+  InventoryItem,
+  inventoryItems,
+  inventoryTransactions,
+  ItemStatus,
+  outboxReturns,
+  stores,
+} from '../db/schema';
+import { DataContext } from '../auth/auth.types';
+import {
+  CreateItemDto,
+  ItemActionDto,
+  ListItemsQuery,
+  UpdateItemDto,
+} from './dto/inventory.dto';
+import { Paginated, resolvePaging } from '../common/pagination';
 
-type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
+type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
 
 @Injectable()
 export class InventoryService {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(private readonly tenantDb: TenantDbService) {}
 
-  /**
-   * Restricts a query to the store the user may access. ADMINs are unrestricted
-   * (they may optionally narrow to a single store).
-   */
-  private storeScope(user: AuthUser, adminStoreId?: number): SQL | undefined {
-    if (user.role === 'ADMIN') {
-      return adminStoreId !== undefined
-        ? eq(inventoryItems.storeId, adminStoreId)
-        : undefined;
-    }
-    if (user.storeId == null) {
-      throw new BadRequestException('User is not assigned to a store.');
-    }
-    return eq(inventoryItems.storeId, user.storeId);
-  }
+  // ---- helpers -----------------------------------------------------------
 
-  /** The store a write should target, enforcing the user's scope. */
-  private resolveWriteStoreId(user: AuthUser, requestedStoreId?: number): number {
-    if (user.role === 'ADMIN') {
-      const storeId = requestedStoreId ?? user.storeId ?? undefined;
-      if (storeId === undefined) {
-        throw new BadRequestException(
-          'ADMIN must specify storeId when creating inventory.',
-        );
+  /** Effective store filter for reads (STORE_USER pinned; COMPANY_ADMIN optional). */
+  private readStoreId(ctx: DataContext, requested?: number): number | null {
+    if (ctx.role === 'STORE_USER') {
+      if (ctx.storeId == null) {
+        throw new BadRequestException('User is not assigned to a store.');
       }
-      return storeId;
+      return ctx.storeId;
     }
-    if (user.storeId == null) {
-      throw new BadRequestException('User is not assigned to a store.');
-    }
-    // Store users may never write into another store's inventory.
-    if (requestedStoreId !== undefined && requestedStoreId !== user.storeId) {
-      throw new BadRequestException(
-        'Cannot create inventory for a different store.',
-      );
-    }
-    return user.storeId;
+    return requested ?? null; // COMPANY_ADMIN: null = all stores
   }
 
-  async findAll(user: AuthUser, adminStoreId?: number): Promise<InventoryItem[]> {
-    const scope = this.storeScope(user, adminStoreId);
-    return this.db
-      .select()
-      .from(inventoryItems)
-      .where(and(isNull(inventoryItems.deletedAt), scope))
-      .orderBy(desc(inventoryItems.updatedAt));
+  /** Store a write must target, enforcing scope. */
+  private writeStoreId(ctx: DataContext, requested?: number): number {
+    if (ctx.role === 'STORE_USER') {
+      if (ctx.storeId == null) {
+        throw new BadRequestException('User is not assigned to a store.');
+      }
+      if (requested !== undefined && requested !== ctx.storeId) {
+        throw new BadRequestException('Cannot write to another store.');
+      }
+      return ctx.storeId;
+    }
+    if (requested === undefined) {
+      throw new BadRequestException('storeId is required.');
+    }
+    return requested;
   }
 
-  async findOne(user: AuthUser, id: string): Promise<InventoryItem> {
-    const scope = this.storeScope(user);
-    const [item] = await this.db
+  private async loadItem(
+    tx: Tx,
+    ctx: DataContext,
+    id: string,
+  ): Promise<InventoryItem> {
+    const conds: SQL[] = [
+      eq(inventoryItems.id, id),
+      eq(inventoryItems.companyId, ctx.companyId),
+    ];
+    if (ctx.role === 'STORE_USER' && ctx.storeId != null) {
+      conds.push(eq(inventoryItems.storeId, ctx.storeId));
+    }
+    const [item] = await tx
       .select()
       .from(inventoryItems)
-      .where(
-        and(eq(inventoryItems.id, id), isNull(inventoryItems.deletedAt), scope),
-      )
+      .where(and(...conds))
       .limit(1);
-    if (!item) {
-      throw new NotFoundException('Inventory item not found.');
-    }
+    if (!item) throw new NotFoundException('Item not found.');
     return item;
   }
 
-  async create(
-    user: AuthUser,
-    dto: CreateInventoryItemDto,
-  ): Promise<InventoryItem> {
-    const storeId = this.resolveWriteStoreId(user, dto.storeId);
+  private async writeLedger(
+    tx: Tx,
+    ctx: DataContext,
+    item: InventoryItem,
+    type: TxType,
+    quantityDelta: number,
+    note?: string,
+  ): Promise<void> {
+    await tx.insert(inventoryTransactions).values({
+      companyId: item.companyId,
+      storeId: item.storeId,
+      itemId: item.id,
+      type,
+      quantityDelta,
+      note: note ?? null,
+      performedByUserId: ctx.userId,
+      source: 'PORTAL',
+    });
+  }
 
-    return this.db.transaction(async (tx) => {
-      const [item] = await tx
-        .insert(inventoryItems)
-        .values({
-          storeId,
-          sku: dto.sku,
-          name: dto.name,
-          description: dto.description ?? null,
-          quantity: dto.quantity ?? 0,
-          price: dto.price !== undefined ? String(dto.price) : '0',
-        })
-        .returning()
-        .catch(this.rethrowUniqueViolation);
+  // ---- reads -------------------------------------------------------------
 
-      await this.recordOutbox(tx, 'CREATE', item);
+  async list(
+    ctx: DataContext,
+    query: ListItemsQuery,
+  ): Promise<Paginated<InventoryItem>> {
+    const { limit, offset } = resolvePaging(query);
+    const storeId = this.readStoreId(ctx, query.storeId);
+
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const conds: SQL[] = [eq(inventoryItems.companyId, ctx.companyId)];
+      if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
+      if (query.status)
+        conds.push(eq(inventoryItems.status, query.status as ItemStatus));
+
+      const where = and(...conds);
+      const data = await tx
+        .select()
+        .from(inventoryItems)
+        .where(where)
+        .orderBy(desc(inventoryItems.updatedAt))
+        .limit(limit)
+        .offset(offset);
+
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(inventoryItems)
+        .where(where);
+
+      return { data, total: Number(count), limit, offset };
+    });
+  }
+
+  async findOne(ctx: DataContext, id: string): Promise<InventoryItem> {
+    return this.tenantDb.withCompany(ctx.companyId, (tx) =>
+      this.loadItem(tx, ctx, id),
+    );
+  }
+
+  // ---- writes ------------------------------------------------------------
+
+  async create(ctx: DataContext, dto: CreateItemDto): Promise<InventoryItem> {
+    const storeId = this.writeStoreId(ctx, dto.storeId);
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      let item: InventoryItem;
+      try {
+        [item] = await tx
+          .insert(inventoryItems)
+          .values({
+            companyId: ctx.companyId,
+            storeId,
+            serial: dto.serial,
+            sku: dto.sku,
+            name: dto.name,
+            description: dto.description ?? null,
+            price: dto.price !== undefined ? String(dto.price) : '0',
+            status: 'ON_HAND',
+            receivedAt: new Date(),
+          })
+          .returning();
+      } catch (err) {
+        if (this.isUnique(err)) {
+          throw new ConflictException(
+            'An item with that serial already exists for this company.',
+          );
+        }
+        throw err;
+      }
+      await this.writeLedger(tx, ctx, item, 'RECEIPT', 1, 'Created in portal');
       return item;
     });
   }
 
   async update(
-    user: AuthUser,
+    ctx: DataContext,
     id: string,
-    dto: UpdateInventoryItemDto,
+    dto: UpdateItemDto,
   ): Promise<InventoryItem> {
-    // Enforce scope + existence first (throws if not visible to this user).
-    await this.findOne(user, id);
-
-    const patch: Partial<typeof inventoryItems.$inferInsert> = {
-      updatedAt: new Date(),
-    };
-    if (dto.sku !== undefined) patch.sku = dto.sku;
-    if (dto.name !== undefined) patch.name = dto.name;
-    if (dto.description !== undefined) patch.description = dto.description;
-    if (dto.quantity !== undefined) patch.quantity = dto.quantity;
-    if (dto.price !== undefined) patch.price = String(dto.price);
-
-    return this.db.transaction(async (tx) => {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      await this.loadItem(tx, ctx, id); // scope + existence
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (dto.name !== undefined) patch.name = dto.name;
+      if (dto.description !== undefined) patch.description = dto.description;
+      if (dto.price !== undefined) patch.price = String(dto.price);
       const [item] = await tx
         .update(inventoryItems)
         .set(patch)
-        .where(and(eq(inventoryItems.id, id), isNull(inventoryItems.deletedAt)))
-        .returning()
-        .catch(this.rethrowUniqueViolation);
-
-      if (!item) {
-        throw new NotFoundException('Inventory item not found.');
-      }
-      await this.recordOutbox(tx, 'UPDATE', item);
+        .where(
+          and(
+            eq(inventoryItems.id, id),
+            eq(inventoryItems.companyId, ctx.companyId),
+          ),
+        )
+        .returning();
       return item;
+      // Note: metadata edits are not inventory *state* changes, so no ledger row.
     });
   }
 
-  async remove(user: AuthUser, id: string): Promise<InventoryItem> {
-    await this.findOne(user, id);
+  async sell(
+    ctx: DataContext,
+    id: string,
+    dto: ItemActionDto,
+  ): Promise<InventoryItem> {
+    return this.transition(ctx, id, {
+      from: ['ON_HAND'],
+      to: 'SOLD',
+      type: 'SALE',
+      delta: -1,
+      note: dto.note,
+    });
+  }
 
-    const now = new Date();
-    return this.db.transaction(async (tx) => {
+  async adjustOut(
+    ctx: DataContext,
+    id: string,
+    dto: ItemActionDto,
+  ): Promise<InventoryItem> {
+    return this.transition(ctx, id, {
+      from: ['ON_HAND', 'SOLD'],
+      to: 'ADJUSTED_OUT',
+      type: 'ADJUSTMENT',
+      delta: -1,
+      note: dto.note,
+    });
+  }
+
+  /** Return to warehouse: state change + ledger + outbox_returns row (one txn). */
+  async returnToWarehouse(
+    ctx: DataContext,
+    id: string,
+    dto: ItemActionDto,
+  ): Promise<InventoryItem> {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const current = await this.loadItem(tx, ctx, id);
+      if (!['ON_HAND', 'SOLD'].includes(current.status)) {
+        throw new ConflictException(
+          `Cannot return an item that is ${current.status}.`,
+        );
+      }
       const [item] = await tx
         .update(inventoryItems)
-        .set({ deletedAt: now, updatedAt: now })
-        .where(and(eq(inventoryItems.id, id), isNull(inventoryItems.deletedAt)))
+        .set({ status: 'RETURNED_TO_WAREHOUSE', updatedAt: new Date() })
+        .where(eq(inventoryItems.id, id))
         .returning();
 
-      if (!item) {
-        throw new NotFoundException('Inventory item not found.');
-      }
-      await this.recordOutbox(tx, 'DELETE', item);
+      await this.writeLedger(tx, ctx, item, 'RETURN', -1, dto.note);
+
+      // Look up the store's ERP building id for the agent's payload.
+      const [store] = await tx
+        .select()
+        .from(stores)
+        .where(eq(stores.id, item.storeId))
+        .limit(1);
+
+      await tx.insert(outboxReturns).values({
+        companyId: item.companyId,
+        storeId: item.storeId,
+        itemId: item.id,
+        serial: item.serial,
+        payload: {
+          serial: item.serial,
+          sku: item.sku,
+          name: item.name,
+          storeId: item.storeId,
+          storeExternalBuildingId: store?.externalBuildingId ?? null,
+          returnedAt: item.updatedAt,
+          note: dto.note ?? null,
+        },
+      });
       return item;
     });
   }
 
-  /** Insert the change into the outbox within the same transaction. */
-  private async recordOutbox(
-    tx: Tx,
-    operation: 'CREATE' | 'UPDATE' | 'DELETE',
-    item: InventoryItem,
-  ): Promise<void> {
-    await tx.insert(outboxChanges).values({
-      storeId: item.storeId,
-      entity: 'inventory_items',
-      entityId: item.id,
-      operation,
-      payload: item,
+  private async transition(
+    ctx: DataContext,
+    id: string,
+    opts: {
+      from: ItemStatus[];
+      to: ItemStatus;
+      type: TxType;
+      delta: number;
+      note?: string;
+    },
+  ): Promise<InventoryItem> {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const current = await this.loadItem(tx, ctx, id);
+      if (!opts.from.includes(current.status)) {
+        throw new ConflictException(
+          `Cannot ${opts.type.toLowerCase()} an item that is ${current.status}.`,
+        );
+      }
+      const [item] = await tx
+        .update(inventoryItems)
+        .set({ status: opts.to, updatedAt: new Date() })
+        .where(eq(inventoryItems.id, id))
+        .returning();
+      await this.writeLedger(tx, ctx, item, opts.type, opts.delta, opts.note);
+      return item;
     });
   }
 
-  private rethrowUniqueViolation = (err: unknown): never => {
-    // Postgres unique_violation
-    if (
-      err &&
+  private isUnique(err: unknown): boolean {
+    return (
+      !!err &&
       typeof err === 'object' &&
       'code' in err &&
       (err as { code?: string }).code === '23505'
-    ) {
-      throw new ConflictException('An item with that SKU already exists.');
-    }
-    throw err;
-  };
+    );
+  }
 }

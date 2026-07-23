@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -13,47 +12,75 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { CurrentUser } from '../auth/current-user.decorator';
-import { AuthUser } from '../auth/auth.types';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { Ctx } from '../auth/current-user.decorator';
+import { DataContext } from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
-import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
-import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
+import {
+  CreateItemDto,
+  ItemActionDto,
+  ListItemsQuery,
+  UpdateItemDto,
+} from './dto/inventory.dto';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(['COMPANY_ADMIN', 'STORE_USER'])
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly service: InventoryService) {}
+  constructor(private readonly svc: InventoryService) {}
 
   @Get()
-  findAll(
-    @CurrentUser() user: AuthUser,
-    @Query('storeId') storeId?: string,
-  ) {
-    const adminStoreId =
-      storeId !== undefined && storeId !== '' ? Number(storeId) : undefined;
-    return this.service.findAll(user, adminStoreId);
+  list(@Ctx() ctx: DataContext, @Query() query: ListItemsQuery) {
+    return this.svc.list(ctx, query);
+  }
+
+  @Get(':id')
+  findOne(@Ctx() ctx: DataContext, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.svc.findOne(ctx, id);
   }
 
   @Post()
-  create(@CurrentUser() user: AuthUser, @Body() dto: CreateInventoryItemDto) {
-    return this.service.create(user, dto);
+  create(@Ctx() ctx: DataContext, @Body() dto: CreateItemDto) {
+    return this.svc.create(ctx, dto);
   }
 
   @Patch(':id')
   update(
-    @CurrentUser() user: AuthUser,
+    @Ctx() ctx: DataContext,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: UpdateInventoryItemDto,
+    @Body() dto: UpdateItemDto,
   ) {
-    return this.service.update(user, id, dto);
+    return this.svc.update(ctx, id, dto);
   }
 
-  @Delete(':id')
+  @Post(':id/sell')
   @HttpCode(HttpStatus.OK)
-  remove(
-    @CurrentUser() user: AuthUser,
+  sell(
+    @Ctx() ctx: DataContext,
     @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ItemActionDto,
   ) {
-    return this.service.remove(user, id);
+    return this.svc.sell(ctx, id, dto);
+  }
+
+  @Post(':id/return')
+  @HttpCode(HttpStatus.OK)
+  returnItem(
+    @Ctx() ctx: DataContext,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ItemActionDto,
+  ) {
+    return this.svc.returnToWarehouse(ctx, id, dto);
+  }
+
+  @Post(':id/adjust')
+  @HttpCode(HttpStatus.OK)
+  adjust(
+    @Ctx() ctx: DataContext,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ItemActionDto,
+  ) {
+    return this.svc.adjustOut(ctx, id, dto);
   }
 }
