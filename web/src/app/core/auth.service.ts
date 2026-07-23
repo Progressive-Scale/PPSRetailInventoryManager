@@ -17,13 +17,13 @@ export class AuthService {
   login(email: string, password: string): Observable<LoginResponse> {
     return this.http
       .post<LoginResponse>('/api/auth/login', { email, password })
-      .pipe(
-        tap((res) => {
-          localStorage.setItem(TOKEN_KEY, res.access_token);
-          localStorage.setItem(USER_KEY, JSON.stringify(res.user));
-          this._user.set(res.user);
-        }),
-      );
+      .pipe(tap((res) => this.persist(res)));
+  }
+
+  acceptInvite(token: string, password: string): Observable<LoginResponse> {
+    return this.http
+      .post<LoginResponse>('/api/auth/accept-invite', { token, password })
+      .pipe(tap((res) => this.persist(res)));
   }
 
   logout(): void {
@@ -34,6 +34,12 @@ export class AuthService {
 
   get token(): string | null {
     return localStorage.getItem(TOKEN_KEY);
+  }
+
+  private persist(res: LoginResponse): void {
+    localStorage.setItem(TOKEN_KEY, res.access_token);
+    localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+    this._user.set(res.user);
   }
 
   private readStoredUser(): AuthUser | null {

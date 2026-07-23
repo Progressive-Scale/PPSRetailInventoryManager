@@ -1,27 +1,28 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../../core/auth.service';
+import { ApiService } from '../../core/api.service';
+import { homePathForRole, isAdminHost } from '../../core/tenant';
 
 @Component({
   selector: 'app-login',
   imports: [FormsModule],
   template: `
-    <div class="login-wrap">
+    <div class="login-wrap" [style.--brand]="brandColor()">
       <form class="card" (ngSubmit)="submit()">
-        <h1>PPS Retail Inventory</h1>
-        <p class="sub">Sign in to manage your store's inventory.</p>
+        @if (logoUrl()) {
+          <img class="logo" [src]="logoUrl()" [alt]="title()" />
+        }
+        <h1>{{ title() }}</h1>
+        <p class="sub">
+          {{ adminHost ? 'Sign in to the platform console.' : 'Sign in to manage inventory.' }}
+        </p>
 
         <label>
           Email
-          <input
-            type="email"
-            name="email"
-            [(ngModel)]="email"
-            autocomplete="username"
-            required
-          />
+          <input type="email" name="email" [(ngModel)]="email" autocomplete="username" required />
         </label>
 
         <label>
@@ -65,9 +66,15 @@ import { AuthService } from '../../core/auth.service';
         background: var(--surface);
         box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
       }
+      .logo {
+        max-height: 48px;
+        object-fit: contain;
+        align-self: flex-start;
+      }
       h1 {
         margin: 0;
         font-size: 1.25rem;
+        color: var(--brand, var(--accent));
       }
       .sub {
         margin: 0 0 0.5rem;
@@ -89,6 +96,8 @@ import { AuthService } from '../../core/auth.service';
       }
       button {
         margin-top: 0.5rem;
+        background: var(--brand, var(--accent));
+        border-color: var(--brand, var(--accent));
       }
       .error {
         color: #b42318;
@@ -98,14 +107,34 @@ import { AuthService } from '../../core/auth.service';
     `,
   ],
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   private readonly auth = inject(AuthService);
+  private readonly api = inject(ApiService);
   private readonly router = inject(Router);
+
+  readonly adminHost = isAdminHost();
 
   email = '';
   password = '';
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+  readonly title = signal(this.adminHost ? 'Platform Admin' : 'PPS Retail Inventory');
+  readonly brandColor = signal<string | null>(null);
+  readonly logoUrl = signal<string | null>(null);
+
+  ngOnInit(): void {
+    if (this.adminHost) return;
+    this.api.branding().subscribe({
+      next: (b) => {
+        this.title.set(b.name);
+        this.brandColor.set(b.branding?.primaryColor ?? null);
+        this.logoUrl.set(b.branding?.logoUrl ?? null);
+      },
+      error: () => {
+        /* keep defaults if branding is unavailable */
+      },
+    });
+  }
 
   submit(): void {
     if (!this.email || !this.password) {
@@ -115,9 +144,9 @@ export class LoginComponent {
     this.loading.set(true);
     this.error.set(null);
     this.auth.login(this.email, this.password).subscribe({
-      next: () => {
+      next: (res) => {
         this.loading.set(false);
-        void this.router.navigate(['/']);
+        void this.router.navigate([homePathForRole(res.user.role)]);
       },
       error: (err: HttpErrorResponse) => {
         this.loading.set(false);

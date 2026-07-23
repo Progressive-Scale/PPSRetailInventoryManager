@@ -14,9 +14,12 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
     ? req.clone({ setHeaders: { Authorization: `Bearer ${token}` } })
     : req;
 
+  const isAuthCall =
+    req.url.includes('/auth/login') || req.url.includes('/auth/accept-invite');
+
   return next(authReq).pipe(
     catchError((err: HttpErrorResponse) => {
-      if (err.status === 401 && !req.url.includes('/auth/login')) {
+      if (err.status === 401 && !isAuthCall) {
         auth.logout();
         void router.navigate(['/login']);
       }
