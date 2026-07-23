@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm';
 import {
   bigserial,
+  boolean,
   index,
   integer,
   jsonb,
@@ -40,6 +41,18 @@ export const transactionType = pgEnum('transaction_type', [
 export const transactionSource = pgEnum('transaction_source', [
   'PORTAL',
   'SYNC',
+  'CYCLE_COUNT',
+]);
+export const cycleCountStatus = pgEnum('cycle_count_status', [
+  'OPEN',
+  'CLOSED',
+  'CANCELLED',
+]);
+export const cycleCountResolution = pgEnum('cycle_count_resolution', [
+  'SCANNED',
+  'COUNTED_BY_UPC',
+  'MARKED_SOLD',
+  'NEW_ITEM',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -183,6 +196,11 @@ export const inventoryItems = pgTable(
       .notNull()
       .default('0'),
     status: itemStatus('status').notNull().default('ON_HAND'),
+    // UPC / barcode for counting by product code.
+    upc: text('upc'),
+    // Set when an item was created/altered by a cycle count and needs an
+    // admin to review/complete it.
+    needsReview: boolean('needs_review').notNull().default(false),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -202,6 +220,7 @@ export const inventoryItems = pgTable(
       t.storeId,
       t.status,
     ),
+    index('inventory_items_company_upc_idx').on(t.companyId, t.upc),
   ],
 );
 
@@ -268,6 +287,63 @@ export const outboxReturns = pgTable(
   ],
 );
 
+// Cycle counts — a store-wide physical count session. Closing resolves the
+// store's ON_HAND items (present vs sold) in one transaction.
+export const cycleCounts = pgTable(
+  'cycle_counts',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    status: cycleCountStatus('status').notNull().default('OPEN'),
+    openedByUserId: integer('opened_by_user_id')
+      .notNull()
+      .references(() => users.id),
+    closedByUserId: integer('closed_by_user_id').references(() => users.id),
+    openedAt: timestamp('opened_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    expectedCount: integer('expected_count').notNull().default(0),
+    scannedCount: integer('scanned_count').notNull().default(0),
+    soldGeneratedCount: integer('sold_generated_count').notNull().default(0),
+  },
+  (t) => [
+    index('cycle_counts_company_store_idx').on(t.companyId, t.storeId),
+    index('cycle_counts_company_status_idx').on(t.companyId, t.status),
+  ],
+);
+
+// One line per item resolution within a cycle count (append-only in practice).
+export const cycleCountLines = pgTable(
+  'cycle_count_lines',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    cycleCountId: integer('cycle_count_id')
+      .notNull()
+      .references(() => cycleCounts.id),
+    itemId: uuid('item_id')
+      .notNull()
+      .references(() => inventoryItems.id),
+    serial: text('serial').notNull(),
+    resolution: cycleCountResolution('resolution').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('cc_lines_company_count_idx').on(t.companyId, t.cycleCountId),
+    index('cc_lines_company_resolution_idx').on(t.companyId, t.resolution),
+  ],
+);
+
 // ---------------------------------------------------------------------------
 // Relations
 // ---------------------------------------------------------------------------
@@ -312,9 +388,13 @@ export type ApiKey = typeof apiKeys.$inferSelect;
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
 export type OutboxReturn = typeof outboxReturns.$inferSelect;
+export type CycleCount = typeof cycleCounts.$inferSelect;
+export type CycleCountLine = typeof cycleCountLines.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
 export type ItemStatus = (typeof itemStatus.enumValues)[number];
+export type CycleCountResolution =
+  (typeof cycleCountResolution.enumValues)[number];
 
 // Every tenant-owned table, for the RLS migration + tenant-db assertions.
 export const TENANT_TABLES = [
@@ -325,4 +405,6 @@ export const TENANT_TABLES = [
   'inventory_items',
   'inventory_transactions',
   'outbox_returns',
+  'cycle_counts',
+  'cycle_count_lines',
 ] as const;

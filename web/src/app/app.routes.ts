@@ -29,6 +29,18 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/inventory/inventory').then((m) => m.InventoryComponent),
   },
   {
+    path: 'cycle-counts',
+    canActivate: [authGuard, roleGuard(['STORE_USER', 'COMPANY_ADMIN'])],
+    loadComponent: () =>
+      import('./pages/cycle-counts/cycle-counts').then((m) => m.CycleCountsComponent),
+  },
+  {
+    path: 'needs-review',
+    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
+    loadComponent: () =>
+      import('./pages/needs-review/needs-review').then((m) => m.NeedsReviewComponent),
+  },
+  {
     path: 'manage',
     canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
     loadComponent: () => import('./pages/manage/manage').then((m) => m.ManageComponent),

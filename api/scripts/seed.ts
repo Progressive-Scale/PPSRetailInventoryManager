@@ -16,6 +16,8 @@ const {
   apiKeys,
   inventoryItems,
   inventoryTransactions,
+  cycleCounts,
+  cycleCountLines,
 } = schema;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -106,12 +108,13 @@ async function main(): Promise<void> {
   // --- Inventory items + ledger history ---
   const now = new Date();
   const itemSeeds = [
-    { serial: 'SN-1001', sku: 'TS-BLK-M', name: 'T-Shirt Black M', price: '19.99', sell: false },
-    { serial: 'SN-1002', sku: 'TS-BLK-L', name: 'T-Shirt Black L', price: '19.99', sell: false },
-    { serial: 'SN-1003', sku: 'HD-GRY-L', name: 'Hoodie Grey L', price: '49.00', sell: true },
-    { serial: 'SN-1004', sku: 'CAP-RED', name: 'Cap Red', price: '14.50', sell: false },
+    { serial: 'SN-1001', sku: 'TS-BLK-M', name: 'T-Shirt Black M', price: '19.99', upc: '0001110001', sell: false },
+    { serial: 'SN-1002', sku: 'TS-BLK-L', name: 'T-Shirt Black L', price: '19.99', upc: '0001110002', sell: false },
+    { serial: 'SN-1003', sku: 'HD-GRY-L', name: 'Hoodie Grey L', price: '49.00', upc: '0001110003', sell: true },
+    { serial: 'SN-1004', sku: 'CAP-RED', name: 'Cap Red', price: '14.50', upc: '0001110004', sell: false },
   ];
 
+  const seededItems = new Map<string, typeof inventoryItems.$inferSelect>();
   for (const s of itemSeeds) {
     const [item] = await db
       .insert(inventoryItems)
@@ -122,6 +125,7 @@ async function main(): Promise<void> {
         sku: s.sku,
         name: s.name,
         price: s.price,
+        upc: s.upc,
         status: s.sell ? 'SOLD' : 'ON_HAND',
         receivedAt: now,
       })
@@ -131,6 +135,7 @@ async function main(): Promise<void> {
       .returning();
 
     if (!item) continue; // already seeded
+    seededItems.set(s.serial, item);
 
     // RECEIPT ledger row (as if delivered by the sync agent).
     await db.insert(inventoryTransactions).values({
@@ -153,6 +158,81 @@ async function main(): Promise<void> {
         quantityDelta: -1,
         note: 'Seeded sale',
         source: 'PORTAL',
+      });
+    }
+  }
+
+  // --- Demo CLOSED cycle count (once): scanned 2, marked 1 sold ---
+  const [ccExisting] = await db
+    .select()
+    .from(cycleCounts)
+    .where(eq(cycleCounts.companyId, demo.id))
+    .limit(1);
+  const [storeUser] = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.companyId, demo.id), eq(users.email, 'user@demo.test')))
+    .limit(1);
+
+  if (!ccExisting && storeUser) {
+    const bySerial = async (serial: string) =>
+      (
+        await db
+          .select()
+          .from(inventoryItems)
+          .where(
+            and(
+              eq(inventoryItems.companyId, demo.id),
+              eq(inventoryItems.serial, serial),
+            ),
+          )
+          .limit(1)
+      )[0];
+    const i1 = await bySerial('SN-1001');
+    const i2 = await bySerial('SN-1002');
+    const i4 = await bySerial('SN-1004');
+
+    if (i1 && i2 && i4) {
+      const [cc] = await db
+        .insert(cycleCounts)
+        .values({
+          companyId: demo.id,
+          storeId: store.id,
+          status: 'CLOSED',
+          openedByUserId: storeUser.id,
+          closedByUserId: storeUser.id,
+          closedAt: now,
+          expectedCount: 3,
+          scannedCount: 2,
+          soldGeneratedCount: 1,
+        })
+        .returning();
+
+      await db.insert(cycleCountLines).values([
+        { companyId: demo.id, cycleCountId: cc.id, itemId: i1.id, serial: i1.serial, resolution: 'SCANNED' },
+        { companyId: demo.id, cycleCountId: cc.id, itemId: i2.id, serial: i2.serial, resolution: 'SCANNED' },
+      ]);
+
+      // Item not accounted for -> sold by the cycle count.
+      await db
+        .update(inventoryItems)
+        .set({ status: 'SOLD', updatedAt: now })
+        .where(eq(inventoryItems.id, i4.id));
+      await db.insert(inventoryTransactions).values({
+        companyId: demo.id,
+        storeId: store.id,
+        itemId: i4.id,
+        type: 'SALE',
+        quantityDelta: -1,
+        note: `Cycle count #${cc.id}`,
+        source: 'CYCLE_COUNT',
+      });
+      await db.insert(cycleCountLines).values({
+        companyId: demo.id,
+        cycleCountId: cc.id,
+        itemId: i4.id,
+        serial: i4.serial,
+        resolution: 'MARKED_SOLD',
       });
     }
   }

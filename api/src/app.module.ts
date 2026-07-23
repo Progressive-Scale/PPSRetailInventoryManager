@@ -10,6 +10,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { CompanyModule } from './company/company.module';
 import { SyncModule } from './sync/sync.module';
 import { AdminModule } from './admin/admin.module';
+import { CycleCountsModule } from './cycle-counts/cycle-counts.module';
 import { AppThrottlerGuard } from './common/app-throttler.guard';
 
 @Module({
@@ -23,6 +24,7 @@ import { AppThrottlerGuard } from './common/app-throttler.guard';
     CompanyModule,
     SyncModule,
     AdminModule,
+    CycleCountsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

@@ -171,7 +171,11 @@ interface NewItemModel {
                                   <td class="muted">{{ tx.createdAt | date: 'short' }}</td>
                                   <td>{{ tx.type }}</td>
                                   <td class="num">{{ tx.quantityDelta }}</td>
-                                  <td class="muted">{{ tx.source }}</td>
+                                  <td>
+                                    <span class="src-badge" [class]="'src-' + tx.source">
+                                      {{ tx.source }}
+                                    </span>
+                                  </td>
                                   <td class="muted">{{ tx.note }}</td>
                                 </tr>
                               }
@@ -335,6 +339,30 @@ interface NewItemModel {
         gap: 0.75rem;
         margin-top: 0.85rem;
         font-size: 0.85rem;
+      }
+      .src-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .src-PORTAL {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .src-SYNC {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
+      }
+      .src-CYCLE_COUNT {
+        background: #fffaeb;
+        color: #b54708;
+        border-color: #fedf89;
       }
     `,
   ],

@@ -15,6 +15,20 @@
       "when": 1784821194662,
       "tag": "0001_enable_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784831278506,
+      "tag": "0002_powerful_secret_warriors",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784831307643,
+      "tag": "0003_cycle_count_rls",
+      "breakpoints": true
     }
   ]
 }

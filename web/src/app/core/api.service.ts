@@ -8,6 +8,8 @@ import {
   Company,
   CreateCompany,
   CreateInventoryItem,
+  CycleCount,
+  CycleCountDetail,
   CreateInvitation,
   CreateStore,
   HealthResponse,
@@ -38,12 +40,14 @@ export class ApiService {
   listInventory(opts: {
     status?: ItemStatus;
     storeId?: number;
+    needsReview?: boolean;
     limit?: number;
     offset?: number;
   }): Observable<Paginated<InventoryItem>> {
     let params = new HttpParams();
     if (opts.status) params = params.set('status', opts.status);
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
+    if (opts.needsReview != null) params = params.set('needsReview', String(opts.needsReview));
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
     return this.http.get<Paginated<InventoryItem>>('/api/inventory', { params });
@@ -59,6 +63,10 @@ export class ApiService {
 
   updateInventory(id: string, dto: UpdateInventoryItem): Observable<InventoryItem> {
     return this.http.patch<InventoryItem>(`/api/inventory/${id}`, dto);
+  }
+
+  deleteItem(id: string): Observable<{ deleted: true; id: string }> {
+    return this.http.delete<{ deleted: true; id: string }>(`/api/inventory/${id}`);
   }
 
   sellItem(id: string, note?: string): Observable<InventoryItem> {
@@ -88,6 +96,23 @@ export class ApiService {
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
     return this.http.get<Paginated<Transaction>>('/api/transactions', { params });
+  }
+
+  // ---- cycle counts ----
+  listCycleCounts(params?: {
+    limit?: number;
+    offset?: number;
+    storeId?: number;
+  }): Observable<Paginated<CycleCount>> {
+    let p = new HttpParams();
+    if (params?.limit != null) p = p.set('limit', String(params.limit));
+    if (params?.offset != null) p = p.set('offset', String(params.offset));
+    if (params?.storeId != null) p = p.set('storeId', String(params.storeId));
+    return this.http.get<Paginated<CycleCount>>('/api/cycle-counts', { params: p });
+  }
+
+  getCycleCount(id: number): Observable<CycleCountDetail> {
+    return this.http.get<CycleCountDetail>(`/api/cycle-counts/${id}`);
   }
 
   // ---- stores (company admin) ----

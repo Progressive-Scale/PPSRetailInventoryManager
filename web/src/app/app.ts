@@ -104,10 +104,15 @@ export class App implements OnInit {
       case 'COMPANY_ADMIN':
         return [
           { path: '/inventory', label: 'Inventory' },
+          { path: '/cycle-counts', label: 'Cycle Counts' },
+          { path: '/needs-review', label: 'Review' },
           { path: '/manage', label: 'Manage' },
         ];
       default:
-        return [{ path: '/inventory', label: 'Inventory' }];
+        return [
+          { path: '/inventory', label: 'Inventory' },
+          { path: '/cycle-counts', label: 'Cycle Counts' },
+        ];
     }
   });
 

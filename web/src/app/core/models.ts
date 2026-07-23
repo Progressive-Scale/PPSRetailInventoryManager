@@ -33,7 +33,9 @@ export interface InventoryItem {
   name: string;
   description: string | null;
   price: string;
+  upc: string | null;
   status: ItemStatus;
+  needsReview: boolean;
   receivedAt: string | null;
   updatedAt: string;
   createdAt: string;
@@ -50,9 +52,11 @@ export interface Transaction {
   quantityDelta: number;
   note: string | null;
   performedByUserId: number | null;
-  source: 'PORTAL' | 'SYNC';
+  source: TxSource;
   createdAt: string;
 }
+
+export type TxSource = 'PORTAL' | 'SYNC' | 'CYCLE_COUNT';
 
 export interface Store {
   id: number;
@@ -130,6 +134,47 @@ export interface HealthResponse {
   companies: HealthRow[];
 }
 
+// ---- cycle counts ----
+
+export type CycleCountStatus = 'OPEN' | 'CLOSED' | 'CANCELLED';
+
+export type CycleCountResolution =
+  | 'SCANNED'
+  | 'COUNTED_BY_UPC'
+  | 'MARKED_SOLD'
+  | 'NEW_ITEM';
+
+export interface CycleCount {
+  id: number;
+  companyId: number;
+  storeId: number;
+  status: CycleCountStatus;
+  openedByUserId: number;
+  closedByUserId: number | null;
+  openedAt: string;
+  closedAt: string | null;
+  expectedCount: number;
+  scannedCount: number;
+  soldGeneratedCount: number;
+}
+
+export interface CycleCountLine {
+  id: number;
+  companyId: number;
+  cycleCountId: number;
+  itemId: string;
+  serial: string;
+  resolution: CycleCountResolution;
+  createdAt: string;
+}
+
+export interface CycleCountDetail {
+  cycleCount: CycleCount;
+  lines: CycleCountLine[];
+  linesByResolution: Record<CycleCountResolution, CycleCountLine[]>;
+  markedSoldSerials: string[];
+}
+
 export interface Paginated<T> {
   data: T[];
   total: number;
@@ -152,6 +197,8 @@ export interface UpdateInventoryItem {
   name?: string;
   description?: string;
   price?: string;
+  upc?: string | null;
+  needsReview?: boolean;
 }
 
 export interface CreateStore {

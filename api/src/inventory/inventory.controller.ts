@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -82,5 +83,12 @@ export class InventoryController {
     @Body() dto: ItemActionDto,
   ) {
     return this.svc.adjustOut(ctx, id, dto);
+  }
+
+  // Delete from the review queue (adjust-out; ledger preserved).
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  remove(@Ctx() ctx: DataContext, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.svc.remove(ctx, id);
   }
 }

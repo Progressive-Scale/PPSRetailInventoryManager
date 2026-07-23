@@ -114,6 +114,8 @@ export class InventoryService {
       if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
       if (query.status)
         conds.push(eq(inventoryItems.status, query.status as ItemStatus));
+      if (query.needsReview !== undefined)
+        conds.push(eq(inventoryItems.needsReview, query.needsReview));
 
       const where = and(...conds);
       const data = await tx
@@ -184,6 +186,8 @@ export class InventoryService {
       if (dto.name !== undefined) patch.name = dto.name;
       if (dto.description !== undefined) patch.description = dto.description;
       if (dto.price !== undefined) patch.price = String(dto.price);
+      if (dto.upc !== undefined) patch.upc = dto.upc;
+      if (dto.needsReview !== undefined) patch.needsReview = dto.needsReview;
       const [item] = await tx
         .update(inventoryItems)
         .set(patch)
@@ -271,6 +275,31 @@ export class InventoryService {
         },
       });
       return item;
+    });
+  }
+
+  /**
+   * "Delete" an item (used by the review queue). Inventory is never hard-deleted
+   * (the ledger references it); instead it is adjusted out with an ADJUSTMENT
+   * ledger row and the review flag cleared.
+   */
+  async remove(ctx: DataContext, id: string): Promise<{ deleted: true; id: string }> {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const current = await this.loadItem(tx, ctx, id);
+      if (current.status === 'ON_HAND' || current.status === 'SOLD') {
+        const [item] = await tx
+          .update(inventoryItems)
+          .set({ status: 'ADJUSTED_OUT', needsReview: false, updatedAt: new Date() })
+          .where(eq(inventoryItems.id, id))
+          .returning();
+        await this.writeLedger(tx, ctx, item, 'ADJUSTMENT', -1, 'Removed via review');
+      } else {
+        await tx
+          .update(inventoryItems)
+          .set({ needsReview: false, updatedAt: new Date() })
+          .where(eq(inventoryItems.id, id));
+      }
+      return { deleted: true, id };
     });
   }
 

@@ -1,5 +1,6 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
@@ -11,6 +12,9 @@ import {
   MinLength,
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
+
+const toBool = ({ value }: { value: unknown }) =>
+  value === true || value === 'true';
 
 export const ITEM_STATUSES = [
   'ON_HAND',
@@ -30,6 +34,12 @@ export class ListItemsQuery extends PaginationQuery {
   @IsInt()
   @IsPositive()
   storeId?: number;
+
+  // Review queue for flagged items.
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  needsReview?: boolean;
 }
 
 export class CreateItemDto {
@@ -81,6 +91,16 @@ export class UpdateItemDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   price?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  upc?: string;
+
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  needsReview?: boolean;
 }
 
 export class ItemActionDto {

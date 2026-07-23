@@ -179,9 +179,15 @@ source of truth for the DB shape.
 
 - **Public (company host):** `GET /branding`, `POST /auth/login`,
   `POST /auth/accept-invite`.
-- **Store/company (JWT):** `GET/POST/PATCH /inventory`, `POST /inventory/:id/sell`,
-  `/return`, `/adjust`; `GET /transactions`; company-admin CRUD `/stores`,
-  `/users`, `/invitations`.
+- **Store/company (JWT):** `GET/POST/PATCH/DELETE /inventory` (`?needsReview=true`
+  review queue), `POST /inventory/:id/sell`, `/return`, `/adjust`;
+  `GET /transactions`; company-admin CRUD `/stores`, `/users`, `/invitations`.
+- **Cycle counts (JWT):** `POST /cycle-counts` (open + ON_HAND snapshot),
+  `POST /cycle-counts/:id/close` (idempotent one-transaction resolution: scanned
+  serials, count-by-UPC keeps newest N, new items, and everything unaccounted →
+  SOLD via a `CYCLE_COUNT` ledger row), `POST /cycle-counts/:id/cancel`,
+  `GET /cycle-counts` (+`/:id` with lines). Cycle-count sales are cloud-side
+  ledger events — nothing flows to the ERP outbox, so `docs/SYNC.md` is unchanged.
 - **Sync (X-Api-Key):** `POST /sync/handoffs`, `GET /sync/returns`,
   `POST /sync/returns/ack` — see [`docs/SYNC.md`](docs/SYNC.md).
 - **Platform admin (admin host, PLATFORM_ADMIN):** `/admin/companies` CRUD,
