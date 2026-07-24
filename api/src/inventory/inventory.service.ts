@@ -22,6 +22,7 @@ import {
   UpdateItemDto,
 } from './dto/inventory.dto';
 import { Paginated, resolvePaging } from '../common/pagination';
+import { resolveOrCreateProduct } from '../products/product-catalog';
 
 type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
 
@@ -146,6 +147,16 @@ export class InventoryService {
   async create(ctx: DataContext, dto: CreateItemDto): Promise<InventoryItem> {
     const storeId = this.writeStoreId(ctx, dto.storeId);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      // Catalog is the source of truth: resolve (or create) the product for this
+      // SKU and inherit its name / price / upc.
+      const product = await resolveOrCreateProduct(
+        tx,
+        ctx.companyId,
+        dto.sku,
+        dto.name,
+        dto.price !== undefined ? String(dto.price) : '0',
+        null,
+      );
       let item: InventoryItem;
       try {
         [item] = await tx
@@ -153,11 +164,13 @@ export class InventoryService {
           .values({
             companyId: ctx.companyId,
             storeId,
+            productId: product.id,
             serial: dto.serial,
-            sku: dto.sku,
-            name: dto.name,
+            sku: product.sku,
+            name: product.name,
             description: dto.description ?? null,
-            price: dto.price !== undefined ? String(dto.price) : '0',
+            price: product.price,
+            upc: product.upc,
             status: 'ON_HAND',
             receivedAt: new Date(),
           })

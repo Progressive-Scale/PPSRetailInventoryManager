@@ -8,6 +8,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
 import { AuthModule } from './auth/auth.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { CompanyModule } from './company/company.module';
+import { ProductsModule } from './products/products.module';
 import { SyncModule } from './sync/sync.module';
 import { AdminModule } from './admin/admin.module';
 import { CycleCountsModule } from './cycle-counts/cycle-counts.module';
@@ -22,6 +23,7 @@ import { AppThrottlerGuard } from './common/app-throttler.guard';
     AuthModule,
     InventoryModule,
     CompanyModule,
+    ProductsModule,
     SyncModule,
     AdminModule,
     CycleCountsModule,

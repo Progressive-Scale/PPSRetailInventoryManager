@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryItems, inventoryTransactions, outboxReturns, stores } from '../db/schema';
 import { HandoffItemDto } from './dto/sync.dto';
+import { resolveOrCreateProduct } from '../products/product-catalog';
 
 export type HandoffAck =
   | { serial: string; status: 'accepted' }
@@ -58,15 +59,28 @@ export class SyncService {
 
           const price = it.price !== undefined ? String(it.price) : '0';
 
+          // Catalog drives new items: resolve (or create) the product for this
+          // SKU; the item inherits its name / price / upc.
+          const product = await resolveOrCreateProduct(
+            tx,
+            companyId,
+            it.sku,
+            it.name,
+            price,
+            null,
+          );
+
           if (existing) {
-            // Idempotent: refresh mutable fields, no new item, no new ledger row.
+            // Idempotent: relink + refresh from the catalog, no new item/ledger.
             await tx
               .update(inventoryItems)
               .set({
-                sku: it.sku,
-                name: it.name,
+                productId: product.id,
+                sku: product.sku,
+                name: product.name,
                 description: it.description ?? null,
-                price,
+                price: product.price,
+                upc: product.upc,
                 updatedAt: new Date(),
               })
               .where(eq(inventoryItems.id, existing.id));
@@ -78,11 +92,13 @@ export class SyncService {
             .values({
               companyId,
               storeId: store.id,
+              productId: product.id,
               serial: it.serial,
-              sku: it.sku,
-              name: it.name,
+              sku: product.sku,
+              name: product.name,
               description: it.description ?? null,
-              price,
+              price: product.price,
+              upc: product.upc,
               status: 'ON_HAND',
               receivedAt: new Date(),
             })

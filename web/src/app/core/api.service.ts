@@ -17,6 +17,9 @@ import {
   Invitation,
   ItemStatus,
   Paginated,
+  Product,
+  CreateProduct,
+  UpdateProduct,
   Store,
   Transaction,
   TxType,
@@ -130,6 +133,21 @@ export class ApiService {
 
   deleteStore(id: number): Observable<unknown> {
     return this.http.delete(`/api/stores/${id}`);
+  }
+
+  // ---- products (company admin) ----
+  listProducts(active?: boolean): Observable<Product[]> {
+    let params = new HttpParams();
+    if (active != null) params = params.set('active', String(active));
+    return this.http.get<Product[]>('/api/products', { params });
+  }
+
+  createProduct(dto: CreateProduct): Observable<Product> {
+    return this.http.post<Product>('/api/products', dto);
+  }
+
+  updateProduct(id: number, dto: UpdateProduct): Observable<Product> {
+    return this.http.patch<Product>(`/api/products/${id}`, dto);
   }
 
   // ---- users (company admin) ----

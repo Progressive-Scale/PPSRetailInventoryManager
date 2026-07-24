@@ -14,6 +14,7 @@ const {
   stores,
   users,
   apiKeys,
+  products,
   inventoryItems,
   inventoryTransactions,
   cycleCounts,
@@ -114,13 +115,34 @@ async function main(): Promise<void> {
     { serial: 'SN-1004', sku: 'CAP-RED', name: 'Cap Red', price: '14.50', upc: '0001110004', sell: false },
   ];
 
+  // Product catalog (source of truth for each SKU).
+  for (const s of itemSeeds) {
+    await db
+      .insert(products)
+      .values({
+        companyId: demo.id,
+        sku: s.sku,
+        name: s.name,
+        price: s.price,
+        upc: s.upc,
+        active: true,
+      })
+      .onConflictDoNothing({ target: [products.companyId, products.sku] });
+  }
+
   const seededItems = new Map<string, typeof inventoryItems.$inferSelect>();
   for (const s of itemSeeds) {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.companyId, demo.id), eq(products.sku, s.sku)))
+      .limit(1);
     const [item] = await db
       .insert(inventoryItems)
       .values({
         companyId: demo.id,
         storeId: store.id,
+        productId: product?.id ?? null,
         serial: s.serial,
         sku: s.sku,
         name: s.name,

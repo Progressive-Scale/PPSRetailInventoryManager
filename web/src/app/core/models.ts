@@ -90,6 +90,19 @@ export interface Invitation {
   acceptPath?: string;
 }
 
+export interface Product {
+  id: number;
+  companyId: number;
+  sku: string;
+  name: string;
+  description: string | null;
+  price: string;
+  upc: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Company {
   id: number;
   name: string;
@@ -223,6 +236,23 @@ export interface CreateInvitation {
   email: string;
   role: Role;
   storeId?: number;
+}
+
+export interface CreateProduct {
+  sku: string;
+  name: string;
+  description?: string;
+  price?: number;
+  upc?: string;
+}
+
+export interface UpdateProduct {
+  sku?: string;
+  name?: string;
+  description?: string;
+  price?: number;
+  upc?: string;
+  active?: boolean;
 }
 
 export interface CreateCompany {

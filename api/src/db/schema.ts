@@ -177,6 +177,37 @@ export const apiKeys = pgTable(
   ],
 );
 
+// Product catalog. Source of truth for a SKU's name/price/UPC within a company.
+export const products = pgTable(
+  'products',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    sku: text('sku').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    price: numeric('price', { precision: 12, scale: 2 })
+      .notNull()
+      .default('0'),
+    upc: text('upc'),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index('products_company_idx').on(t.companyId),
+    uniqueIndex('products_company_sku_uniq').on(t.companyId, t.sku),
+    index('products_company_upc_idx').on(t.companyId, t.upc),
+  ],
+);
+
 export const inventoryItems = pgTable(
   'inventory_items',
   {
@@ -187,6 +218,9 @@ export const inventoryItems = pgTable(
     storeId: integer('store_id')
       .notNull()
       .references(() => stores.id),
+    // Catalog link (source of truth for name/price/upc). Null on legacy items
+    // and on cycle-count "new item" unknowns pending review.
+    productId: integer('product_id').references(() => products.id),
     // The ERP's serial / GS1 id. Unique per company.
     serial: text('serial').notNull(),
     sku: text('sku').notNull(),
@@ -381,6 +415,7 @@ export const inventoryItemsRelations = relations(
 // ---------------------------------------------------------------------------
 
 export type Company = typeof companies.$inferSelect;
+export type Product = typeof products.$inferSelect;
 export type Store = typeof stores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Invitation = typeof invitations.$inferSelect;
@@ -402,6 +437,7 @@ export const TENANT_TABLES = [
   'users',
   'invitations',
   'api_keys',
+  'products',
   'inventory_items',
   'inventory_transactions',
   'outbox_returns',

@@ -6,14 +6,17 @@ import { messageFor } from '../../core/http-error';
 import { localAcceptUrl } from '../../core/tenant';
 import {
   CreateInvitation,
+  CreateProduct,
   CreateStore,
   Invitation,
+  Product,
   Role,
   Store,
+  UpdateProduct,
   User,
 } from '../../core/models';
 
-type Tab = 'stores' | 'users' | 'invitations';
+type Tab = 'stores' | 'users' | 'invitations' | 'products';
 
 @Component({
   selector: 'app-manage',
@@ -26,6 +29,7 @@ type Tab = 'stores' | 'users' | 'invitations';
         <button [class.active]="tab() === 'invitations'" (click)="select('invitations')">
           Invitations
         </button>
+        <button [class.active]="tab() === 'products'" (click)="select('products')">Products</button>
       </div>
 
       @if (error()) {
@@ -221,6 +225,101 @@ type Tab = 'stores' | 'users' | 'invitations';
           }
         </section>
       }
+
+      <!-- PRODUCTS -->
+      @if (tab() === 'products') {
+        <section class="card">
+          <h2>Add product</h2>
+          <form class="inline-form" (ngSubmit)="createProduct()">
+            <input placeholder="SKU" name="p-sku" [(ngModel)]="productDraft.sku" required />
+            <input placeholder="Name" name="p-name" [(ngModel)]="productDraft.name" required />
+            <input
+              placeholder="Price"
+              name="p-price"
+              type="number"
+              step="0.01"
+              min="0"
+              [(ngModel)]="productDraft.price"
+            />
+            <input placeholder="UPC" name="p-upc" [(ngModel)]="productDraft.upc" />
+            <input placeholder="Description" name="p-desc" [(ngModel)]="productDraft.description" />
+            <button type="submit" [disabled]="saving()">Add product</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>Products</h2>
+          <div class="filter-row">
+            <label>
+              Show:
+              <select [(ngModel)]="productFilter" name="p-filter" (ngModelChange)="loadProducts()">
+                <option [ngValue]="'all'">All</option>
+                <option [ngValue]="'active'">Active only</option>
+                <option [ngValue]="'inactive'">Inactive only</option>
+              </select>
+            </label>
+          </div>
+          @if (loading()) {
+            <p class="muted">Loading…</p>
+          } @else if (products().length === 0) {
+            <p class="muted">No products yet.</p>
+          } @else {
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Name</th>
+                    <th>Price</th>
+                    <th>UPC</th>
+                    <th>Active</th>
+                    <th class="actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (p of products(); track p.id) {
+                    <tr [class.inactive-row]="!p.active">
+                      @if (editProductId() === p.id) {
+                        <td><input name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
+                        <td><input name="ep-name" [(ngModel)]="productEdit.name" /></td>
+                        <td>
+                          <input
+                            name="ep-price"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            [(ngModel)]="productEdit.price"
+                          />
+                        </td>
+                        <td><input name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
+                        <td>
+                          <label class="chk">
+                            <input type="checkbox" name="ep-active" [(ngModel)]="productEdit.active" />
+                            Active
+                          </label>
+                        </td>
+                        <td class="actions">
+                          <button class="sm" (click)="saveProduct(p)" [disabled]="saving()">Save</button>
+                          <button class="sm ghost" (click)="editProductId.set(null)">Cancel</button>
+                        </td>
+                      } @else {
+                        <td>{{ p.sku }}</td>
+                        <td>{{ p.name }}</td>
+                        <td>{{ formatPrice(p.price) }}</td>
+                        <td class="muted">{{ p.upc || '—' }}</td>
+                        <td>{{ p.active ? 'Yes' : 'No' }}</td>
+                        <td class="actions">
+                          <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
+                        </td>
+                      }
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </section>
+      }
     </main>
   `,
   styles: [
@@ -319,6 +418,27 @@ type Tab = 'stores' | 'users' | 'invitations';
         font-size: 0.8rem;
         word-break: break-all;
       }
+      .filter-row {
+        margin-bottom: 0.85rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .filter-row select {
+        margin-left: 0.4rem;
+      }
+      tr.inactive-row td {
+        color: var(--muted);
+        opacity: 0.7;
+      }
+      label.chk {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.85rem;
+      }
+      label.chk input {
+        margin: 0;
+      }
     `,
   ],
 })
@@ -333,6 +453,7 @@ export class ManageComponent implements OnInit {
   readonly stores = signal<Store[]>([]);
   readonly users = signal<User[]>([]);
   readonly invitations = signal<Invitation[]>([]);
+  readonly products = signal<Product[]>([]);
 
   storeDraft: CreateStore = { name: '', code: '', externalBuildingId: '' };
   readonly editStoreId = signal<number | null>(null);
@@ -341,6 +462,24 @@ export class ManageComponent implements OnInit {
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
   inviteStoreId: number | null = null;
   readonly lastInviteUrl = signal<string | null>(null);
+
+  productDraft: {
+    sku: string;
+    name: string;
+    price: number | null;
+    upc: string;
+    description: string;
+  } = { sku: '', name: '', price: null, upc: '', description: '' };
+  productFilter: 'all' | 'active' | 'inactive' = 'all';
+  readonly editProductId = signal<number | null>(null);
+  productEdit: {
+    sku: string;
+    name: string;
+    price: number | null;
+    upc: string;
+    description: string;
+    active: boolean;
+  } = { sku: '', name: '', price: null, upc: '', description: '', active: true };
 
   ngOnInit(): void {
     // Stores are needed by every tab (user/invite store pickers) and are the
@@ -361,6 +500,7 @@ export class ManageComponent implements OnInit {
       if (this.stores().length === 0) this.loadStores();
       this.loadInvitations();
     }
+    if (tab === 'products') this.loadProducts();
   }
 
   private loadStores(): void {
@@ -532,6 +672,88 @@ export class ManageComponent implements OnInit {
         this.error.set(messageFor(err));
       },
     });
+  }
+
+  // ---- products ----
+  loadProducts(): void {
+    const active =
+      this.productFilter === 'active' ? true : this.productFilter === 'inactive' ? false : undefined;
+    this.loading.set(true);
+    this.api.listProducts(active).subscribe({
+      next: (rows) => {
+        this.products.set(rows);
+        this.loading.set(false);
+      },
+      error: (err) => {
+        this.loading.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  createProduct(): void {
+    if (!this.productDraft.sku || !this.productDraft.name) {
+      this.error.set('Product SKU and name are required.');
+      return;
+    }
+    const dto: CreateProduct = { sku: this.productDraft.sku, name: this.productDraft.name };
+    if (this.productDraft.description) dto.description = this.productDraft.description;
+    if (this.productDraft.price != null) dto.price = Number(this.productDraft.price);
+    if (this.productDraft.upc) dto.upc = this.productDraft.upc;
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.createProduct(dto).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
+        this.loadProducts();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  startEditProduct(p: Product): void {
+    this.editProductId.set(p.id);
+    this.productEdit = {
+      sku: p.sku,
+      name: p.name,
+      price: p.price != null ? Number(p.price) : null,
+      upc: p.upc ?? '',
+      description: p.description ?? '',
+      active: p.active,
+    };
+  }
+
+  saveProduct(p: Product): void {
+    const dto: UpdateProduct = {
+      sku: this.productEdit.sku,
+      name: this.productEdit.name,
+      description: this.productEdit.description,
+      upc: this.productEdit.upc,
+      active: this.productEdit.active,
+    };
+    if (this.productEdit.price != null) dto.price = Number(this.productEdit.price);
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.updateProduct(p.id, dto).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.editProductId.set(null);
+        this.loadProducts();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  formatPrice(price: string): string {
+    const n = Number(price);
+    return Number.isFinite(n) ? n.toFixed(2) : price;
   }
 
   inviteUrl(inv: Invitation): string {
