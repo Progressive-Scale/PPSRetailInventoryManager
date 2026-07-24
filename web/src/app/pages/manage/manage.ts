@@ -229,26 +229,10 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
       <!-- PRODUCTS -->
       @if (tab() === 'products') {
         <section class="card">
-          <h2>Add product</h2>
-          <form class="inline-form" (ngSubmit)="createProduct()">
-            <input placeholder="SKU" name="p-sku" [(ngModel)]="productDraft.sku" required />
-            <input placeholder="Name" name="p-name" [(ngModel)]="productDraft.name" required />
-            <input
-              placeholder="Price"
-              name="p-price"
-              type="number"
-              step="0.01"
-              min="0"
-              [(ngModel)]="productDraft.price"
-            />
-            <input placeholder="UPC" name="p-upc" [(ngModel)]="productDraft.upc" />
-            <input placeholder="Description" name="p-desc" [(ngModel)]="productDraft.description" />
-            <button type="submit" [disabled]="saving()">Add product</button>
-          </form>
-        </section>
-
-        <section class="card">
-          <h2>Products</h2>
+          <div class="section-head">
+            <h2>Products</h2>
+            <button (click)="openAddProduct()">Add product</button>
+          </div>
           <div class="filter-row">
             <label>
               Show:
@@ -265,25 +249,26 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
             <p class="muted">No products yet.</p>
           } @else {
             <div class="table-scroll">
-              <table>
+              <table class="fixed">
                 <thead>
                   <tr>
-                    <th>SKU</th>
-                    <th>Name</th>
-                    <th>Price</th>
-                    <th>UPC</th>
-                    <th>Active</th>
-                    <th class="actions"></th>
+                    <th class="col-sku">SKU</th>
+                    <th class="col-name">Name</th>
+                    <th class="col-price">Price</th>
+                    <th class="col-upc">UPC</th>
+                    <th class="col-active">Active</th>
+                    <th class="actions col-actions"></th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (p of products(); track p.id) {
                     <tr [class.inactive-row]="!p.active">
                       @if (editProductId() === p.id) {
-                        <td><input name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
-                        <td><input name="ep-name" [(ngModel)]="productEdit.name" /></td>
+                        <td><input class="cell-input" name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
+                        <td><input class="cell-input" name="ep-name" [(ngModel)]="productEdit.name" /></td>
                         <td>
                           <input
+                            class="cell-input"
                             name="ep-price"
                             type="number"
                             step="0.01"
@@ -291,7 +276,7 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
                             [(ngModel)]="productEdit.price"
                           />
                         </td>
-                        <td><input name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
+                        <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
                         <td>
                           <label class="chk">
                             <input type="checkbox" name="ep-active" [(ngModel)]="productEdit.active" />
@@ -310,6 +295,9 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
                         <td>{{ p.active ? 'Yes' : 'No' }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
+                          <button class="sm danger" (click)="askDeleteProduct(p)" [disabled]="saving()">
+                            Delete
+                          </button>
                         </td>
                       }
                     </tr>
@@ -319,6 +307,60 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
             </div>
           }
         </section>
+
+        <!-- Add product modal -->
+        @if (showAddModal()) {
+          <div class="overlay" (click)="closeAddProduct()">
+            <div class="modal" (click)="$event.stopPropagation()">
+              <h2>Add product</h2>
+              @if (modalError()) {
+                <p class="error">{{ modalError() }}</p>
+              }
+              <form class="stacked-form" (ngSubmit)="createProduct()">
+                <label>
+                  SKU <span class="req">*</span>
+                  <input name="m-sku" [(ngModel)]="productDraft.sku" required />
+                </label>
+                <label>
+                  Name <span class="req">*</span>
+                  <input name="m-name" [(ngModel)]="productDraft.name" required />
+                </label>
+                <label>
+                  Price
+                  <input name="m-price" type="number" step="0.01" min="0" [(ngModel)]="productDraft.price" />
+                </label>
+                <label>
+                  UPC
+                  <input name="m-upc" [(ngModel)]="productDraft.upc" />
+                </label>
+                <label>
+                  Description
+                  <input name="m-desc" [(ngModel)]="productDraft.description" />
+                </label>
+                <div class="modal-actions">
+                  <button class="ghost" type="button" (click)="closeAddProduct()">Cancel</button>
+                  <button type="submit" [disabled]="saving()">Confirm</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        }
+
+        <!-- Delete confirmation -->
+        @if (deleteTarget()) {
+          <div class="overlay" (click)="deleteTarget.set(null)">
+            <div class="modal" (click)="$event.stopPropagation()">
+              <h2>Delete product</h2>
+              <p>Delete product {{ deleteTarget()!.sku }}? This can't be undone.</p>
+              <div class="modal-actions">
+                <button class="ghost" type="button" (click)="deleteTarget.set(null)">Cancel</button>
+                <button class="danger" type="button" (click)="confirmDeleteProduct()" [disabled]="saving()">
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        }
       }
     </main>
   `,
@@ -439,6 +481,102 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
       label.chk input {
         margin: 0;
       }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+      .section-head h2 {
+        margin: 0;
+      }
+      /* Fixed-layout table so column widths + row height stay stable
+         between view and edit mode. */
+      table.fixed {
+        table-layout: fixed;
+      }
+      table.fixed th,
+      table.fixed td {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .col-sku {
+        width: 16%;
+      }
+      .col-name {
+        width: 30%;
+      }
+      .col-price {
+        width: 12%;
+      }
+      .col-upc {
+        width: 16%;
+      }
+      .col-active {
+        width: 10%;
+      }
+      .col-actions {
+        width: 16%;
+      }
+      /* Inline edit inputs match the surrounding display text so the row
+         does not grow when switching to edit mode. */
+      .cell-input {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        padding: 0.1rem 0.3rem;
+        font: inherit;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+      }
+      td.actions {
+        overflow: visible;
+      }
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        z-index: 50;
+      }
+      .modal {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+        width: 100%;
+        max-width: 420px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      }
+      .stacked-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      .stacked-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .stacked-form input {
+        font-size: 0.9rem;
+      }
+      .req {
+        color: #b42318;
+      }
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+      }
     `,
   ],
 })
@@ -480,6 +618,9 @@ export class ManageComponent implements OnInit {
     description: string;
     active: boolean;
   } = { sku: '', name: '', price: null, upc: '', description: '', active: true };
+  readonly showAddModal = signal(false);
+  readonly modalError = signal<string | null>(null);
+  readonly deleteTarget = signal<Product | null>(null);
 
   ngOnInit(): void {
     // Stores are needed by every tab (user/invite store pickers) and are the
@@ -691,9 +832,20 @@ export class ManageComponent implements OnInit {
     });
   }
 
+  openAddProduct(): void {
+    this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
+    this.modalError.set(null);
+    this.showAddModal.set(true);
+  }
+
+  closeAddProduct(): void {
+    this.showAddModal.set(false);
+    this.modalError.set(null);
+  }
+
   createProduct(): void {
     if (!this.productDraft.sku || !this.productDraft.name) {
-      this.error.set('Product SKU and name are required.');
+      this.modalError.set('Product SKU and name are required.');
       return;
     }
     const dto: CreateProduct = { sku: this.productDraft.sku, name: this.productDraft.name };
@@ -701,15 +853,41 @@ export class ManageComponent implements OnInit {
     if (this.productDraft.price != null) dto.price = Number(this.productDraft.price);
     if (this.productDraft.upc) dto.upc = this.productDraft.upc;
     this.saving.set(true);
-    this.error.set(null);
+    this.modalError.set(null);
     this.api.createProduct(dto).subscribe({
       next: () => {
         this.saving.set(false);
+        this.showAddModal.set(false);
         this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
         this.loadProducts();
       },
       error: (err) => {
         this.saving.set(false);
+        this.modalError.set(messageFor(err));
+      },
+    });
+  }
+
+  askDeleteProduct(p: Product): void {
+    this.error.set(null);
+    this.deleteTarget.set(p);
+  }
+
+  confirmDeleteProduct(): void {
+    const target = this.deleteTarget();
+    if (!target) return;
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.deleteProduct(target.id).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.deleteTarget.set(null);
+        this.loadProducts();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.deleteTarget.set(null);
+        // 409 = product still has inventory; surface the server message.
         this.error.set(messageFor(err));
       },
     });

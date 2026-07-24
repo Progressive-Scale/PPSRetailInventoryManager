@@ -150,6 +150,10 @@ export class ApiService {
     return this.http.patch<Product>(`/api/products/${id}`, dto);
   }
 
+  deleteProduct(id: number): Observable<{ deleted: boolean; id: number }> {
+    return this.http.delete<{ deleted: boolean; id: number }>(`/api/products/${id}`);
+  }
+
   // ---- users (company admin) ----
   listUsers(): Observable<User[]> {
     return this.http.get<User[]>('/api/users');
