@@ -16,8 +16,7 @@ interface EditModel {
   selector: 'app-needs-review',
   imports: [FormsModule],
   template: `
-    <main class="container">
-      <section class="card">
+    <section class="card">
         <div class="row-between">
           <h2>Needs review</h2>
           <button class="ghost" (click)="reload()" [disabled]="loading()">Refresh</button>
@@ -77,18 +76,9 @@ interface EditModel {
           </div>
         }
       </section>
-    </main>
   `,
   styles: [
     `
-      .container {
-        max-width: 1100px;
-        margin: 1.5rem auto;
-        padding: 0 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1.25rem;
-      }
       .card {
         border: 1px solid var(--border);
         border-radius: 12px;

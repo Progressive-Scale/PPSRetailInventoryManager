@@ -10,6 +10,9 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // Larger JSON bodies so an uploaded logo (sent as a data: URL) fits.
+  app.useBodyParser('json', { limit: '6mb' });
+
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({

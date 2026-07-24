@@ -39,6 +39,12 @@ export class ApiService {
     return this.http.get<Branding>('/api/branding');
   }
 
+  /** Update the current company's branding (COMPANY_ADMIN). Empty-string
+   * logoUrl clears it. Returns the refreshed branding payload. */
+  updateBranding(dto: { logoUrl?: string; primaryColor?: string }): Observable<Branding> {
+    return this.http.patch<Branding>('/api/company/branding', dto);
+  }
+
   // ---- inventory ----
   listInventory(opts: {
     status?: ItemStatus;

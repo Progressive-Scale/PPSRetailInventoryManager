@@ -35,15 +35,21 @@ export const routes: Routes = [
       import('./pages/cycle-counts/cycle-counts').then((m) => m.CycleCountsComponent),
   },
   {
-    path: 'needs-review',
+    path: 'products',
     canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
-    loadComponent: () =>
-      import('./pages/needs-review/needs-review').then((m) => m.NeedsReviewComponent),
+    loadComponent: () => import('./pages/products/products').then((m) => m.ProductsComponent),
   },
+  // Old Review route now lives as a sub-tab of Products.
+  { path: 'needs-review', redirectTo: 'products', pathMatch: 'full' },
   {
     path: 'manage',
     canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
     loadComponent: () => import('./pages/manage/manage').then((m) => m.ManageComponent),
+  },
+  {
+    path: 'settings',
+    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
+    loadComponent: () => import('./pages/settings/settings').then((m) => m.SettingsComponent),
   },
   {
     path: 'platform',

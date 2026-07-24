@@ -1,36 +1,148 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from './core/auth.service';
-import { ApiService } from './core/api.service';
+import { BrandingStore } from './core/branding.store';
 import { Role } from './core/models';
 import { isAdminHost } from './core/tenant';
+
+interface NavLink {
+  path: string;
+  label: string;
+  icon: string;
+}
 
 @Component({
   selector: 'app-root',
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
   template: `
     @if (auth.isLoggedIn() && auth.user(); as u) {
-      <header class="appbar">
-        <div class="brand">
-          <strong>{{ appName() }}</strong>
+      <div class="shell" [class.drawer-open]="drawerOpen()">
+        <aside class="drawer">
+          <div class="drawer-brand">
+            @if (logoUrl()) {
+              <img class="logo" [src]="logoUrl()" alt="" />
+            }
+            <strong>{{ appName() }}</strong>
+          </div>
           <nav class="nav">
             @for (link of navLinks(); track link.path) {
-              <a [routerLink]="link.path" routerLinkActive="active">{{ link.label }}</a>
+              <a
+                [routerLink]="link.path"
+                routerLinkActive="active"
+                (click)="drawerOpen.set(false)"
+              >
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path [attr.d]="link.icon" />
+                </svg>
+                <span>{{ link.label }}</span>
+              </a>
             }
           </nav>
+        </aside>
+
+        <div class="main">
+          <header class="topbar">
+            <div class="left">
+              <button class="hamburger ghost" (click)="toggleDrawer()" aria-label="Toggle menu">
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z" />
+                </svg>
+              </button>
+              @if (logoUrl()) {
+                <img class="logo" [src]="logoUrl()" alt="" />
+              }
+              <strong class="company">{{ appName() }}</strong>
+            </div>
+            <div class="user">
+              <span class="email">{{ u.email }}</span>
+              <span class="badge">{{ roleLabel(u.role) }}</span>
+              <button class="ghost" (click)="signOut()">Sign out</button>
+            </div>
+          </header>
+          <div class="content">
+            <router-outlet />
+          </div>
         </div>
-        <div class="user">
-          <span class="email">{{ u.email }}</span>
-          <span class="badge">{{ roleLabel(u.role) }}</span>
-          <button class="ghost" (click)="signOut()">Sign out</button>
-        </div>
-      </header>
+
+        <div class="scrim" (click)="drawerOpen.set(false)"></div>
+      </div>
+    } @else {
+      <router-outlet />
     }
-    <router-outlet />
   `,
   styles: [
     `
-      .appbar {
+      .shell {
+        display: flex;
+        min-height: 100vh;
+      }
+      .drawer {
+        width: 240px;
+        flex-shrink: 0;
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        padding: 0.85rem 0.75rem;
+        position: sticky;
+        top: 0;
+        align-self: flex-start;
+        height: 100vh;
+      }
+      .drawer-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.35rem 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .drawer-brand strong {
+        color: var(--brand, var(--accent));
+        font-size: 1rem;
+        line-height: 1.2;
+      }
+      .logo {
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
+        border-radius: 6px;
+      }
+      .nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .nav a {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        text-decoration: none;
+        color: var(--muted);
+        padding: 0.55rem 0.65rem;
+        border-radius: 8px;
+        font-size: 0.92rem;
+      }
+      .nav a:hover {
+        background: var(--bg);
+      }
+      .nav a.active {
+        color: var(--brand, var(--accent));
+        background: var(--accent-soft);
+      }
+      .ico {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+        fill: currentColor;
+      }
+      .main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .topbar {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -40,28 +152,18 @@ import { isAdminHost } from './core/tenant';
         background: var(--surface);
         flex-wrap: wrap;
       }
-      .brand {
+      .left {
         display: flex;
         align-items: center;
-        gap: 1.25rem;
+        gap: 0.6rem;
       }
-      .brand strong {
+      .company {
         color: var(--brand, var(--accent));
       }
-      .nav {
-        display: flex;
-        gap: 0.35rem;
-      }
-      .nav a {
-        text-decoration: none;
-        color: var(--muted);
-        padding: 0.3rem 0.6rem;
-        border-radius: 8px;
-        font-size: 0.9rem;
-      }
-      .nav a.active {
-        color: var(--brand, var(--accent));
-        background: var(--accent-soft);
+      .hamburger {
+        display: none;
+        padding: 0.35rem;
+        line-height: 0;
       }
       .user {
         display: flex;
@@ -80,38 +182,88 @@ import { isAdminHost } from './core/tenant';
         font-size: 0.72rem;
         white-space: nowrap;
       }
+      .content {
+        flex: 1;
+        min-width: 0;
+      }
+      .scrim {
+        display: none;
+      }
+
+      @media (max-width: 720px) {
+        .drawer {
+          position: fixed;
+          z-index: 60;
+          height: 100vh;
+          transform: translateX(-100%);
+          transition: transform 0.2s ease;
+        }
+        .drawer-open .drawer {
+          transform: translateX(0);
+        }
+        .hamburger {
+          display: inline-flex;
+        }
+        .drawer-open .scrim {
+          display: block;
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.4);
+          z-index: 55;
+        }
+      }
     `,
   ],
 })
 export class App implements OnInit {
   readonly auth = inject(AuthService);
-  private readonly api = inject(ApiService);
+  private readonly branding = inject(BrandingStore);
   private readonly router = inject(Router);
 
-  private readonly companyName = signal<string | null>(null);
+  readonly drawerOpen = signal(false);
+
+  readonly logoUrl = computed(() => (isAdminHost() ? null : this.branding.logoUrl()));
 
   readonly appName = computed(() => {
     if (isAdminHost()) return 'Platform Admin';
-    return this.companyName() ?? 'PPS Retail Inventory';
+    return this.branding.name() ?? 'PPS Retail Inventory';
   });
 
-  readonly navLinks = computed<{ path: string; label: string }[]>(() => {
+  // Icon path data (24x24, currentColor fill).
+  private static readonly ICONS = {
+    inventory:
+      'M20 2H4c-1.1 0-2 .9-2 2v3.01c0 .72.43 1.34 1 1.69V20c0 1.1 1.1 2 2 2h14c.9 0 2-.9 2-2V8.7c.57-.35 1-.97 1-1.69V4c0-1.1-.9-2-2-2zm-5 12H9v-2h6v2zm5-7H4V4h16v3z',
+    cycle:
+      'M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z',
+    products:
+      'M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z',
+    manage:
+      'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z',
+    settings:
+      'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
+    platform:
+      'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
+  };
+
+  readonly navLinks = computed<NavLink[]>(() => {
     const u = this.auth.user();
     if (!u) return [];
+    const I = App.ICONS;
     switch (u.role) {
       case 'PLATFORM_ADMIN':
-        return [{ path: '/platform', label: 'Platform' }];
+        return [{ path: '/platform', label: 'Platform', icon: I.platform }];
       case 'COMPANY_ADMIN':
         return [
-          { path: '/inventory', label: 'Inventory' },
-          { path: '/cycle-counts', label: 'Cycle Counts' },
-          { path: '/needs-review', label: 'Review' },
-          { path: '/manage', label: 'Manage' },
+          { path: '/inventory', label: 'Inventory', icon: I.inventory },
+          { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
+          { path: '/products', label: 'Products', icon: I.products },
+          { path: '/manage', label: 'Manage', icon: I.manage },
+          { path: '/settings', label: 'Settings', icon: I.settings },
         ];
       default:
         return [
-          { path: '/inventory', label: 'Inventory' },
-          { path: '/cycle-counts', label: 'Cycle Counts' },
+          { path: '/inventory', label: 'Inventory', icon: I.inventory },
+          { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
         ];
     }
   });
@@ -119,18 +271,12 @@ export class App implements OnInit {
   ngOnInit(): void {
     // On a company host, load branding to theme the shell + show company name.
     if (!isAdminHost()) {
-      this.api.branding().subscribe({
-        next: (b) => {
-          this.companyName.set(b.name);
-          if (b.branding?.primaryColor) {
-            document.documentElement.style.setProperty('--brand', b.branding.primaryColor);
-          }
-        },
-        error: () => {
-          /* non-fatal; keep defaults */
-        },
-      });
+      this.branding.refresh();
     }
+  }
+
+  toggleDrawer(): void {
+    this.drawerOpen.update((v) => !v);
   }
 
   roleLabel(role: Role): string {

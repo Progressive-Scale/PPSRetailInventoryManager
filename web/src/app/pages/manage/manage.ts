@@ -6,17 +6,14 @@ import { messageFor } from '../../core/http-error';
 import { localAcceptUrl } from '../../core/tenant';
 import {
   CreateInvitation,
-  CreateProduct,
   CreateStore,
   Invitation,
-  Product,
   Role,
   Store,
-  UpdateProduct,
   User,
 } from '../../core/models';
 
-type Tab = 'stores' | 'users' | 'invitations' | 'products';
+type Tab = 'stores' | 'users' | 'invitations';
 
 @Component({
   selector: 'app-manage',
@@ -29,7 +26,6 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
         <button [class.active]="tab() === 'invitations'" (click)="select('invitations')">
           Invitations
         </button>
-        <button [class.active]="tab() === 'products'" (click)="select('products')">Products</button>
       </div>
 
       @if (error()) {
@@ -224,143 +220,6 @@ type Tab = 'stores' | 'users' | 'invitations' | 'products';
             </div>
           }
         </section>
-      }
-
-      <!-- PRODUCTS -->
-      @if (tab() === 'products') {
-        <section class="card">
-          <div class="section-head">
-            <h2>Products</h2>
-            <button (click)="openAddProduct()">Add product</button>
-          </div>
-          <div class="filter-row">
-            <label>
-              Show:
-              <select [(ngModel)]="productFilter" name="p-filter" (ngModelChange)="loadProducts()">
-                <option [ngValue]="'all'">All</option>
-                <option [ngValue]="'active'">Active only</option>
-                <option [ngValue]="'inactive'">Inactive only</option>
-              </select>
-            </label>
-          </div>
-          @if (loading()) {
-            <p class="muted">Loading…</p>
-          } @else if (products().length === 0) {
-            <p class="muted">No products yet.</p>
-          } @else {
-            <div class="table-scroll">
-              <table class="fixed">
-                <thead>
-                  <tr>
-                    <th class="col-sku">SKU</th>
-                    <th class="col-name">Name</th>
-                    <th class="col-price">Price</th>
-                    <th class="col-upc">UPC</th>
-                    <th class="col-active">Active</th>
-                    <th class="actions col-actions"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  @for (p of products(); track p.id) {
-                    <tr [class.inactive-row]="!p.active">
-                      @if (editProductId() === p.id) {
-                        <td><input class="cell-input" name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
-                        <td><input class="cell-input" name="ep-name" [(ngModel)]="productEdit.name" /></td>
-                        <td>
-                          <input
-                            class="cell-input"
-                            name="ep-price"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            [(ngModel)]="productEdit.price"
-                          />
-                        </td>
-                        <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
-                        <td>
-                          <label class="chk">
-                            <input type="checkbox" name="ep-active" [(ngModel)]="productEdit.active" />
-                            Active
-                          </label>
-                        </td>
-                        <td class="actions">
-                          <button class="sm" (click)="saveProduct(p)" [disabled]="saving()">Save</button>
-                          <button class="sm ghost" (click)="editProductId.set(null)">Cancel</button>
-                        </td>
-                      } @else {
-                        <td>{{ p.sku }}</td>
-                        <td>{{ p.name }}</td>
-                        <td>{{ formatPrice(p.price) }}</td>
-                        <td class="muted">{{ p.upc || '—' }}</td>
-                        <td>{{ p.active ? 'Yes' : 'No' }}</td>
-                        <td class="actions">
-                          <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
-                          <button class="sm danger" (click)="askDeleteProduct(p)" [disabled]="saving()">
-                            Delete
-                          </button>
-                        </td>
-                      }
-                    </tr>
-                  }
-                </tbody>
-              </table>
-            </div>
-          }
-        </section>
-
-        <!-- Add product modal -->
-        @if (showAddModal()) {
-          <div class="overlay" (click)="closeAddProduct()">
-            <div class="modal" (click)="$event.stopPropagation()">
-              <h2>Add product</h2>
-              @if (modalError()) {
-                <p class="error">{{ modalError() }}</p>
-              }
-              <form class="stacked-form" (ngSubmit)="createProduct()">
-                <label>
-                  SKU <span class="req">*</span>
-                  <input name="m-sku" [(ngModel)]="productDraft.sku" required />
-                </label>
-                <label>
-                  Name <span class="req">*</span>
-                  <input name="m-name" [(ngModel)]="productDraft.name" required />
-                </label>
-                <label>
-                  Price
-                  <input name="m-price" type="number" step="0.01" min="0" [(ngModel)]="productDraft.price" />
-                </label>
-                <label>
-                  UPC
-                  <input name="m-upc" [(ngModel)]="productDraft.upc" />
-                </label>
-                <label>
-                  Description
-                  <input name="m-desc" [(ngModel)]="productDraft.description" />
-                </label>
-                <div class="modal-actions">
-                  <button class="ghost" type="button" (click)="closeAddProduct()">Cancel</button>
-                  <button type="submit" [disabled]="saving()">Confirm</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        }
-
-        <!-- Delete confirmation -->
-        @if (deleteTarget()) {
-          <div class="overlay" (click)="deleteTarget.set(null)">
-            <div class="modal" (click)="$event.stopPropagation()">
-              <h2>Delete product</h2>
-              <p>Delete product {{ deleteTarget()!.sku }}? This can't be undone.</p>
-              <div class="modal-actions">
-                <button class="ghost" type="button" (click)="deleteTarget.set(null)">Cancel</button>
-                <button class="danger" type="button" (click)="confirmDeleteProduct()" [disabled]="saving()">
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        }
       }
     </main>
   `,
@@ -591,7 +450,6 @@ export class ManageComponent implements OnInit {
   readonly stores = signal<Store[]>([]);
   readonly users = signal<User[]>([]);
   readonly invitations = signal<Invitation[]>([]);
-  readonly products = signal<Product[]>([]);
 
   storeDraft: CreateStore = { name: '', code: '', externalBuildingId: '' };
   readonly editStoreId = signal<number | null>(null);
@@ -600,27 +458,6 @@ export class ManageComponent implements OnInit {
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
   inviteStoreId: number | null = null;
   readonly lastInviteUrl = signal<string | null>(null);
-
-  productDraft: {
-    sku: string;
-    name: string;
-    price: number | null;
-    upc: string;
-    description: string;
-  } = { sku: '', name: '', price: null, upc: '', description: '' };
-  productFilter: 'all' | 'active' | 'inactive' = 'all';
-  readonly editProductId = signal<number | null>(null);
-  productEdit: {
-    sku: string;
-    name: string;
-    price: number | null;
-    upc: string;
-    description: string;
-    active: boolean;
-  } = { sku: '', name: '', price: null, upc: '', description: '', active: true };
-  readonly showAddModal = signal(false);
-  readonly modalError = signal<string | null>(null);
-  readonly deleteTarget = signal<Product | null>(null);
 
   ngOnInit(): void {
     // Stores are needed by every tab (user/invite store pickers) and are the
@@ -641,7 +478,6 @@ export class ManageComponent implements OnInit {
       if (this.stores().length === 0) this.loadStores();
       this.loadInvitations();
     }
-    if (tab === 'products') this.loadProducts();
   }
 
   private loadStores(): void {
@@ -813,125 +649,6 @@ export class ManageComponent implements OnInit {
         this.error.set(messageFor(err));
       },
     });
-  }
-
-  // ---- products ----
-  loadProducts(): void {
-    const active =
-      this.productFilter === 'active' ? true : this.productFilter === 'inactive' ? false : undefined;
-    this.loading.set(true);
-    this.api.listProducts(active).subscribe({
-      next: (rows) => {
-        this.products.set(rows);
-        this.loading.set(false);
-      },
-      error: (err) => {
-        this.loading.set(false);
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
-  openAddProduct(): void {
-    this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
-    this.modalError.set(null);
-    this.showAddModal.set(true);
-  }
-
-  closeAddProduct(): void {
-    this.showAddModal.set(false);
-    this.modalError.set(null);
-  }
-
-  createProduct(): void {
-    if (!this.productDraft.sku || !this.productDraft.name) {
-      this.modalError.set('Product SKU and name are required.');
-      return;
-    }
-    const dto: CreateProduct = { sku: this.productDraft.sku, name: this.productDraft.name };
-    if (this.productDraft.description) dto.description = this.productDraft.description;
-    if (this.productDraft.price != null) dto.price = Number(this.productDraft.price);
-    if (this.productDraft.upc) dto.upc = this.productDraft.upc;
-    this.saving.set(true);
-    this.modalError.set(null);
-    this.api.createProduct(dto).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.showAddModal.set(false);
-        this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
-        this.loadProducts();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.modalError.set(messageFor(err));
-      },
-    });
-  }
-
-  askDeleteProduct(p: Product): void {
-    this.error.set(null);
-    this.deleteTarget.set(p);
-  }
-
-  confirmDeleteProduct(): void {
-    const target = this.deleteTarget();
-    if (!target) return;
-    this.saving.set(true);
-    this.error.set(null);
-    this.api.deleteProduct(target.id).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.deleteTarget.set(null);
-        this.loadProducts();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.deleteTarget.set(null);
-        // 409 = product still has inventory; surface the server message.
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
-  startEditProduct(p: Product): void {
-    this.editProductId.set(p.id);
-    this.productEdit = {
-      sku: p.sku,
-      name: p.name,
-      price: p.price != null ? Number(p.price) : null,
-      upc: p.upc ?? '',
-      description: p.description ?? '',
-      active: p.active,
-    };
-  }
-
-  saveProduct(p: Product): void {
-    const dto: UpdateProduct = {
-      sku: this.productEdit.sku,
-      name: this.productEdit.name,
-      description: this.productEdit.description,
-      upc: this.productEdit.upc,
-      active: this.productEdit.active,
-    };
-    if (this.productEdit.price != null) dto.price = Number(this.productEdit.price);
-    this.saving.set(true);
-    this.error.set(null);
-    this.api.updateProduct(p.id, dto).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.editProductId.set(null);
-        this.loadProducts();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
-  formatPrice(price: string): string {
-    const n = Number(price);
-    return Number.isFinite(n) ? n.toFixed(2) : price;
   }
 
   inviteUrl(inv: Invitation): string {
