@@ -39,6 +39,7 @@ export interface InventoryItem {
   receivedAt: string | null;
   updatedAt: string;
   createdAt: string;
+  expirationDate: string | null;
 }
 
 export type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN';

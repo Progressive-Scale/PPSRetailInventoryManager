@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsPositive,
   IsString,
@@ -27,6 +28,7 @@ export class NewItemDto {
   @IsString() @MinLength(1) @MaxLength(128) serialOrUpc!: string;
   @IsString() @MinLength(1) @MaxLength(256) name!: string;
   @IsBoolean() isUpc!: boolean;
+  @IsOptional() @IsISO8601() expirationDate?: string;
 }
 
 export class CloseCycleCountDto {

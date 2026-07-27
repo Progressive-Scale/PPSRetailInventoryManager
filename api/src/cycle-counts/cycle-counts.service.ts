@@ -198,6 +198,7 @@ export class CycleCountsService {
             upc,
             sku: 'REVIEW',
             name: ni.name,
+            expirationDate: ni.expirationDate ?? null,
             status: 'ON_HAND',
             needsReview: true,
             receivedAt: new Date(),

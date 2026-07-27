@@ -100,6 +100,8 @@ interface NewItemModel {
                   }
                   <th class="num">Price</th>
                   <th>Status</th>
+                  <th>Created</th>
+                  <th>Expires</th>
                   <th>Updated</th>
                   <th class="actions">Actions</th>
                 </tr>
@@ -120,6 +122,10 @@ interface NewItemModel {
                     }
                     <td class="num">{{ money(item.price) }}</td>
                     <td><span class="status">{{ statusLabel(item.status) }}</span></td>
+                    <td class="muted">{{ item.createdAt | date: 'shortDate' }}</td>
+                    <td class="muted" [class.expired]="isExpired(item.expirationDate)">
+                      {{ item.expirationDate ? (item.expirationDate | date: 'shortDate') : '—' }}
+                    </td>
                     <td class="muted">{{ item.updatedAt | date: 'short' }}</td>
                     <td class="actions">
                       @if (item.status === 'ON_HAND') {
@@ -294,6 +300,9 @@ interface NewItemModel {
       .muted {
         color: var(--muted);
       }
+      td.expired {
+        color: #b42318;
+      }
       .error {
         color: #b42318;
         font-size: 0.85rem;
@@ -402,7 +411,7 @@ export class InventoryComponent implements OnInit {
 
   draft: NewItemModel = this.emptyDraft();
 
-  readonly colspan = computed(() => (this.isCompanyAdmin ? 7 : 6));
+  readonly colspan = computed(() => (this.isCompanyAdmin ? 9 : 8));
 
   readonly hasNext = computed(() => this.offset() + this.items().length < this.total());
   readonly rangeLabel = computed(() => {
@@ -570,6 +579,13 @@ export class InventoryComponent implements OnInit {
 
   storeName(id: number): string {
     return this.storeMap().get(id) ?? `#${id}`;
+  }
+
+  isExpired(date: string | null): boolean {
+    if (!date) return false;
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return false;
+    return parsed.getTime() < Date.now();
   }
 
   money(price: string): string {

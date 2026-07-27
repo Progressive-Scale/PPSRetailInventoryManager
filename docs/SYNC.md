@@ -54,6 +54,7 @@ Content-Type: application/json
       "name": "T-Shirt Black M",
       "description": "Optional",
       "price": 19.99,
+      "expirationDate": "2026-12-31",
       "storeExternalBuildingId": "BLDG-001"
     },
     {
@@ -67,7 +68,8 @@ Content-Type: application/json
 ```
 
 Fields: `serial`*, `sku`*, `name`* and `storeExternalBuildingId`* are required;
-`description` and `price` optional. Max 1000 items per batch.
+`description`, `price`, and `expirationDate` (a `YYYY-MM-DD` calendar date) are
+optional. Max 1000 items per batch.
 
 ### Response `200`
 

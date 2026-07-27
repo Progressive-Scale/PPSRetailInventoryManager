@@ -2,6 +2,7 @@ import { relations } from 'drizzle-orm';
 import {
   bigserial,
   boolean,
+  date,
   index,
   integer,
   jsonb,
@@ -230,6 +231,8 @@ export const inventoryItems = pgTable(
       .notNull()
       .default('0'),
     status: itemStatus('status').notNull().default('ON_HAND'),
+    // Expiration date (calendar date, nullable). Set via sync handoffs / scanner.
+    expirationDate: date('expiration_date'),
     // UPC / barcode for counting by product code.
     upc: text('upc'),
     // Set when an item was created/altered by a cycle count and needs an

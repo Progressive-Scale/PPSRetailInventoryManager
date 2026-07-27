@@ -109,10 +109,10 @@ async function main(): Promise<void> {
   // --- Inventory items + ledger history ---
   const now = new Date();
   const itemSeeds = [
-    { serial: 'SN-1001', sku: 'TS-BLK-M', name: 'T-Shirt Black M', price: '19.99', upc: '0001110001', sell: false },
-    { serial: 'SN-1002', sku: 'TS-BLK-L', name: 'T-Shirt Black L', price: '19.99', upc: '0001110002', sell: false },
-    { serial: 'SN-1003', sku: 'HD-GRY-L', name: 'Hoodie Grey L', price: '49.00', upc: '0001110003', sell: true },
-    { serial: 'SN-1004', sku: 'CAP-RED', name: 'Cap Red', price: '14.50', upc: '0001110004', sell: false },
+    { serial: 'SN-1001', sku: 'TS-BLK-M', name: 'T-Shirt Black M', price: '19.99', upc: '0001110001', sell: false, expirationDate: null },
+    { serial: 'SN-1002', sku: 'TS-BLK-L', name: 'T-Shirt Black L', price: '19.99', upc: '0001110002', sell: false, expirationDate: '2027-01-31' },
+    { serial: 'SN-1003', sku: 'HD-GRY-L', name: 'Hoodie Grey L', price: '49.00', upc: '0001110003', sell: true, expirationDate: null },
+    { serial: 'SN-1004', sku: 'CAP-RED', name: 'Cap Red', price: '14.50', upc: '0001110004', sell: false, expirationDate: '2026-10-15' },
   ];
 
   // Product catalog (source of truth for each SKU).
@@ -148,6 +148,7 @@ async function main(): Promise<void> {
         name: s.name,
         price: s.price,
         upc: s.upc,
+        expirationDate: s.expirationDate,
         status: s.sell ? 'SOLD' : 'ON_HAND',
         receivedAt: now,
       })

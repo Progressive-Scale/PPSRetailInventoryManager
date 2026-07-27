@@ -81,6 +81,7 @@ export class SyncService {
                 description: it.description ?? null,
                 price: product.price,
                 upc: product.upc,
+                ...(it.expirationDate ? { expirationDate: it.expirationDate } : {}),
                 updatedAt: new Date(),
               })
               .where(eq(inventoryItems.id, existing.id));
@@ -99,6 +100,7 @@ export class SyncService {
               description: it.description ?? null,
               price: product.price,
               upc: product.upc,
+              expirationDate: it.expirationDate ?? null,
               status: 'ON_HAND',
               receivedAt: new Date(),
             })

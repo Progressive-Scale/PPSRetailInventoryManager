@@ -4,6 +4,7 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsInt,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -19,6 +20,8 @@ export class HandoffItemDto {
   @IsString() @MinLength(1) @MaxLength(256) name!: string;
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price?: number;
+  // Optional expiration date (YYYY-MM-DD).
+  @IsOptional() @IsISO8601() expirationDate?: string;
   // Maps to a store via stores.external_building_id within the company.
   @IsString() @MinLength(1) @MaxLength(128) storeExternalBuildingId!: string;
 }
