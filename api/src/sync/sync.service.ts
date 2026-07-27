@@ -1,24 +1,36 @@
 import { Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { TenantDbService } from '../db/tenant-db.service';
-import { inventoryItems, inventoryTransactions, outboxReturns, stores } from '../db/schema';
+import { TenantDbService, Tx } from '../db/tenant-db.service';
+import {
+  inventoryItems,
+  inventoryStock,
+  inventoryTransactions,
+  outboxReturns,
+  Product,
+  stores,
+  syncReceipts,
+} from '../db/schema';
 import { HandoffItemDto } from './dto/sync.dto';
 import { resolveOrCreateProduct } from '../products/product-catalog';
 
-export type HandoffAck =
-  | { serial: string; status: 'accepted' }
-  | { serial: string; status: 'already_exists' }
-  | { serial: string; status: 'error'; reason: string };
+export interface HandoffAck {
+  kind: 'unit' | 'stock';
+  serial?: string;
+  handoffId?: string;
+  status: 'accepted' | 'already_processed' | 'error';
+  reason?: string;
+}
 
 @Injectable()
 export class SyncService {
   constructor(private readonly tenantDb: TenantDbService) {}
 
   /**
-   * Idempotent ingestion of items shipped to a store. Each serial is processed
-   * in its own transaction so one bad item does not roll back the batch.
-   * Redelivery of the same serial does NOT create a duplicate item or ledger
-   * row (returns already_exists, refreshing mutable fields).
+   * Idempotent ingestion of a mixed handoff batch. Each line is processed in
+   * its own transaction so one bad line does not roll back the batch.
+   *   unit  (serialized) — upsert on (company, serial); redelivery = no-op.
+   *   stock (quantity)   — increment guarded by sync_receipts(company, handoffId)
+   *                        so redelivery cannot double-increment.
    */
   async handoffs(
     companyId: number,
@@ -26,106 +38,227 @@ export class SyncService {
   ): Promise<{ results: HandoffAck[] }> {
     const results: HandoffAck[] = [];
     for (const it of items) {
+      const kind = it.kind ?? 'unit';
       try {
-        const ack = await this.tenantDb.withCompany(companyId, async (tx) => {
-          const [store] = await tx
-            .select()
-            .from(stores)
-            .where(
-              and(
-                eq(stores.companyId, companyId),
-                eq(stores.externalBuildingId, it.storeExternalBuildingId),
-              ),
-            )
-            .limit(1);
-          if (!store) {
-            return {
-              serial: it.serial,
-              status: 'error',
-              reason: `unknown store building '${it.storeExternalBuildingId}'`,
-            } as HandoffAck;
-          }
-
-          const [existing] = await tx
-            .select()
-            .from(inventoryItems)
-            .where(
-              and(
-                eq(inventoryItems.companyId, companyId),
-                eq(inventoryItems.serial, it.serial),
-              ),
-            )
-            .limit(1);
-
-          const price = it.price !== undefined ? String(it.price) : '0';
-
-          // Catalog drives new items: resolve (or create) the product for this
-          // SKU; the item inherits its name / price / upc.
-          const product = await resolveOrCreateProduct(
-            tx,
-            companyId,
-            it.sku,
-            it.name,
-            price,
-            null,
-          );
-
-          if (existing) {
-            // Idempotent: relink + refresh from the catalog, no new item/ledger.
-            await tx
-              .update(inventoryItems)
-              .set({
-                productId: product.id,
-                sku: product.sku,
-                name: product.name,
-                description: it.description ?? null,
-                price: product.price,
-                upc: product.upc,
-                ...(it.expirationDate ? { expirationDate: it.expirationDate } : {}),
-                updatedAt: new Date(),
-              })
-              .where(eq(inventoryItems.id, existing.id));
-            return { serial: it.serial, status: 'already_exists' } as HandoffAck;
-          }
-
-          const [item] = await tx
-            .insert(inventoryItems)
-            .values({
-              companyId,
-              storeId: store.id,
-              productId: product.id,
-              serial: it.serial,
-              sku: product.sku,
-              name: product.name,
-              description: it.description ?? null,
-              price: product.price,
-              upc: product.upc,
-              expirationDate: it.expirationDate ?? null,
-              status: 'ON_HAND',
-              receivedAt: new Date(),
-            })
-            .returning();
-
-          await tx.insert(inventoryTransactions).values({
-            companyId,
-            storeId: store.id,
-            itemId: item.id,
-            type: 'RECEIPT',
-            quantityDelta: 1,
-            note: 'Handoff from sync agent',
-            source: 'SYNC',
-          });
-
-          return { serial: it.serial, status: 'accepted' } as HandoffAck;
-        });
+        const ack = await this.tenantDb.withCompany(companyId, (tx) =>
+          kind === 'stock'
+            ? this.handleStock(tx, companyId, it)
+            : this.handleUnit(tx, companyId, it),
+        );
         results.push(ack);
       } catch (err) {
         const reason =
           err instanceof Error ? err.message.slice(0, 200) : 'error';
-        results.push({ serial: it.serial, status: 'error', reason });
+        results.push({
+          kind,
+          serial: it.serial,
+          handoffId: it.handoffId,
+          status: 'error',
+          reason,
+        });
       }
     }
     return { results };
+  }
+
+  // ---- unit (serialized) -------------------------------------------------
+
+  private async handleUnit(
+    tx: Tx,
+    companyId: number,
+    it: HandoffItemDto,
+  ): Promise<HandoffAck> {
+    if (!it.serial) {
+      return { kind: 'unit', status: 'error', reason: 'unit handoff requires a serial' };
+    }
+    const store = await this.storeByBuilding(tx, companyId, it.storeExternalBuildingId);
+    if (!store) {
+      return {
+        kind: 'unit',
+        serial: it.serial,
+        status: 'error',
+        reason: `unknown store building '${it.storeExternalBuildingId}'`,
+      };
+    }
+    const product = await this.resolveProduct(tx, companyId, it, 'SERIALIZED');
+    if (!product) {
+      return {
+        kind: 'unit',
+        serial: it.serial,
+        status: 'error',
+        reason: `sku '${it.sku}' is tracked by quantity, not serials`,
+      };
+    }
+
+    const [existing] = await tx
+      .select()
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, companyId),
+          eq(inventoryItems.serial, it.serial),
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      // Idempotent: relink to the catalog product; refresh expiration if given.
+      await tx
+        .update(inventoryItems)
+        .set({
+          productId: product.id,
+          ...(it.expirationDate ? { expirationDate: it.expirationDate } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(inventoryItems.id, existing.id));
+      return { kind: 'unit', serial: it.serial, status: 'already_processed' };
+    }
+
+    const [item] = await tx
+      .insert(inventoryItems)
+      .values({
+        companyId,
+        storeId: store.id,
+        productId: product.id,
+        serial: it.serial,
+        status: 'ON_HAND',
+        expirationDate: it.expirationDate ?? null,
+        receivedAt: new Date(),
+      })
+      .returning();
+    await tx.insert(inventoryTransactions).values({
+      companyId,
+      storeId: store.id,
+      productId: product.id,
+      itemId: item.id,
+      type: 'RECEIPT',
+      quantityDelta: 1,
+      note: 'Handoff from sync agent',
+      source: 'SYNC',
+    });
+    return { kind: 'unit', serial: it.serial, status: 'accepted' };
+  }
+
+  // ---- stock (quantity) --------------------------------------------------
+
+  private async handleStock(
+    tx: Tx,
+    companyId: number,
+    it: HandoffItemDto,
+  ): Promise<HandoffAck> {
+    if (!it.handoffId) {
+      return { kind: 'stock', status: 'error', reason: 'stock handoff requires a handoffId' };
+    }
+    if (it.quantity === undefined || it.quantity <= 0) {
+      return {
+        kind: 'stock',
+        handoffId: it.handoffId,
+        status: 'error',
+        reason: 'stock handoff requires a positive quantity',
+      };
+    }
+    const store = await this.storeByBuilding(tx, companyId, it.storeExternalBuildingId);
+    if (!store) {
+      return {
+        kind: 'stock',
+        handoffId: it.handoffId,
+        status: 'error',
+        reason: `unknown store building '${it.storeExternalBuildingId}'`,
+      };
+    }
+    const product = await this.resolveProduct(tx, companyId, it, 'QUANTITY');
+    if (!product) {
+      return {
+        kind: 'stock',
+        handoffId: it.handoffId,
+        status: 'error',
+        reason: `sku '${it.sku}' is tracked by serials, not quantity`,
+      };
+    }
+
+    // Idempotency: claim the handoffId. If it was already claimed, do nothing.
+    const claimed = await tx
+      .insert(syncReceipts)
+      .values({ companyId, handoffId: it.handoffId })
+      .onConflictDoNothing({
+        target: [syncReceipts.companyId, syncReceipts.handoffId],
+      })
+      .returning({ id: syncReceipts.id });
+    if (claimed.length === 0) {
+      return { kind: 'stock', handoffId: it.handoffId, status: 'already_processed' };
+    }
+
+    const [stock] = await tx
+      .select()
+      .from(inventoryStock)
+      .where(
+        and(
+          eq(inventoryStock.companyId, companyId),
+          eq(inventoryStock.storeId, store.id),
+          eq(inventoryStock.productId, product.id),
+        ),
+      )
+      .for('update');
+    if (stock) {
+      await tx
+        .update(inventoryStock)
+        .set({
+          quantityOnHand: stock.quantityOnHand + it.quantity,
+          updatedAt: new Date(),
+        })
+        .where(eq(inventoryStock.id, stock.id));
+    } else {
+      await tx.insert(inventoryStock).values({
+        companyId,
+        storeId: store.id,
+        productId: product.id,
+        quantityOnHand: it.quantity,
+      });
+    }
+    await tx.insert(inventoryTransactions).values({
+      companyId,
+      storeId: store.id,
+      productId: product.id,
+      type: 'RECEIPT',
+      quantityDelta: it.quantity,
+      note: 'Stock handoff from sync agent',
+      source: 'SYNC',
+    });
+    return { kind: 'stock', handoffId: it.handoffId, status: 'accepted' };
+  }
+
+  // ---- helpers -----------------------------------------------------------
+
+  /** Resolve/create the product, returning null if its tracking_type clashes. */
+  private async resolveProduct(
+    tx: Tx,
+    companyId: number,
+    it: HandoffItemDto,
+    expected: 'SERIALIZED' | 'QUANTITY',
+  ): Promise<Product | null> {
+    const product = await resolveOrCreateProduct(tx, companyId, {
+      sku: it.sku,
+      name: it.name,
+      price: it.price !== undefined ? String(it.price) : '0',
+      upc: it.upc ?? null,
+      trackingType: expected,
+    });
+    if (product.trackingType !== expected) return null;
+    return product;
+  }
+
+  private async storeByBuilding(tx: Tx, companyId: number, building: string) {
+    const [store] = await tx
+      .select()
+      .from(stores)
+      .where(
+        and(
+          eq(stores.companyId, companyId),
+          eq(stores.externalBuildingId, building),
+        ),
+      )
+      .limit(1);
+    return store;
   }
 
   /** Oldest-first undelivered returns for the agent to pull. */

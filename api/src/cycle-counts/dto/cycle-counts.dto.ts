@@ -19,15 +19,21 @@ export class OpenCycleCountDto {
   @IsOptional() @IsInt() @IsPositive() storeId?: number;
 }
 
-export class UpcCountDto {
-  @IsString() @MinLength(1) @MaxLength(128) upc!: string;
-  @IsInt() @Min(0) quantity!: number;
+// A physical count of a QUANTITY product. Identify by productId or upc.
+export class QuantityCountDto {
+  @IsOptional() @IsInt() @IsPositive() productId?: number;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(128) upc?: string;
+  @IsInt() @Min(0) countedQuantity!: number;
 }
 
+// An item scanned during the count that isn't in the catalog yet. Creates a
+// needs-review product. isUpc=false -> serialized unit; isUpc=true -> quantity
+// stock (requires `quantity`).
 export class NewItemDto {
   @IsString() @MinLength(1) @MaxLength(128) serialOrUpc!: string;
   @IsString() @MinLength(1) @MaxLength(256) name!: string;
   @IsBoolean() isUpc!: boolean;
+  @IsOptional() @IsInt() @IsPositive() quantity?: number;
   @IsOptional() @IsISO8601() expirationDate?: string;
 }
 
@@ -40,8 +46,8 @@ export class CloseCycleCountDto {
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => UpcCountDto)
-  upcCounts?: UpcCountDto[];
+  @Type(() => QuantityCountDto)
+  quantityCounts?: QuantityCountDto[];
 
   @IsOptional()
   @IsArray()

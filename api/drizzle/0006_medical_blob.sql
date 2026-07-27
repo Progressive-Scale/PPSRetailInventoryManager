@@ -1,1 +1,0 @@
-ALTER TABLE "inventory_items" ADD COLUMN "expiration_date" date;

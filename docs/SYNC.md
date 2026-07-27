@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v1
+# Sync Agent Integration Contract — v2
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,16 +10,28 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v1`
+- **Contract version:** `v2`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
 
+## What's new in v2
+
+Inventory is now **dual-tracked**, driven by each product's `trackingType`:
+
+- **Serialized** products — one physical unit per serial (`kind: "unit"`).
+- **Quantity** products — a per-store counter, moved by ±N (`kind: "stock"`).
+
+A handoff batch may **mix both kinds**. Unknown products are auto-created with
+the `trackingType` implied by `kind`. See §1 for the idempotency rules (they
+differ by kind). Contract v1 (serial-only) requests still work: a handoff line
+with no `kind` is treated as `kind: "unit"`.
+
 The agent's job, in a loop:
 
 1. **Deliver handoffs** — push items shipped to a store (`POST /sync/handoffs`),
-   then mark each local handoff delivered based on the per-serial ack.
+   then mark each local handoff delivered based on the per-line ack.
 2. **Pull returns** — fetch returns the store initiated (`GET /sync/returns`),
    apply them in the local ERP, then acknowledge (`POST /sync/returns/ack`).
 
@@ -27,15 +39,11 @@ The agent's job, in a loop:
 
 ## 1. Handoffs — `POST /api/sync/handoffs`
 
-Report items that have been shipped/handed off to a store. **Idempotent**:
-re-delivering the same `serial` never creates a duplicate item or ledger entry.
-
-Idempotency key: **(company, serial)**. `serial` is your ERP's serial / GS1 id
-and must be unique per company.
-
-`storeExternalBuildingId` maps to a store via its `externalBuildingId` (set when
-the store is created in the portal). If it doesn't match a store, that item is
-rejected (the rest of the batch still succeeds).
+Report items shipped/handed off to a store. The batch may mix `unit` and
+`stock` lines. `storeExternalBuildingId` maps to a store via its
+`externalBuildingId` (set when the store is created in the portal); an
+unmatched building rejects that line only (the rest of the batch still
+succeeds).
 
 ### Request
 
@@ -49,52 +57,73 @@ Content-Type: application/json
 {
   "handoffs": [
     {
+      "kind": "unit",
       "serial": "SN-1001",
       "sku": "TS-BLK-M",
       "name": "T-Shirt Black M",
-      "description": "Optional",
       "price": 19.99,
+      "upc": "0001110001",
       "expirationDate": "2026-12-31",
       "storeExternalBuildingId": "BLDG-001"
     },
     {
-      "serial": "SN-1002",
-      "sku": "TS-BLK-L",
-      "name": "T-Shirt Black L",
+      "kind": "stock",
+      "handoffId": "ship-2026-07-27-line-42",
+      "sku": "SOCK-WHT",
+      "name": "Socks White 6-pack",
+      "upc": "0002220001",
+      "price": 9.99,
+      "quantity": 24,
       "storeExternalBuildingId": "BLDG-001"
     }
   ]
 }
 ```
 
-Fields: `serial`*, `sku`*, `name`* and `storeExternalBuildingId`* are required;
-`description`, `price`, and `expirationDate` (a `YYYY-MM-DD` calendar date) are
-optional. Max 1000 items per batch.
+**Common fields** (both kinds): `sku`*, `name`*, `storeExternalBuildingId`* are
+required; `description`, `price`, `upc` are optional.
+
+**`kind: "unit"`** (serialized): also requires `serial`*. `expirationDate` (a
+`YYYY-MM-DD` calendar date) optional. Idempotency key is **(company, serial)** —
+redelivering the same serial never creates a duplicate unit or ledger row.
+
+**`kind: "stock"`** (quantity): also requires `quantity`* (positive integer) and
+`handoffId`* — a **client-generated id, unique per shipment line**. The server
+records each `handoffId` once (in `sync_receipts`, unique per company) inside the
+same transaction as the stock increment, so **redelivering the same batch cannot
+double-increment** a counter. Use a stable id derived from your shipment/line
+(e.g. `"<shipmentId>-<lineNo>"`), not a random one per attempt.
+
+> A `sku` that already exists with the other tracking type is rejected for that
+> line (`error`): a serialized product can't receive a `stock` line and vice
+> versa. Max 1000 lines per batch.
 
 ### Response `200`
 
-Each serial is acked individually so the agent knows exactly what to mark
-delivered. Order matches the request but always key off `serial`.
+Each line is acked individually so the agent knows exactly what to mark
+delivered. Key off `serial` (unit) or `handoffId` (stock) — never array
+position.
 
 ```json
 {
   "results": [
-    { "serial": "SN-1001", "status": "accepted" },
-    { "serial": "SN-1002", "status": "already_exists" },
-    { "serial": "SN-9999", "status": "error", "reason": "unknown store building 'BLDG-XYZ'" }
+    { "kind": "unit",  "serial": "SN-1001", "status": "accepted" },
+    { "kind": "stock", "handoffId": "ship-2026-07-27-line-42", "status": "accepted" },
+    { "kind": "stock", "handoffId": "ship-2026-07-20-line-9", "status": "already_processed" },
+    { "kind": "unit",  "serial": "SN-9999", "status": "error", "reason": "unknown store building 'BLDG-XYZ'" }
   ]
 }
 ```
 
-| status           | meaning                                                        | agent action                  |
-| ---------------- | -------------------------------------------------------------- | ----------------------------- |
-| `accepted`       | New item created (`ON_HAND`), a `RECEIPT` ledger row written.  | Mark local handoff delivered. |
-| `already_exists` | Item with this serial already present; mutable fields refreshed. No duplicate created. | Mark delivered (idempotent).  |
-| `error`          | Not applied. See `reason`.                                     | Fix and retry that serial.    |
+| status              | meaning                                                                                          | agent action                  |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------- |
+| `accepted`          | New unit created / stock incremented; a `RECEIPT` ledger row written.                            | Mark local handoff delivered. |
+| `already_processed` | Serial already present (unit), or `handoffId` already recorded (stock). No duplicate, no change. | Mark delivered (idempotent).  |
+| `error`             | Not applied. See `reason`.                                                                        | Fix and retry that line.      |
 
 > **Idempotency guarantee:** delivering the identical batch twice yields the same
-> item set — the second delivery returns `already_exists` for every serial and
-> writes no new ledger rows. Safe to retry after a timeout.
+> state — every line returns `already_processed` on the second delivery and no
+> new ledger rows are written. Safe to retry after a timeout.
 
 ---
 
@@ -114,35 +143,59 @@ X-Api-Key: pps_xxx
 
 ### Response `200`
 
+Each return's `payload` carries a `kind` matching the product's tracking type.
+
 ```json
 {
-  "count": 1,
+  "count": 2,
   "returns": [
     {
       "id": 42,
       "companyId": 1,
       "storeId": 3,
+      "productId": 7,
       "itemId": "b3f7...uuid",
       "serial": "SN-1002",
       "payload": {
+        "kind": "unit",
         "serial": "SN-1002",
         "sku": "TS-BLK-L",
         "name": "T-Shirt Black L",
-        "storeId": 3,
+        "upc": "0001110002",
         "storeExternalBuildingId": "BLDG-001",
-        "returnedAt": "2026-07-23T19:03:00.000Z",
+        "returnedAt": "2026-07-27T19:03:00.000Z",
         "note": "overstock"
       },
-      "createdAt": "2026-07-23T19:03:00.000Z",
+      "createdAt": "2026-07-27T19:03:00.000Z",
+      "deliveredAt": null
+    },
+    {
+      "id": 43,
+      "companyId": 1,
+      "storeId": 3,
+      "productId": 9,
+      "itemId": null,
+      "serial": null,
+      "payload": {
+        "kind": "stock",
+        "sku": "SOCK-WHT",
+        "name": "Socks White 6-pack",
+        "upc": "0002220001",
+        "quantity": 6,
+        "storeExternalBuildingId": "BLDG-001",
+        "returnedAt": "2026-07-27T19:05:00.000Z",
+        "note": null
+      },
+      "createdAt": "2026-07-27T19:05:00.000Z",
       "deliveredAt": null
     }
   ]
 }
 ```
 
-Apply each return in the ERP using `payload` (it carries
-`storeExternalBuildingId` so you can map back to the ERP location). Track the
-`id` values you successfully applied.
+Apply each return in the ERP using `payload`. For `kind: "unit"` restore the
+serial; for `kind: "stock"` add `quantity` back to the product at that building.
+Track the `id` values you successfully applied.
 
 ---
 
@@ -166,7 +219,7 @@ Content-Type: application/json
 ### Response `200`
 
 ```json
-{ "acknowledged": 1 }
+{ "acknowledged": 2 }
 ```
 
 `acknowledged` counts rows that transitioned from undelivered → delivered (so a
@@ -179,12 +232,13 @@ replay returns a smaller number or `0`).
 ```
 every N seconds:
   # push
-  batch = local.pendingHandoffs(limit=1000)
+  batch = local.pendingHandoffs(limit=1000)   # each line has a kind
   if batch:
     resp = POST /sync/handoffs { handoffs: batch }
     for r in resp.results:
-      if r.status in (accepted, already_exists): local.markDelivered(r.serial)
-      else: local.flagError(r.serial, r.reason)   # retry next cycle
+      key = r.serial or r.handoffId
+      if r.status in (accepted, already_processed): local.markDelivered(key)
+      else: local.flagError(key, r.reason)   # retry next cycle
 
   # pull
   resp = GET /sync/returns?limit=100
@@ -208,8 +262,10 @@ every N seconds:
 
 Guidance:
 
-- **Always retry on network failure/timeout** — handoffs and acks are idempotent.
-- Key off `serial` (handoffs) and outbox `id` (returns), never on array position.
+- **Always retry on network failure/timeout** — handoffs and acks are idempotent
+  (units key on `serial`, stock keys on `handoffId`, acks on outbox `id`).
+- Never key off array position.
 - Rate limiting is per API key; keep batches reasonable and back off on `429`.
-- This is contract **v1**. Additive fields may appear; ignore unknown fields.
+- This is contract **v2**. Additive fields may appear; ignore unknown fields.
   Breaking changes will bump the version and be announced.
+```

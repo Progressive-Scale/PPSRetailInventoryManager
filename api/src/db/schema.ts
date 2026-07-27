@@ -1,7 +1,8 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   bigserial,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -9,6 +10,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  pgView,
   serial,
   text,
   timestamp,
@@ -27,6 +29,10 @@ export const userRole = pgEnum('user_role', [
   'STORE_USER',
 ]);
 export const userStatus = pgEnum('user_status', ['ACTIVE', 'SUSPENDED']);
+// How a product's inventory is tracked. Immutable once a product exists.
+//  - SERIALIZED: one inventory_items row per physical unit (serial-tracked).
+//  - QUANTITY:   one inventory_stock counter row per store (quantity-tracked).
+export const trackingType = pgEnum('tracking_type', ['SERIALIZED', 'QUANTITY']);
 export const itemStatus = pgEnum('item_status', [
   'ON_HAND',
   'SOLD',
@@ -178,7 +184,8 @@ export const apiKeys = pgTable(
   ],
 );
 
-// Product catalog. Source of truth for a SKU's name/price/UPC within a company.
+// Product catalog. Source of truth for a SKU's name/price/UPC/tracking within a
+// company. Both serialized units and quantity stock reference a product.
 export const products = pgTable(
   'products',
   {
@@ -193,6 +200,11 @@ export const products = pgTable(
       .notNull()
       .default('0'),
     upc: text('upc'),
+    // Immutable after creation (enforced in the update endpoint).
+    trackingType: trackingType('tracking_type').notNull().default('SERIALIZED'),
+    // Set when an unknown scan/handoff created this product and an admin must
+    // review/complete it (rename, price, etc.). Moved here from inventory_items.
+    needsReview: boolean('needs_review').notNull().default(false),
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -205,10 +217,15 @@ export const products = pgTable(
   (t) => [
     index('products_company_idx').on(t.companyId),
     uniqueIndex('products_company_sku_uniq').on(t.companyId, t.sku),
-    index('products_company_upc_idx').on(t.companyId, t.upc),
+    // UPC unique within a company where present (nullable UPCs don't collide).
+    uniqueIndex('products_company_upc_uniq')
+      .on(t.companyId, t.upc)
+      .where(sql`${t.upc} is not null`),
   ],
 );
 
+// SERIALIZED units only. One row per physical unit. Catalog fields (sku, name,
+// price, upc, description) live on products; expiration is per-unit.
 export const inventoryItems = pgTable(
   'inventory_items',
   {
@@ -219,25 +236,15 @@ export const inventoryItems = pgTable(
     storeId: integer('store_id')
       .notNull()
       .references(() => stores.id),
-    // Catalog link (source of truth for name/price/upc). Null on legacy items
-    // and on cycle-count "new item" unknowns pending review.
-    productId: integer('product_id').references(() => products.id),
+    // Catalog link — always set (the product carries sku/name/price/upc).
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
     // The ERP's serial / GS1 id. Unique per company.
     serial: text('serial').notNull(),
-    sku: text('sku').notNull(),
-    name: text('name').notNull(),
-    description: text('description'),
-    price: numeric('price', { precision: 12, scale: 2 })
-      .notNull()
-      .default('0'),
     status: itemStatus('status').notNull().default('ON_HAND'),
-    // Expiration date (calendar date, nullable). Set via sync handoffs / scanner.
+    // Expiration date (calendar date, nullable). Per physical unit.
     expirationDate: date('expiration_date'),
-    // UPC / barcode for counting by product code.
-    upc: text('upc'),
-    // Set when an item was created/altered by a cycle count and needs an
-    // admin to review/complete it.
-    needsReview: boolean('needs_review').notNull().default(false),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -257,12 +264,44 @@ export const inventoryItems = pgTable(
       t.storeId,
       t.status,
     ),
-    index('inventory_items_company_upc_idx').on(t.companyId, t.upc),
+    index('inventory_items_company_product_idx').on(t.companyId, t.productId),
+  ],
+);
+
+// QUANTITY products only. One counter row per product per store.
+export const inventoryStock = pgTable(
+  'inventory_stock',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
+    quantityOnHand: integer('quantity_on_hand').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('inventory_stock_company_store_product_uniq').on(
+      t.companyId,
+      t.storeId,
+      t.productId,
+    ),
+    index('inventory_stock_company_idx').on(t.companyId),
+    check('inventory_stock_qty_nonneg', sql`${t.quantityOnHand} >= 0`),
   ],
 );
 
 // The ledger. Append-only: one row per inventory state change, written in the
-// same transaction as the item update.
+// same transaction as the item/stock update. Covers both tracking types:
+// item_id is set for serialized units only; quantity_delta is ±N.
 export const inventoryTransactions = pgTable(
   'inventory_transactions',
   {
@@ -273,9 +312,11 @@ export const inventoryTransactions = pgTable(
     storeId: integer('store_id')
       .notNull()
       .references(() => stores.id),
-    itemId: uuid('item_id')
+    productId: integer('product_id')
       .notNull()
-      .references(() => inventoryItems.id),
+      .references(() => products.id),
+    // Serialized units only; null for quantity movements.
+    itemId: uuid('item_id').references(() => inventoryItems.id),
     type: transactionType('type').notNull(),
     quantityDelta: integer('quantity_delta').notNull(),
     note: text('note'),
@@ -283,6 +324,8 @@ export const inventoryTransactions = pgTable(
       () => users.id,
     ),
     source: transactionSource('source').notNull(),
+    // Set when the movement was generated by a cycle count.
+    cycleCountId: integer('cycle_count_id').references(() => cycleCounts.id),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -294,10 +337,35 @@ export const inventoryTransactions = pgTable(
       t.createdAt,
     ),
     index('inv_tx_company_item_idx').on(t.companyId, t.itemId),
+    index('inv_tx_company_product_idx').on(t.companyId, t.productId),
+  ],
+);
+
+// Idempotency ledger for quantity handoffs. A client-generated handoff_id is
+// recorded once per shipment line so redelivery cannot double-increment stock.
+export const syncReceipts = pgTable(
+  'sync_receipts',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    handoffId: text('handoff_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sync_receipts_company_handoff_uniq').on(
+      t.companyId,
+      t.handoffId,
+    ),
   ],
 );
 
 // Queue of returns for the customer's sync agent to pull and apply in the ERP.
+// Serialized returns carry item_id/serial; quantity returns carry only the
+// product (payload holds upc + quantity).
 export const outboxReturns = pgTable(
   'outbox_returns',
   {
@@ -308,10 +376,12 @@ export const outboxReturns = pgTable(
     storeId: integer('store_id')
       .notNull()
       .references(() => stores.id),
-    itemId: uuid('item_id')
+    productId: integer('product_id')
       .notNull()
-      .references(() => inventoryItems.id),
-    serial: text('serial').notNull(),
+      .references(() => products.id),
+    // Serialized returns only.
+    itemId: uuid('item_id').references(() => inventoryItems.id),
+    serial: text('serial'),
     payload: jsonb('payload').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -325,7 +395,8 @@ export const outboxReturns = pgTable(
 );
 
 // Cycle counts — a store-wide physical count session. Closing resolves the
-// store's ON_HAND items (present vs sold) in one transaction.
+// store's ON_HAND serialized units (present vs sold) and applies submitted
+// quantity counts, all in one transaction.
 export const cycleCounts = pgTable(
   'cycle_counts',
   {
@@ -355,7 +426,9 @@ export const cycleCounts = pgTable(
   ],
 );
 
-// One line per item resolution within a cycle count (append-only in practice).
+// One line per resolution within a cycle count (append-only in practice).
+// product_id is always set; item_id/serial only for serialized resolutions;
+// quantity only for COUNTED_BY_UPC (quantity) lines.
 export const cycleCountLines = pgTable(
   'cycle_count_lines',
   {
@@ -366,10 +439,12 @@ export const cycleCountLines = pgTable(
     cycleCountId: integer('cycle_count_id')
       .notNull()
       .references(() => cycleCounts.id),
-    itemId: uuid('item_id')
+    productId: integer('product_id')
       .notNull()
-      .references(() => inventoryItems.id),
-    serial: text('serial').notNull(),
+      .references(() => products.id),
+    itemId: uuid('item_id').references(() => inventoryItems.id),
+    serial: text('serial'),
+    quantity: integer('quantity'),
     resolution: cycleCountResolution('resolution').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -382,6 +457,24 @@ export const cycleCountLines = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Read view — product-level on-hand per store, unifying both tracking types.
+// Created by a hand-written migration WITH (security_invoker = true) so RLS
+// on the underlying tables still applies. Declared here as `.existing()` for
+// typing only (Drizzle does not manage its DDL).
+// ---------------------------------------------------------------------------
+
+export const storeInventory = pgView('store_inventory', {
+  companyId: integer('company_id').notNull(),
+  storeId: integer('store_id').notNull(),
+  productId: integer('product_id').notNull(),
+  sku: text('sku').notNull(),
+  upc: text('upc'),
+  name: text('name').notNull(),
+  trackingType: trackingType('tracking_type').notNull(),
+  onHand: integer('on_hand').notNull(),
+}).existing();
+
+// ---------------------------------------------------------------------------
 // Relations
 // ---------------------------------------------------------------------------
 
@@ -390,12 +483,34 @@ export const companiesRelations = relations(companies, ({ many }) => ({
   users: many(users),
 }));
 
+export const usersRelations = relations(users, ({ one }) => ({
+  company: one(companies, {
+    fields: [users.companyId],
+    references: [companies.id],
+  }),
+  store: one(stores, {
+    fields: [users.storeId],
+    references: [stores.id],
+  }),
+}));
+
 export const storesRelations = relations(stores, ({ one, many }) => ({
   company: one(companies, {
     fields: [stores.companyId],
     references: [companies.id],
   }),
   items: many(inventoryItems),
+  stock: many(inventoryStock),
+}));
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  company: one(companies, {
+    fields: [products.companyId],
+    references: [companies.id],
+  }),
+  items: many(inventoryItems),
+  stock: many(inventoryStock),
+  transactions: many(inventoryTransactions),
 }));
 
 export const inventoryItemsRelations = relations(
@@ -409,7 +524,48 @@ export const inventoryItemsRelations = relations(
       fields: [inventoryItems.storeId],
       references: [stores.id],
     }),
+    product: one(products, {
+      fields: [inventoryItems.productId],
+      references: [products.id],
+    }),
     transactions: many(inventoryTransactions),
+  }),
+);
+
+export const inventoryStockRelations = relations(inventoryStock, ({ one }) => ({
+  company: one(companies, {
+    fields: [inventoryStock.companyId],
+    references: [companies.id],
+  }),
+  store: one(stores, {
+    fields: [inventoryStock.storeId],
+    references: [stores.id],
+  }),
+  product: one(products, {
+    fields: [inventoryStock.productId],
+    references: [products.id],
+  }),
+}));
+
+export const inventoryTransactionsRelations = relations(
+  inventoryTransactions,
+  ({ one }) => ({
+    company: one(companies, {
+      fields: [inventoryTransactions.companyId],
+      references: [companies.id],
+    }),
+    store: one(stores, {
+      fields: [inventoryTransactions.storeId],
+      references: [stores.id],
+    }),
+    product: one(products, {
+      fields: [inventoryTransactions.productId],
+      references: [products.id],
+    }),
+    item: one(inventoryItems, {
+      fields: [inventoryTransactions.itemId],
+      references: [inventoryItems.id],
+    }),
   }),
 );
 
@@ -424,12 +580,16 @@ export type User = typeof users.$inferSelect;
 export type Invitation = typeof invitations.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InventoryItem = typeof inventoryItems.$inferSelect;
+export type InventoryStock = typeof inventoryStock.$inferSelect;
 export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
+export type SyncReceipt = typeof syncReceipts.$inferSelect;
 export type OutboxReturn = typeof outboxReturns.$inferSelect;
 export type CycleCount = typeof cycleCounts.$inferSelect;
 export type CycleCountLine = typeof cycleCountLines.$inferSelect;
+export type StoreInventoryRow = typeof storeInventory.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
+export type TrackingType = (typeof trackingType.enumValues)[number];
 export type ItemStatus = (typeof itemStatus.enumValues)[number];
 export type CycleCountResolution =
   (typeof cycleCountResolution.enumValues)[number];
@@ -442,7 +602,9 @@ export const TENANT_TABLES = [
   'api_keys',
   'products',
   'inventory_items',
+  'inventory_stock',
   'inventory_transactions',
+  'sync_receipts',
   'outbox_returns',
   'cycle_counts',
   'cycle_count_lines',

@@ -1,13 +1,11 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
-  ParseUUIDPipe,
-  Patch,
+  ParseIntPipe,
   Post,
   Query,
   UseGuards,
@@ -18,12 +16,7 @@ import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
-import {
-  CreateItemDto,
-  ItemActionDto,
-  ListItemsQuery,
-  UpdateItemDto,
-} from './dto/inventory.dto';
+import { InventoryActionDto, ListInventoryQuery } from './dto/inventory.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(['COMPANY_ADMIN', 'STORE_USER'])
@@ -31,64 +24,36 @@ import {
 export class InventoryController {
   constructor(private readonly svc: InventoryService) {}
 
+  // Product-level on-hand rows (serialized unit counts + quantity stock).
   @Get()
-  list(@Ctx() ctx: DataContext, @Query() query: ListItemsQuery) {
+  list(@Ctx() ctx: DataContext, @Query() query: ListInventoryQuery) {
     return this.svc.list(ctx, query);
   }
 
-  @Get(':id')
-  findOne(@Ctx() ctx: DataContext, @Param('id', new ParseUUIDPipe()) id: string) {
-    return this.svc.findOne(ctx, id);
-  }
-
-  @Post()
-  create(@Ctx() ctx: DataContext, @Body() dto: CreateItemDto) {
-    return this.svc.create(ctx, dto);
-  }
-
-  @Patch(':id')
-  update(
+  // Expansion for a single product: units (serialized) or stock + ledger.
+  @Get(':productId')
+  getProduct(
     @Ctx() ctx: DataContext,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: UpdateItemDto,
+    @Param('productId', ParseIntPipe) productId: number,
   ) {
-    return this.svc.update(ctx, id, dto);
+    return this.svc.getProduct(ctx, productId);
   }
 
-  @Post(':id/sell')
+  @Post('sell')
   @HttpCode(HttpStatus.OK)
-  sell(
-    @Ctx() ctx: DataContext,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: ItemActionDto,
-  ) {
-    return this.svc.sell(ctx, id, dto);
+  sell(@Ctx() ctx: DataContext, @Body() dto: InventoryActionDto) {
+    return this.svc.sell(ctx, dto);
   }
 
-  @Post(':id/return')
+  @Post('return')
   @HttpCode(HttpStatus.OK)
-  returnItem(
-    @Ctx() ctx: DataContext,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: ItemActionDto,
-  ) {
-    return this.svc.returnToWarehouse(ctx, id, dto);
+  returnItem(@Ctx() ctx: DataContext, @Body() dto: InventoryActionDto) {
+    return this.svc.returnToWarehouse(ctx, dto);
   }
 
-  @Post(':id/adjust')
+  @Post('adjust')
   @HttpCode(HttpStatus.OK)
-  adjust(
-    @Ctx() ctx: DataContext,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: ItemActionDto,
-  ) {
-    return this.svc.adjustOut(ctx, id, dto);
-  }
-
-  // Delete from the review queue (adjust-out; ledger preserved).
-  @Delete(':id')
-  @HttpCode(HttpStatus.OK)
-  remove(@Ctx() ctx: DataContext, @Param('id', new ParseUUIDPipe()) id: string) {
-    return this.svc.remove(ctx, id);
+  adjust(@Ctx() ctx: DataContext, @Body() dto: InventoryActionDto) {
+    return this.svc.adjustOut(ctx, dto);
   }
 }

@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 import { and, desc, eq, sql, SQL } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
@@ -12,21 +11,28 @@ import {
   CycleCountResolution,
   cycleCountLines,
   cycleCounts,
-  InventoryItem,
   inventoryItems,
+  inventoryStock,
   inventoryTransactions,
+  Product,
+  products,
 } from '../db/schema';
 import { DataContext } from '../auth/auth.types';
 import { Paginated, resolvePaging } from '../common/pagination';
+import { resolveOrCreateProduct } from '../products/product-catalog';
 import {
   CloseCycleCountDto,
   ListCycleCountsQuery,
+  NewItemDto,
   OpenCycleCountDto,
+  QuantityCountDto,
 } from './dto/cycle-counts.dto';
 
 interface PendingLine {
-  itemId: string;
-  serial: string;
+  productId: number;
+  itemId: string | null;
+  serial: string | null;
+  quantity: number | null;
   resolution: CycleCountResolution;
 }
 
@@ -50,7 +56,6 @@ export class CycleCountsService {
     return requested;
   }
 
-  /** Load a cycle count scoped to the caller (company + store rules). */
   private async loadCount(
     tx: Tx,
     ctx: DataContext,
@@ -75,15 +80,17 @@ export class CycleCountsService {
   async open(ctx: DataContext, dto: OpenCycleCountDto) {
     const storeId = this.writeStoreId(ctx, dto.storeId);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      const snapshot = await tx
+      // Serialized ON_HAND units at the store.
+      const units = await tx
         .select({
           id: inventoryItems.id,
           serial: inventoryItems.serial,
-          upc: inventoryItems.upc,
-          sku: inventoryItems.sku,
-          name: inventoryItems.name,
+          productId: inventoryItems.productId,
+          sku: products.sku,
+          name: products.name,
         })
         .from(inventoryItems)
+        .innerJoin(products, eq(products.id, inventoryItems.productId))
         .where(
           and(
             eq(inventoryItems.companyId, ctx.companyId),
@@ -93,6 +100,25 @@ export class CycleCountsService {
         )
         .orderBy(inventoryItems.serial);
 
+      // Quantity stock at the store.
+      const stock = await tx
+        .select({
+          productId: inventoryStock.productId,
+          quantityOnHand: inventoryStock.quantityOnHand,
+          sku: products.sku,
+          name: products.name,
+          upc: products.upc,
+        })
+        .from(inventoryStock)
+        .innerJoin(products, eq(products.id, inventoryStock.productId))
+        .where(
+          and(
+            eq(inventoryStock.companyId, ctx.companyId),
+            eq(inventoryStock.storeId, storeId),
+          ),
+        )
+        .orderBy(products.sku);
+
       const [cc] = await tx
         .insert(cycleCounts)
         .values({
@@ -100,11 +126,11 @@ export class CycleCountsService {
           storeId,
           status: 'OPEN',
           openedByUserId: ctx.userId,
-          expectedCount: snapshot.length,
+          expectedCount: units.length,
         })
         .returning();
 
-      return { id: cc.id, cycleCount: cc, snapshot };
+      return { id: cc.id, cycleCount: cc, snapshot: { units, stock } };
     });
   }
 
@@ -113,19 +139,22 @@ export class CycleCountsService {
   async close(ctx: DataContext, id: number, dto: CloseCycleCountDto) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const cc = await this.loadCount(tx, ctx, id, true);
-
       if (cc.status === 'CLOSED') return this.buildResult(tx, ctx, cc); // idempotent
       if (cc.status === 'CANCELLED') {
         throw new ConflictException('Cycle count was cancelled.');
       }
 
       const scannedSerials = dto.scannedSerials ?? [];
-      const upcCounts = dto.upcCounts ?? [];
+      const quantityCounts = dto.quantityCounts ?? [];
       const newItems = dto.newItems ?? [];
 
-      // Current ON_HAND universe for the store.
+      // Serialized ON_HAND universe for the store (snapshot before mutations).
       const universe = await tx
-        .select()
+        .select({
+          id: inventoryItems.id,
+          serial: inventoryItems.serial,
+          productId: inventoryItems.productId,
+        })
         .from(inventoryItems)
         .where(
           and(
@@ -134,9 +163,7 @@ export class CycleCountsService {
             eq(inventoryItems.status, 'ON_HAND'),
           ),
         );
-      const bySerial = new Map<string, InventoryItem>();
-      for (const it of universe) bySerial.set(it.serial, it);
-
+      const bySerial = new Map(universe.map((u) => [u.serial, u]));
       const accounted = new Set<string>();
       const lines: PendingLine[] = [];
 
@@ -145,79 +172,57 @@ export class CycleCountsService {
         const it = bySerial.get(serial);
         if (it && !accounted.has(it.id)) {
           accounted.add(it.id);
-          lines.push({ itemId: it.id, serial: it.serial, resolution: 'SCANNED' });
+          lines.push({
+            productId: it.productId,
+            itemId: it.id,
+            serial: it.serial,
+            quantity: null,
+            resolution: 'SCANNED',
+          });
         }
       }
 
-      // 2) upcCounts -> keep NEWEST N of that upc as ON_HAND (COUNTED_BY_UPC);
-      //    the remainder stays unaccounted and falls to the sold sweep.
-      for (const { upc, quantity } of upcCounts) {
-        const ofUpc = universe
-          .filter((i) => i.upc === upc)
-          .sort((a, b) => this.newestFirst(a, b));
-        for (const it of ofUpc.slice(0, quantity)) {
-          if (!accounted.has(it.id)) {
-            accounted.add(it.id);
-            lines.push({
-              itemId: it.id,
-              serial: it.serial,
-              resolution: 'COUNTED_BY_UPC',
-            });
-          }
-        }
-      }
-
-      // 3) newItems -> create ON_HAND needs_review + RECEIPT(CYCLE_COUNT) + NEW_ITEM.
-      //    A provided serial that already exists in the universe is treated as
-      //    a scan, not a new item.
-      for (const ni of newItems) {
-        if (!ni.isUpc) {
-          const existing = bySerial.get(ni.serialOrUpc);
-          if (existing) {
-            if (!accounted.has(existing.id)) {
-              accounted.add(existing.id);
-              lines.push({
-                itemId: existing.id,
-                serial: existing.serial,
-                resolution: 'SCANNED',
-              });
-            }
-            continue;
-          }
-        }
-        const serial = ni.isUpc
-          ? `pps-cc-${randomBytes(8).toString('hex')}`
-          : ni.serialOrUpc;
-        const upc = ni.isUpc ? ni.serialOrUpc : null;
-        const [item] = await tx
-          .insert(inventoryItems)
-          .values({
+      // 2) quantity counts -> set stock to counted, post ONE delta ledger row.
+      for (const qc of quantityCounts) {
+        const product = await this.resolveQuantityProduct(tx, ctx, qc);
+        const current = await this.currentStock(tx, ctx, cc.storeId, product.id);
+        const delta = qc.countedQuantity - current;
+        if (delta !== 0) {
+          await tx.insert(inventoryTransactions).values({
             companyId: ctx.companyId,
             storeId: cc.storeId,
-            serial,
-            upc,
-            sku: 'REVIEW',
-            name: ni.name,
-            expirationDate: ni.expirationDate ?? null,
-            status: 'ON_HAND',
-            needsReview: true,
-            receivedAt: new Date(),
-          })
-          .returning();
-        await tx.insert(inventoryTransactions).values({
-          companyId: ctx.companyId,
-          storeId: cc.storeId,
-          itemId: item.id,
-          type: 'RECEIPT',
-          quantityDelta: 1,
-          note: `Cycle count #${cc.id} new item`,
-          source: 'CYCLE_COUNT',
-          performedByUserId: ctx.userId,
+            productId: product.id,
+            type: delta < 0 ? 'SALE' : 'ADJUSTMENT',
+            quantityDelta: delta,
+            note:
+              delta < 0
+                ? `Cycle count #${cc.id}`
+                : `Cycle count #${cc.id} (found in count)`,
+            source: 'CYCLE_COUNT',
+            cycleCountId: cc.id,
+            performedByUserId: ctx.userId,
+          });
+        }
+        await this.setStock(tx, ctx, cc.storeId, product.id, qc.countedQuantity);
+        lines.push({
+          productId: product.id,
+          itemId: null,
+          serial: null,
+          quantity: qc.countedQuantity,
+          resolution: 'COUNTED_BY_UPC',
         });
-        lines.push({ itemId: item.id, serial: item.serial, resolution: 'NEW_ITEM' });
       }
 
-      // 4) sold sweep — any ON_HAND universe item not accounted -> SOLD.
+      // 3) newItems -> create needs_review products + unit/stock + RECEIPT.
+      for (const ni of newItems) {
+        const line = await this.applyNewItem(tx, ctx, cc.id, cc.storeId, ni, {
+          bySerial,
+          accounted,
+        });
+        if (line) lines.push(line);
+      }
+
+      // 4) sold sweep — any serialized ON_HAND universe item not accounted.
       let soldCount = 0;
       for (const it of universe) {
         if (accounted.has(it.id)) continue;
@@ -228,14 +233,22 @@ export class CycleCountsService {
         await tx.insert(inventoryTransactions).values({
           companyId: ctx.companyId,
           storeId: cc.storeId,
+          productId: it.productId,
           itemId: it.id,
           type: 'SALE',
           quantityDelta: -1,
           note: `Cycle count #${cc.id}`,
           source: 'CYCLE_COUNT',
+          cycleCountId: cc.id,
           performedByUserId: ctx.userId,
         });
-        lines.push({ itemId: it.id, serial: it.serial, resolution: 'MARKED_SOLD' });
+        lines.push({
+          productId: it.productId,
+          itemId: it.id,
+          serial: it.serial,
+          quantity: null,
+          resolution: 'MARKED_SOLD',
+        });
         soldCount++;
       }
 
@@ -244,8 +257,10 @@ export class CycleCountsService {
           lines.map((l) => ({
             companyId: ctx.companyId,
             cycleCountId: cc.id,
+            productId: l.productId,
             itemId: l.itemId,
             serial: l.serial,
+            quantity: l.quantity,
             resolution: l.resolution,
           })),
         );
@@ -269,11 +284,6 @@ export class CycleCountsService {
 
       return this.buildResult(tx, ctx, updated);
     });
-  }
-
-  private newestFirst(a: InventoryItem, b: InventoryItem): number {
-    const t = b.createdAt.getTime() - a.createdAt.getTime();
-    return t !== 0 ? t : b.serial.localeCompare(a.serial);
   }
 
   // ---- cancel ------------------------------------------------------------
@@ -329,11 +339,245 @@ export class CycleCountsService {
     });
   }
 
+  // ---- internals ---------------------------------------------------------
+
+  private async resolveQuantityProduct(
+    tx: Tx,
+    ctx: DataContext,
+    qc: QuantityCountDto,
+  ): Promise<Product> {
+    let product: Product | undefined;
+    if (qc.productId !== undefined) {
+      [product] = await tx
+        .select()
+        .from(products)
+        .where(
+          and(eq(products.id, qc.productId), eq(products.companyId, ctx.companyId)),
+        )
+        .limit(1);
+    } else if (qc.upc) {
+      [product] = await tx
+        .select()
+        .from(products)
+        .where(and(eq(products.companyId, ctx.companyId), eq(products.upc, qc.upc)))
+        .limit(1);
+    }
+    if (!product) {
+      throw new BadRequestException(
+        `Unknown product for count (${qc.productId ?? qc.upc}).`,
+      );
+    }
+    if (product.trackingType !== 'QUANTITY') {
+      throw new BadRequestException(
+        `Product ${product.sku} is serialized; count it by serial.`,
+      );
+    }
+    return product;
+  }
+
+  private async currentStock(
+    tx: Tx,
+    ctx: DataContext,
+    storeId: number,
+    productId: number,
+  ): Promise<number> {
+    const [row] = await tx
+      .select({ q: inventoryStock.quantityOnHand })
+      .from(inventoryStock)
+      .where(
+        and(
+          eq(inventoryStock.companyId, ctx.companyId),
+          eq(inventoryStock.storeId, storeId),
+          eq(inventoryStock.productId, productId),
+        ),
+      )
+      .for('update');
+    return row?.q ?? 0;
+  }
+
+  private async setStock(
+    tx: Tx,
+    ctx: DataContext,
+    storeId: number,
+    productId: number,
+    quantity: number,
+  ): Promise<void> {
+    const updated = await tx
+      .update(inventoryStock)
+      .set({ quantityOnHand: quantity, updatedAt: new Date() })
+      .where(
+        and(
+          eq(inventoryStock.companyId, ctx.companyId),
+          eq(inventoryStock.storeId, storeId),
+          eq(inventoryStock.productId, productId),
+        ),
+      )
+      .returning({ id: inventoryStock.id });
+    if (updated.length === 0) {
+      await tx.insert(inventoryStock).values({
+        companyId: ctx.companyId,
+        storeId,
+        productId,
+        quantityOnHand: quantity,
+      });
+    }
+  }
+
+  private async addStock(
+    tx: Tx,
+    ctx: DataContext,
+    storeId: number,
+    productId: number,
+    delta: number,
+  ): Promise<void> {
+    const current = await this.currentStock(tx, ctx, storeId, productId);
+    await this.setStock(tx, ctx, storeId, productId, current + delta);
+  }
+
+  /** Create/attach a needs-review product for an unknown scan. Returns the line. */
+  private async applyNewItem(
+    tx: Tx,
+    ctx: DataContext,
+    cycleCountId: number,
+    storeId: number,
+    ni: NewItemDto,
+    scan: { bySerial: Map<string, { id: string; productId: number; serial: string }>; accounted: Set<string> },
+  ): Promise<PendingLine | null> {
+    if (!ni.isUpc) {
+      // Serialized. If the serial already exists, treat as a scan.
+      const serial = ni.serialOrUpc;
+      const existing = scan.bySerial.get(serial);
+      if (existing) {
+        if (!scan.accounted.has(existing.id)) {
+          scan.accounted.add(existing.id);
+          return {
+            productId: existing.productId,
+            itemId: existing.id,
+            serial,
+            quantity: null,
+            resolution: 'SCANNED',
+          };
+        }
+        return null;
+      }
+      const [dup] = await tx
+        .select({ id: inventoryItems.id })
+        .from(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.companyId, ctx.companyId),
+            eq(inventoryItems.serial, serial),
+          ),
+        )
+        .limit(1);
+      if (dup) return null; // exists but not ON_HAND at this store; skip
+
+      const product = await resolveOrCreateProduct(tx, ctx.companyId, {
+        sku: `REVIEW-${serial}`,
+        name: ni.name,
+        price: '0',
+        upc: null,
+        trackingType: 'SERIALIZED',
+        needsReview: true,
+      });
+      const [item] = await tx
+        .insert(inventoryItems)
+        .values({
+          companyId: ctx.companyId,
+          storeId,
+          productId: product.id,
+          serial,
+          status: 'ON_HAND',
+          expirationDate: ni.expirationDate ?? null,
+          receivedAt: new Date(),
+        })
+        .returning();
+      await tx.insert(inventoryTransactions).values({
+        companyId: ctx.companyId,
+        storeId,
+        productId: product.id,
+        itemId: item.id,
+        type: 'RECEIPT',
+        quantityDelta: 1,
+        note: `Cycle count #${cycleCountId} new item`,
+        source: 'CYCLE_COUNT',
+        cycleCountId,
+        performedByUserId: ctx.userId,
+      });
+      return {
+        productId: product.id,
+        itemId: item.id,
+        serial,
+        quantity: null,
+        resolution: 'NEW_ITEM',
+      };
+    }
+
+    // Quantity. Attach to an existing product by UPC, else create a review one.
+    const upc = ni.serialOrUpc;
+    const qty = ni.quantity ?? 0;
+    if (qty <= 0) {
+      throw new BadRequestException('A quantity new item requires a quantity.');
+    }
+    let [product] = await tx
+      .select()
+      .from(products)
+      .where(and(eq(products.companyId, ctx.companyId), eq(products.upc, upc)))
+      .limit(1);
+    if (!product) {
+      product = await resolveOrCreateProduct(tx, ctx.companyId, {
+        sku: `REVIEW-UPC-${upc}`,
+        name: ni.name,
+        price: '0',
+        upc,
+        trackingType: 'QUANTITY',
+        needsReview: true,
+      });
+    }
+    if (product.trackingType !== 'QUANTITY') {
+      throw new BadRequestException(
+        `UPC ${upc} belongs to serialized product ${product.sku}.`,
+      );
+    }
+    await this.addStock(tx, ctx, storeId, product.id, qty);
+    await tx.insert(inventoryTransactions).values({
+      companyId: ctx.companyId,
+      storeId,
+      productId: product.id,
+      type: 'RECEIPT',
+      quantityDelta: qty,
+      note: `Cycle count #${cycleCountId} new item`,
+      source: 'CYCLE_COUNT',
+      cycleCountId,
+      performedByUserId: ctx.userId,
+    });
+    return {
+      productId: product.id,
+      itemId: null,
+      serial: null,
+      quantity: qty,
+      resolution: 'NEW_ITEM',
+    };
+  }
+
   /** Deterministic result view (used by close, re-close and GET /:id). */
   private async buildResult(tx: Tx, ctx: DataContext, cc: CycleCount) {
     const rows = await tx
-      .select()
+      .select({
+        id: cycleCountLines.id,
+        companyId: cycleCountLines.companyId,
+        cycleCountId: cycleCountLines.cycleCountId,
+        productId: cycleCountLines.productId,
+        itemId: cycleCountLines.itemId,
+        serial: cycleCountLines.serial,
+        quantity: cycleCountLines.quantity,
+        resolution: cycleCountLines.resolution,
+        createdAt: cycleCountLines.createdAt,
+        sku: products.sku,
+        name: products.name,
+      })
       .from(cycleCountLines)
+      .innerJoin(products, eq(products.id, cycleCountLines.productId))
       .where(
         and(
           eq(cycleCountLines.companyId, ctx.companyId),
@@ -350,11 +594,32 @@ export class CycleCountsService {
     };
     for (const r of rows) byResolution[r.resolution].push(r);
 
+    // Quantity products with stock at the store that this count never touched
+    // (no line references them) — surfaced so the review UI can warn.
+    const touchedProductIds = new Set(rows.map((l) => l.productId));
+    const stockRows = await tx
+      .select({
+        productId: inventoryStock.productId,
+        quantityOnHand: inventoryStock.quantityOnHand,
+        sku: products.sku,
+        name: products.name,
+      })
+      .from(inventoryStock)
+      .innerJoin(products, eq(products.id, inventoryStock.productId))
+      .where(
+        and(
+          eq(inventoryStock.companyId, ctx.companyId),
+          eq(inventoryStock.storeId, cc.storeId),
+        ),
+      );
+    const notCounted = stockRows.filter((s) => !touchedProductIds.has(s.productId));
+
     return {
       cycleCount: cc,
       lines: rows,
       linesByResolution: byResolution,
       markedSoldSerials: byResolution.MARKED_SOLD.map((l) => l.serial),
+      notCounted,
     };
   }
 }

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -21,7 +22,7 @@ import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { TenantDbService } from '../db/tenant-db.service';
-import { inventoryItems, products } from '../db/schema';
+import { inventoryItems, inventoryStock, products } from '../db/schema';
 import {
   CreateProductDto,
   ListProductsQuery,
@@ -40,6 +41,8 @@ export class ProductsController {
       const conds: SQL[] = [eq(products.companyId, ctx.companyId)];
       if (query.active !== undefined)
         conds.push(eq(products.active, query.active));
+      if (query.needsReview !== undefined)
+        conds.push(eq(products.needsReview, query.needsReview));
       return tx
         .select()
         .from(products)
@@ -61,14 +64,12 @@ export class ProductsController {
             description: dto.description ?? null,
             price: dto.price !== undefined ? String(dto.price) : '0',
             upc: dto.upc ?? null,
+            trackingType: dto.trackingType,
           })
           .returning();
         return row;
       } catch (err) {
-        if (isUnique(err)) {
-          throw new ConflictException('A product with that SKU already exists.');
-        }
-        throw err;
+        throw this.conflictOrRethrow(err);
       }
     });
   }
@@ -80,6 +81,22 @@ export class ProductsController {
     @Body() dto: UpdateProductDto,
   ) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(products)
+        .where(and(eq(products.id, id), eq(products.companyId, ctx.companyId)))
+        .limit(1);
+      if (!existing) throw new NotFoundException('Product not found.');
+      // tracking_type is immutable.
+      if (
+        dto.trackingType !== undefined &&
+        dto.trackingType !== existing.trackingType
+      ) {
+        throw new BadRequestException(
+          'tracking_type is immutable after creation.',
+        );
+      }
+
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (dto.sku !== undefined) patch.sku = dto.sku;
       if (dto.name !== undefined) patch.name = dto.name;
@@ -87,19 +104,16 @@ export class ProductsController {
       if (dto.price !== undefined) patch.price = String(dto.price);
       if (dto.upc !== undefined) patch.upc = dto.upc;
       if (dto.active !== undefined) patch.active = dto.active;
+      if (dto.needsReview !== undefined) patch.needsReview = dto.needsReview;
       try {
         const [row] = await tx
           .update(products)
           .set(patch)
           .where(and(eq(products.id, id), eq(products.companyId, ctx.companyId)))
           .returning();
-        if (!row) throw new NotFoundException('Product not found.');
         return row;
       } catch (err) {
-        if (isUnique(err)) {
-          throw new ConflictException('A product with that SKU already exists.');
-        }
-        throw err;
+        throw this.conflictOrRethrow(err);
       }
     });
   }
@@ -108,7 +122,7 @@ export class ProductsController {
   @HttpCode(HttpStatus.OK)
   remove(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      // FK-safe: block if any inventory item references this product.
+      // FK-safe: block if any unit or stock row references this product.
       const [{ count }] = await tx
         .select({ count: sql<number>`count(*)` })
         .from(inventoryItems)
@@ -118,7 +132,16 @@ export class ProductsController {
             eq(inventoryItems.companyId, ctx.companyId),
           ),
         );
-      if (Number(count) > 0) {
+      const [{ scount }] = await tx
+        .select({ scount: sql<number>`count(*)` })
+        .from(inventoryStock)
+        .where(
+          and(
+            eq(inventoryStock.productId, id),
+            eq(inventoryStock.companyId, ctx.companyId),
+          ),
+        );
+      if (Number(count) > 0 || Number(scount) > 0) {
         throw new ConflictException(
           'Cannot delete a product that has inventory. Deactivate it instead.',
         );
@@ -131,13 +154,18 @@ export class ProductsController {
       return { deleted: true, id };
     });
   }
-}
 
-function isUnique(err: unknown): boolean {
-  return (
-    !!err &&
-    typeof err === 'object' &&
-    'code' in err &&
-    (err as { code?: string }).code === '23505'
-  );
+  private conflictOrRethrow(err: unknown): unknown {
+    if (
+      !!err &&
+      typeof err === 'object' &&
+      'code' in err &&
+      (err as { code?: string }).code === '23505'
+    ) {
+      return new ConflictException(
+        'A product with that SKU or UPC already exists.',
+      );
+    }
+    return err;
+  }
 }

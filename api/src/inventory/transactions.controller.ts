@@ -18,6 +18,13 @@ class ListTransactionsQuery extends PaginationQuery {
   @IsUUID()
   itemId?: string;
 
+  // Quantity-product ledger (no itemId).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productId?: number;
+
   @IsOptional()
   @IsEnum(TX_TYPES as unknown as string[])
   type?: (typeof TX_TYPES)[number];
@@ -51,6 +58,8 @@ export class TransactionsController {
       if (storeId != null)
         conds.push(eq(inventoryTransactions.storeId, storeId));
       if (query.itemId) conds.push(eq(inventoryTransactions.itemId, query.itemId));
+      if (query.productId)
+        conds.push(eq(inventoryTransactions.productId, query.productId));
       if (query.type)
         conds.push(eq(inventoryTransactions.type, query.type));
 
