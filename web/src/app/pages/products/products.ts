@@ -2,7 +2,7 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { CreateProduct, Product, UpdateProduct } from '../../core/models';
+import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
 import { NeedsReviewComponent } from '../needs-review/needs-review';
 
 type SubTab = 'catalog' | 'review';
@@ -49,6 +49,7 @@ type SubTab = 'catalog' | 'review';
                   <tr>
                     <th class="col-sku">SKU</th>
                     <th class="col-name">Name</th>
+                    <th class="col-type">Type</th>
                     <th class="col-price">Price</th>
                     <th class="col-upc">UPC</th>
                     <th class="col-active">Active</th>
@@ -61,6 +62,9 @@ type SubTab = 'catalog' | 'review';
                       @if (editProductId() === p.id) {
                         <td><input class="cell-input" name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
                         <td><input class="cell-input" name="ep-name" [(ngModel)]="productEdit.name" /></td>
+                        <td>
+                          <span class="type-badge" [class]="'tt-' + p.trackingType">{{ p.trackingType }}</span>
+                        </td>
                         <td>
                           <input
                             class="cell-input"
@@ -85,6 +89,9 @@ type SubTab = 'catalog' | 'review';
                       } @else {
                         <td>{{ p.sku }}</td>
                         <td>{{ p.name }}</td>
+                        <td>
+                          <span class="type-badge" [class]="'tt-' + p.trackingType">{{ p.trackingType }}</span>
+                        </td>
                         <td>{{ formatPrice(p.price) }}</td>
                         <td class="muted">{{ p.upc || '—' }}</td>
                         <td>{{ p.active ? 'Yes' : 'No' }}</td>
@@ -119,6 +126,13 @@ type SubTab = 'catalog' | 'review';
                 <label>
                   Name <span class="req">*</span>
                   <input name="m-name" [(ngModel)]="productDraft.name" required />
+                </label>
+                <label>
+                  Tracking type <span class="req">*</span>
+                  <select name="m-tracking" [(ngModel)]="productDraft.trackingType" required>
+                    <option value="SERIALIZED">Serialized</option>
+                    <option value="QUANTITY">Quantity</option>
+                  </select>
                 </label>
                 <label>
                   Price
@@ -279,22 +293,44 @@ type SubTab = 'catalog' | 'review';
         white-space: nowrap;
       }
       .col-sku {
-        width: 16%;
+        width: 14%;
       }
       .col-name {
-        width: 30%;
+        width: 24%;
+      }
+      .col-type {
+        width: 13%;
       }
       .col-price {
-        width: 12%;
+        width: 10%;
       }
       .col-upc {
-        width: 16%;
+        width: 14%;
       }
       .col-active {
-        width: 10%;
+        width: 9%;
       }
       .col-actions {
         width: 16%;
+      }
+      .type-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .type-badge.tt-SERIALIZED {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .type-badge.tt-QUANTITY {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
       }
       /* Inline edit inputs match the surrounding display text so the row
          does not grow when switching to edit mode. */
@@ -373,7 +409,8 @@ export class ProductsComponent implements OnInit {
     price: number | null;
     upc: string;
     description: string;
-  } = { sku: '', name: '', price: null, upc: '', description: '' };
+    trackingType: TrackingType;
+  } = { sku: '', name: '', price: null, upc: '', description: '', trackingType: 'SERIALIZED' };
   productFilter: 'all' | 'active' | 'inactive' = 'all';
   readonly editProductId = signal<number | null>(null);
   productEdit: {
@@ -402,7 +439,7 @@ export class ProductsComponent implements OnInit {
     const active =
       this.productFilter === 'active' ? true : this.productFilter === 'inactive' ? false : undefined;
     this.loading.set(true);
-    this.api.listProducts(active).subscribe({
+    this.api.listProducts({ active }).subscribe({
       next: (rows) => {
         this.products.set(rows);
         this.loading.set(false);
@@ -415,7 +452,7 @@ export class ProductsComponent implements OnInit {
   }
 
   openAddProduct(): void {
-    this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
+    this.productDraft = { sku: '', name: '', price: null, upc: '', description: '', trackingType: 'SERIALIZED' };
     this.modalError.set(null);
     this.showAddModal.set(true);
   }
@@ -430,7 +467,11 @@ export class ProductsComponent implements OnInit {
       this.modalError.set('Product SKU and name are required.');
       return;
     }
-    const dto: CreateProduct = { sku: this.productDraft.sku, name: this.productDraft.name };
+    const dto: CreateProduct = {
+      sku: this.productDraft.sku,
+      name: this.productDraft.name,
+      trackingType: this.productDraft.trackingType,
+    };
     if (this.productDraft.description) dto.description = this.productDraft.description;
     if (this.productDraft.price != null) dto.price = Number(this.productDraft.price);
     if (this.productDraft.upc) dto.upc = this.productDraft.upc;
@@ -440,7 +481,7 @@ export class ProductsComponent implements OnInit {
       next: () => {
         this.saving.set(false);
         this.showAddModal.set(false);
-        this.productDraft = { sku: '', name: '', price: null, upc: '', description: '' };
+        this.productDraft = { sku: '', name: '', price: null, upc: '', description: '', trackingType: 'SERIALIZED' };
         this.loadProducts();
       },
       error: (err) => {

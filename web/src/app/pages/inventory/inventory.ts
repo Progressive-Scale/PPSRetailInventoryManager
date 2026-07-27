@@ -5,52 +5,21 @@ import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import {
-  CreateInventoryItem,
-  InventoryItem,
+  InventoryProductDetail,
   ItemStatus,
+  QuantityInventoryDetail,
+  SerializedInventoryDetail,
   Store,
-  Transaction,
+  StoreInventoryRow,
 } from '../../core/models';
 
-type StatusFilter = 'ALL' | ItemStatus;
-
-interface NewItemModel {
-  serial: string;
-  sku: string;
-  name: string;
-  description: string;
-  price: string;
-  storeId: number | null;
-}
+type ActionVerb = 'sell' | 'return' | 'adjust';
 
 @Component({
   selector: 'app-inventory',
   imports: [FormsModule, DatePipe],
   template: `
     <main class="container">
-      <section class="card">
-        <h2>New item</h2>
-        <form class="add-form" (ngSubmit)="add()">
-          <input placeholder="Serial" name="serial" [(ngModel)]="draft.serial" required />
-          <input placeholder="SKU" name="sku" [(ngModel)]="draft.sku" required />
-          <input placeholder="Name" name="name" [(ngModel)]="draft.name" required />
-          <input placeholder="Description" name="description" [(ngModel)]="draft.description" />
-          <input placeholder="Price" name="price" [(ngModel)]="draft.price" />
-          @if (isCompanyAdmin) {
-            <select name="store" [(ngModel)]="draft.storeId" required>
-              <option [ngValue]="null" disabled>Select store…</option>
-              @for (s of stores(); track s.id) {
-                <option [ngValue]="s.id">{{ s.name }}</option>
-              }
-            </select>
-          }
-          <button type="submit" [disabled]="saving()">Add</button>
-        </form>
-        @if (formError()) {
-          <p class="error">{{ formError() }}</p>
-        }
-      </section>
-
       <section class="card">
         <div class="row-between">
           <h2>Inventory</h2>
@@ -66,16 +35,17 @@ interface NewItemModel {
                 </select>
               </label>
             }
-            <label class="inline">
-              Status
-              <select [ngModel]="statusFilter()" (ngModelChange)="onStatusFilter($event)" name="stf">
-                <option value="ALL">All</option>
-                <option value="ON_HAND">On hand</option>
-                <option value="SOLD">Sold</option>
-                <option value="RETURNED_TO_WAREHOUSE">Returned</option>
-                <option value="ADJUSTED_OUT">Adjusted out</option>
-              </select>
-            </label>
+            <form class="inline search" (ngSubmit)="onSearch()">
+              <label class="inline">
+                Search
+                <input
+                  name="q"
+                  [(ngModel)]="searchTerm"
+                  placeholder="Name, SKU, UPC or serial"
+                />
+              </label>
+              <button type="submit" class="ghost" [disabled]="loading()">Search</button>
+            </form>
             <button class="ghost" (click)="reload()" [disabled]="loading()">Refresh</button>
           </div>
         </div>
@@ -84,109 +54,181 @@ interface NewItemModel {
           <p class="muted">Loading…</p>
         } @else if (listError()) {
           <p class="error">{{ listError() }}</p>
-        } @else if (items().length === 0) {
-          <p class="muted">No items match.</p>
+        } @else if (rows().length === 0) {
+          <p class="muted">No inventory matches.</p>
         } @else {
           <div class="table-scroll">
             <table>
               <thead>
                 <tr>
                   <th></th>
-                  <th>Serial</th>
                   <th>SKU</th>
+                  <th>UPC</th>
                   <th>Name</th>
+                  <th>Type</th>
                   @if (isCompanyAdmin) {
                     <th>Store</th>
                   }
-                  <th class="num">Price</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Expires</th>
-                  <th>Updated</th>
-                  <th class="actions">Actions</th>
+                  <th class="num">On hand</th>
                 </tr>
               </thead>
               <tbody>
-                @for (item of items(); track item.id) {
+                @for (row of rows(); track rowKey(row)) {
                   <tr>
                     <td>
-                      <button class="link" (click)="toggleLedger(item)">
-                        {{ expandedId() === item.id ? '▾' : '▸' }}
+                      <button class="link" (click)="toggleRow(row)">
+                        {{ expandedKey() === rowKey(row) ? '▾' : '▸' }}
                       </button>
                     </td>
-                    <td>{{ item.serial }}</td>
-                    <td>{{ item.sku }}</td>
-                    <td>{{ item.name }}</td>
+                    <td>{{ row.sku }}</td>
+                    <td class="muted">{{ row.upc || '—' }}</td>
+                    <td>
+                      {{ row.name }}
+                      @if (row.matchedSerial) {
+                        <span class="matched">matched {{ row.matchedSerial }}</span>
+                      }
+                    </td>
+                    <td>
+                      <span class="type-badge" [class]="'tt-' + row.trackingType">
+                        {{ row.trackingType }}
+                      </span>
+                    </td>
                     @if (isCompanyAdmin) {
-                      <td class="muted">{{ storeName(item.storeId) }}</td>
+                      <td class="muted">{{ storeName(row.storeId) }}</td>
                     }
-                    <td class="num">{{ money(item.price) }}</td>
-                    <td><span class="status">{{ statusLabel(item.status) }}</span></td>
-                    <td class="muted">{{ item.createdAt | date: 'shortDate' }}</td>
-                    <td class="muted" [class.expired]="isExpired(item.expirationDate)">
-                      {{ item.expirationDate ? (item.expirationDate | date: 'shortDate') : '—' }}
-                    </td>
-                    <td class="muted">{{ item.updatedAt | date: 'short' }}</td>
-                    <td class="actions">
-                      @if (item.status === 'ON_HAND') {
-                        <button class="ghost sm" (click)="beginAction(item, 'sell')">Sell</button>
-                      }
-                      @if (item.status === 'ON_HAND' || item.status === 'SOLD') {
-                        <button class="ghost sm" (click)="beginAction(item, 'return')">Return</button>
-                        <button class="ghost sm" (click)="beginAction(item, 'adjust')">Adjust</button>
-                      }
-                    </td>
+                    <td class="num">{{ row.onHand }}</td>
                   </tr>
 
-                  @if (action() && action()!.itemId === item.id) {
+                  @if (expandedKey() === rowKey(row)) {
                     <tr class="sub-row">
                       <td></td>
                       <td [attr.colspan]="colspan()">
-                        <form class="note-form" (ngSubmit)="commitAction()">
-                          <span class="note-label">{{ actionVerb() }} — optional note:</span>
-                          <input name="note" [(ngModel)]="actionNote" placeholder="Note" />
-                          <button type="submit" [disabled]="saving()">Confirm</button>
-                          <button type="button" class="ghost" (click)="cancelAction()">Cancel</button>
-                        </form>
-                      </td>
-                    </tr>
-                  }
-
-                  @if (expandedId() === item.id) {
-                    <tr class="sub-row">
-                      <td></td>
-                      <td [attr.colspan]="colspan()">
-                        @if (ledgerLoading()) {
-                          <p class="muted">Loading ledger…</p>
-                        } @else if (ledger().length === 0) {
-                          <p class="muted">No transactions.</p>
-                        } @else {
-                          <table class="ledger">
-                            <thead>
-                              <tr>
-                                <th>When</th>
-                                <th>Type</th>
-                                <th class="num">Δ Qty</th>
-                                <th>Source</th>
-                                <th>Note</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              @for (tx of ledger(); track tx.id) {
+                        @if (detailLoading()) {
+                          <p class="muted">Loading…</p>
+                        } @else if (detailError()) {
+                          <p class="error">{{ detailError() }}</p>
+                        } @else if (serializedDetail(); as d) {
+                          @if (d.units.length === 0) {
+                            <p class="muted">No units.</p>
+                          } @else {
+                            <table class="sub">
+                              <thead>
                                 <tr>
-                                  <td class="muted">{{ tx.createdAt | date: 'short' }}</td>
-                                  <td>{{ tx.type }}</td>
-                                  <td class="num">{{ tx.quantityDelta }}</td>
-                                  <td>
-                                    <span class="src-badge" [class]="'src-' + tx.source">
-                                      {{ tx.source }}
-                                    </span>
-                                  </td>
-                                  <td class="muted">{{ tx.note }}</td>
+                                  <th>Serial</th>
+                                  <th>Status</th>
+                                  <th>Expires</th>
+                                  <th>Received</th>
+                                  <th class="actions">Actions</th>
                                 </tr>
-                              }
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                @for (u of d.units; track u.id) {
+                                  <tr>
+                                    <td>{{ u.serial }}</td>
+                                    <td><span class="status">{{ statusLabel(u.status) }}</span></td>
+                                    <td class="muted" [class.expired]="isExpired(u.expirationDate)">
+                                      {{ u.expirationDate ? (u.expirationDate | date: 'shortDate') : '—' }}
+                                    </td>
+                                    <td class="muted">
+                                      {{ u.receivedAt ? (u.receivedAt | date: 'shortDate') : '—' }}
+                                    </td>
+                                    <td class="actions">
+                                      @if (u.status === 'ON_HAND') {
+                                        <button class="ghost sm" (click)="beginUnitAction(u.id, 'sell')">Sell</button>
+                                      }
+                                      @if (u.status === 'ON_HAND' || u.status === 'SOLD') {
+                                        <button class="ghost sm" (click)="beginUnitAction(u.id, 'return')">Return</button>
+                                        <button class="ghost sm" (click)="beginUnitAction(u.id, 'adjust')">Adjust</button>
+                                      }
+                                    </td>
+                                  </tr>
+                                  @if (unitAction() && unitAction()!.unitId === u.id) {
+                                    <tr class="action-row">
+                                      <td [attr.colspan]="5">
+                                        <form class="note-form" (ngSubmit)="commitUnitAction()">
+                                          <span class="note-label">{{ verbLabel(unitAction()!.verb) }} — optional note:</span>
+                                          <input name="note" [(ngModel)]="actionNote" placeholder="Note" />
+                                          <button type="submit" [disabled]="saving()">Confirm</button>
+                                          <button type="button" class="ghost" (click)="cancelUnitAction()">Cancel</button>
+                                        </form>
+                                      </td>
+                                    </tr>
+                                  }
+                                }
+                              </tbody>
+                            </table>
+                          }
+                        } @else if (quantityDetail(); as d) {
+                          <div class="qty-summary">
+                            <h4>On hand</h4>
+                            @if (d.stock.length === 0) {
+                              <p class="muted">No stock.</p>
+                            } @else {
+                              <ul class="stock-list">
+                                @for (st of d.stock; track st.id) {
+                                  <li>
+                                    <span class="muted">{{ storeName(st.storeId) }}</span>
+                                    <strong>{{ st.quantityOnHand }}</strong>
+                                  </li>
+                                }
+                              </ul>
+                            }
+                          </div>
+
+                          <div class="qty-actions">
+                            @if (qtyAction()) {
+                              <form class="note-form" (ngSubmit)="commitQtyAction(row)">
+                                <span class="note-label">{{ verbLabel(qtyAction()!) }} — quantity:</span>
+                                <input
+                                  class="qty-input"
+                                  name="qty"
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  [(ngModel)]="actionQuantity"
+                                />
+                                <input name="qnote" [(ngModel)]="actionNote" placeholder="Note" />
+                                <button type="submit" [disabled]="saving()">Confirm</button>
+                                <button type="button" class="ghost" (click)="cancelQtyAction()">Cancel</button>
+                              </form>
+                            } @else {
+                              <button class="ghost sm" (click)="beginQtyAction('sell')">Sell</button>
+                              <button class="ghost sm" (click)="beginQtyAction('return')">Return</button>
+                              <button class="ghost sm" (click)="beginQtyAction('adjust')">Adjust</button>
+                            }
+                          </div>
+
+                          <div class="qty-ledger">
+                            <h4>Recent activity</h4>
+                            @if (d.ledger.length === 0) {
+                              <p class="muted">No transactions.</p>
+                            } @else {
+                              <table class="sub">
+                                <thead>
+                                  <tr>
+                                    <th>When</th>
+                                    <th>Type</th>
+                                    <th class="num">Δ Qty</th>
+                                    <th>Source</th>
+                                    <th>Note</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  @for (tx of d.ledger; track tx.id) {
+                                    <tr>
+                                      <td class="muted">{{ tx.createdAt | date: 'short' }}</td>
+                                      <td>{{ tx.type }}</td>
+                                      <td class="num">{{ tx.quantityDelta }}</td>
+                                      <td>
+                                        <span class="src-badge" [class]="'src-' + tx.source">{{ tx.source }}</span>
+                                      </td>
+                                      <td class="muted">{{ tx.note }}</td>
+                                    </tr>
+                                  }
+                                </tbody>
+                              </table>
+                            }
+                          </div>
                         }
                       </td>
                     </tr>
@@ -229,6 +271,11 @@ interface NewItemModel {
         margin: 0 0 0.85rem;
         font-size: 1.05rem;
       }
+      h4 {
+        margin: 0.5rem 0 0.4rem;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
       .row-between {
         display: flex;
         justify-content: space-between;
@@ -242,6 +289,11 @@ interface NewItemModel {
         gap: 0.75rem;
         flex-wrap: wrap;
       }
+      .filters .search {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.4rem;
+      }
       .inline {
         display: flex;
         flex-direction: column;
@@ -249,22 +301,12 @@ interface NewItemModel {
         font-size: 0.75rem;
         color: var(--muted);
       }
-      .add-form {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        align-items: center;
-      }
       input,
       select {
         padding: 0.45rem 0.55rem;
         border: 1px solid var(--border);
         border-radius: 8px;
         font-size: 0.9rem;
-      }
-      .add-form input {
-        flex: 1 1 130px;
-        min-width: 110px;
       }
       .table-scroll {
         overflow-x: auto;
@@ -297,6 +339,31 @@ interface NewItemModel {
         background: var(--accent-soft);
         color: var(--brand, var(--accent));
       }
+      .type-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .type-badge.tt-SERIALIZED {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .type-badge.tt-QUANTITY {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
+      }
+      .matched {
+        margin-left: 0.5rem;
+        font-size: 0.7rem;
+        color: var(--muted);
+        font-family: ui-monospace, monospace;
+      }
       .muted {
         color: var(--muted);
       }
@@ -321,6 +388,16 @@ interface NewItemModel {
       .sub-row td {
         background: var(--bg);
       }
+      table.sub {
+        margin: 0;
+      }
+      table.sub th {
+        font-size: 0.72rem;
+        color: var(--muted);
+      }
+      .action-row td {
+        background: var(--surface);
+      }
       .note-form {
         display: flex;
         gap: 0.5rem;
@@ -330,16 +407,32 @@ interface NewItemModel {
       .note-form input {
         flex: 1 1 200px;
       }
+      .note-form input.qty-input {
+        flex: 0 0 90px;
+        max-width: 90px;
+      }
       .note-label {
         font-size: 0.85rem;
         color: var(--muted);
       }
-      table.ledger {
-        margin: 0;
+      .qty-summary,
+      .qty-actions,
+      .qty-ledger {
+        margin: 0.4rem 0;
       }
-      table.ledger th {
-        font-size: 0.72rem;
-        color: var(--muted);
+      .stock-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.5rem;
+        font-size: 0.85rem;
+      }
+      .stock-list li {
+        display: flex;
+        gap: 0.4rem;
+        align-items: baseline;
       }
       .pager {
         display: flex;
@@ -382,7 +475,7 @@ export class InventoryComponent implements OnInit {
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
 
-  readonly items = signal<InventoryItem[]>([]);
+  readonly rows = signal<StoreInventoryRow[]>([]);
   readonly total = signal(0);
   readonly limit = signal(20);
   readonly offset = signal(0);
@@ -394,29 +487,41 @@ export class InventoryComponent implements OnInit {
     return m;
   });
 
-  readonly statusFilter = signal<StatusFilter>('ALL');
   readonly storeFilter = signal<number | null>(null);
+  searchTerm = '';
+  readonly search = signal<string>('');
 
   readonly loading = signal(false);
   readonly saving = signal(false);
   readonly listError = signal<string | null>(null);
-  readonly formError = signal<string | null>(null);
 
-  readonly expandedId = signal<string | null>(null);
-  readonly ledger = signal<Transaction[]>([]);
-  readonly ledgerLoading = signal(false);
+  readonly expandedKey = signal<string | null>(null);
+  readonly detail = signal<InventoryProductDetail | null>(null);
+  readonly detailLoading = signal(false);
+  readonly detailError = signal<string | null>(null);
 
-  readonly action = signal<{ itemId: string; verb: 'sell' | 'return' | 'adjust' } | null>(null);
+  // Serialized per-unit action.
+  readonly unitAction = signal<{ unitId: string; verb: ActionVerb } | null>(null);
+  // Quantity action for the expanded row.
+  readonly qtyAction = signal<ActionVerb | null>(null);
   actionNote = '';
+  actionQuantity: number | null = null;
 
-  draft: NewItemModel = this.emptyDraft();
+  readonly serializedDetail = computed<SerializedInventoryDetail | null>(() => {
+    const d = this.detail();
+    return d && d.trackingType === 'SERIALIZED' ? d : null;
+  });
+  readonly quantityDetail = computed<QuantityInventoryDetail | null>(() => {
+    const d = this.detail();
+    return d && d.trackingType === 'QUANTITY' ? d : null;
+  });
 
-  readonly colspan = computed(() => (this.isCompanyAdmin ? 9 : 8));
+  readonly colspan = computed(() => (this.isCompanyAdmin ? 6 : 5));
 
-  readonly hasNext = computed(() => this.offset() + this.items().length < this.total());
+  readonly hasNext = computed(() => this.offset() + this.rows().length < this.total());
   readonly rangeLabel = computed(() => {
     const start = this.total() === 0 ? 0 : this.offset() + 1;
-    const end = this.offset() + this.items().length;
+    const end = this.offset() + this.rows().length;
     return `${start}–${end} of ${this.total()}`;
   });
 
@@ -432,22 +537,24 @@ export class InventoryComponent implements OnInit {
     this.reload();
   }
 
+  rowKey(row: StoreInventoryRow): string {
+    return `${row.storeId}:${row.productId}`;
+  }
+
   reload(): void {
     this.loading.set(true);
     this.listError.set(null);
-    this.expandedId.set(null);
-    this.action.set(null);
-    const status = this.statusFilter();
+    this.collapse();
     this.api
       .listInventory({
-        status: status === 'ALL' ? undefined : status,
         storeId: this.storeFilter() ?? undefined,
+        search: this.search() || undefined,
         limit: this.limit(),
         offset: this.offset(),
       })
       .subscribe({
         next: (res) => {
-          this.items.set(res.data);
+          this.rows.set(res.data);
           this.total.set(res.total);
           this.loading.set(false);
         },
@@ -458,14 +565,14 @@ export class InventoryComponent implements OnInit {
       });
   }
 
-  onStatusFilter(value: StatusFilter): void {
-    this.statusFilter.set(value);
+  onStoreFilter(value: number | null): void {
+    this.storeFilter.set(value);
     this.offset.set(0);
     this.reload();
   }
 
-  onStoreFilter(value: number | null): void {
-    this.storeFilter.set(value);
+  onSearch(): void {
+    this.search.set(this.searchTerm.trim());
     this.offset.set(0);
     this.reload();
   }
@@ -482,99 +589,149 @@ export class InventoryComponent implements OnInit {
     this.reload();
   }
 
-  add(): void {
-    if (!this.draft.serial || !this.draft.sku || !this.draft.name) {
-      this.formError.set('Serial, SKU and name are required.');
+  toggleRow(row: StoreInventoryRow): void {
+    const key = this.rowKey(row);
+    if (this.expandedKey() === key) {
+      this.collapse();
       return;
     }
-    if (this.isCompanyAdmin && this.draft.storeId == null) {
-      this.formError.set('Please select a store.');
-      return;
-    }
-    const dto: CreateInventoryItem = {
-      serial: this.draft.serial,
-      sku: this.draft.sku,
-      name: this.draft.name,
-    };
-    if (this.draft.description) dto.description = this.draft.description;
-    if (this.draft.price) dto.price = this.draft.price;
-    if (this.isCompanyAdmin && this.draft.storeId != null) dto.storeId = this.draft.storeId;
-
-    this.saving.set(true);
-    this.formError.set(null);
-    this.api.createInventory(dto).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.draft = this.emptyDraft();
-        this.offset.set(0);
-        this.reload();
+    this.collapse();
+    this.expandedKey.set(key);
+    this.detailLoading.set(true);
+    this.api.getInventoryProduct(row.productId).subscribe({
+      next: (d) => {
+        this.detail.set(d);
+        this.detailLoading.set(false);
       },
       error: (err) => {
-        this.saving.set(false);
-        this.formError.set(messageFor(err));
+        this.detailLoading.set(false);
+        this.detailError.set(messageFor(err));
       },
     });
   }
 
-  beginAction(item: InventoryItem, verb: 'sell' | 'return' | 'adjust'): void {
-    this.expandedId.set(null);
+  private collapse(): void {
+    this.expandedKey.set(null);
+    this.detail.set(null);
+    this.detailError.set(null);
+    this.unitAction.set(null);
+    this.qtyAction.set(null);
     this.actionNote = '';
-    this.action.set({ itemId: item.id, verb });
+    this.actionQuantity = null;
   }
 
-  cancelAction(): void {
-    this.action.set(null);
+  private refreshDetail(productId: number): void {
+    this.api.getInventoryProduct(productId).subscribe({
+      next: (d) => this.detail.set(d),
+      error: () => {
+        /* keep prior detail */
+      },
+    });
   }
 
-  actionVerb(): string {
-    const a = this.action();
-    if (!a) return '';
-    return a.verb.charAt(0).toUpperCase() + a.verb.slice(1);
+  // ---- serialized unit actions ----
+  beginUnitAction(unitId: string, verb: ActionVerb): void {
+    this.actionNote = '';
+    this.unitAction.set({ unitId, verb });
   }
 
-  commitAction(): void {
-    const a = this.action();
+  cancelUnitAction(): void {
+    this.unitAction.set(null);
+  }
+
+  commitUnitAction(): void {
+    const a = this.unitAction();
     if (!a) return;
     const note = this.actionNote.trim() || undefined;
+    const body = { itemId: a.unitId, note };
     const call =
       a.verb === 'sell'
-        ? this.api.sellItem(a.itemId, note)
+        ? this.api.sellInventory(body)
         : a.verb === 'return'
-          ? this.api.returnItem(a.itemId, note)
-          : this.api.adjustItem(a.itemId, note);
+          ? this.api.returnInventory(body)
+          : this.api.adjustInventory(body);
     this.saving.set(true);
-    this.listError.set(null);
+    this.detailError.set(null);
     call.subscribe({
       next: () => {
         this.saving.set(false);
-        this.action.set(null);
-        this.reload();
+        this.unitAction.set(null);
+        const d = this.detail();
+        if (d) this.refreshDetail(d.product.id);
+        this.reloadCounts();
       },
       error: (err) => {
         this.saving.set(false);
-        this.listError.set(messageFor(err));
+        this.detailError.set(messageFor(err));
       },
     });
   }
 
-  toggleLedger(item: InventoryItem): void {
-    this.action.set(null);
-    if (this.expandedId() === item.id) {
-      this.expandedId.set(null);
+  // ---- quantity actions ----
+  beginQtyAction(verb: ActionVerb): void {
+    this.actionNote = '';
+    this.actionQuantity = null;
+    this.qtyAction.set(verb);
+  }
+
+  cancelQtyAction(): void {
+    this.qtyAction.set(null);
+  }
+
+  commitQtyAction(row: StoreInventoryRow): void {
+    const verb = this.qtyAction();
+    if (!verb) return;
+    const qty = Number(this.actionQuantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      this.detailError.set('Enter a quantity greater than zero.');
       return;
     }
-    this.expandedId.set(item.id);
-    this.ledger.set([]);
-    this.ledgerLoading.set(true);
-    this.api.listTransactions({ itemId: item.id, limit: 50, offset: 0 }).subscribe({
-      next: (res) => {
-        this.ledger.set(res.data);
-        this.ledgerLoading.set(false);
+    const body = {
+      productId: row.productId,
+      quantity: qty,
+      storeId: row.storeId,
+      note: this.actionNote.trim() || undefined,
+    };
+    const call =
+      verb === 'sell'
+        ? this.api.sellInventory(body)
+        : verb === 'return'
+          ? this.api.returnInventory(body)
+          : this.api.adjustInventory(body);
+    this.saving.set(true);
+    this.detailError.set(null);
+    call.subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.qtyAction.set(null);
+        this.refreshDetail(row.productId);
+        this.reloadCounts();
       },
-      error: () => {
-        this.ledgerLoading.set(false);
+      error: (err) => {
+        this.saving.set(false);
+        this.detailError.set(messageFor(err));
       },
     });
+  }
+
+  /** Refresh on-hand totals in the product list without collapsing the row. */
+  private reloadCounts(): void {
+    this.api
+      .listInventory({
+        storeId: this.storeFilter() ?? undefined,
+        search: this.search() || undefined,
+        limit: this.limit(),
+        offset: this.offset(),
+      })
+      .subscribe({
+        next: (res) => {
+          this.rows.set(res.data);
+          this.total.set(res.total);
+        },
+        error: () => {
+          /* keep current rows */
+        },
+      });
   }
 
   storeName(id: number): string {
@@ -588,9 +745,8 @@ export class InventoryComponent implements OnInit {
     return parsed.getTime() < Date.now();
   }
 
-  money(price: string): string {
-    const n = Number(price);
-    return Number.isFinite(n) ? n.toFixed(2) : price;
+  verbLabel(verb: ActionVerb): string {
+    return verb.charAt(0).toUpperCase() + verb.slice(1);
   }
 
   statusLabel(status: ItemStatus): string {
@@ -604,9 +760,5 @@ export class InventoryComponent implements OnInit {
       case 'ADJUSTED_OUT':
         return 'Adjusted out';
     }
-  }
-
-  private emptyDraft(): NewItemModel {
-    return { serial: '', sku: '', name: '', description: '', price: '', storeId: null };
   }
 }

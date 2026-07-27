@@ -5,6 +5,7 @@ import { messageFor } from '../../core/http-error';
 import {
   CycleCount,
   CycleCountDetail,
+  CycleCountLine,
   CycleCountResolution,
   CycleCountStatus,
 } from '../../core/models';
@@ -12,7 +13,7 @@ import {
 interface ResolutionGroup {
   key: CycleCountResolution;
   label: string;
-  serials: string[];
+  items: string[];
   prominent: boolean;
 }
 
@@ -110,17 +111,34 @@ interface ResolutionGroup {
               <div class="group" [class.prominent]="g.prominent">
                 <h3>
                   {{ g.label }}
-                  <span class="count-pill" [class.warn]="g.prominent">{{ g.serials.length }}</span>
+                  <span class="count-pill" [class.warn]="g.prominent">{{ g.items.length }}</span>
                 </h3>
-                @if (g.serials.length === 0) {
+                @if (g.items.length === 0) {
                   <p class="muted sm">None.</p>
                 } @else {
                   <ul class="serials">
-                    @for (s of g.serials; track s) {
+                    @for (s of g.items; track $index) {
                       <li>{{ s }}</li>
                     }
                   </ul>
                 }
+              </div>
+            }
+
+            @if (d.notCounted.length > 0) {
+              <div class="group not-counted">
+                <h3>
+                  Not counted
+                  <span class="count-pill warn">{{ d.notCounted.length }}</span>
+                </h3>
+                <p class="muted sm">
+                  These quantity products weren't counted during this cycle.
+                </p>
+                <ul class="serials">
+                  @for (n of d.notCounted; track n.productId) {
+                    <li>{{ n.sku }} {{ n.name }} — {{ n.quantityOnHand }} on hand</li>
+                  }
+                </ul>
               </div>
             }
           }
@@ -270,6 +288,13 @@ interface ResolutionGroup {
       .group.prominent h3 {
         color: #b42318;
       }
+      .group.not-counted {
+        background: #fffaeb;
+        border-color: #fedf89;
+      }
+      .group.not-counted h3 {
+        color: #b54708;
+      }
       .count-pill {
         font-size: 0.72rem;
         font-weight: 600;
@@ -332,10 +357,24 @@ export class CycleCountsComponent implements OnInit {
     return CycleCountsComponent.ORDER.map(({ key, label }) => ({
       key,
       label,
-      serials: (d.linesByResolution?.[key] ?? []).map((l) => l.serial),
+      items: (d.linesByResolution?.[key] ?? []).map((l) => this.formatLine(l)),
       prominent: key === 'MARKED_SOLD',
     }));
   });
+
+  private formatLine(line: CycleCountLine): string {
+    if (line.resolution === 'COUNTED_BY_UPC') {
+      // Quantity products counted by scanning the UPC.
+      return `${line.sku} ${line.name} — counted ${line.quantity ?? 0}`;
+    }
+    if (line.resolution === 'NEW_ITEM' && line.serial == null && line.quantity != null) {
+      // Quantity product newly seen this cycle.
+      return `${line.sku} — +${line.quantity}`;
+    }
+    // Serialized lines (SCANNED / MARKED_SOLD / serialized NEW_ITEM).
+    if (line.serial) return `${line.serial} — ${line.sku}`;
+    return `${line.sku} ${line.name}`.trim();
+  }
 
   ngOnInit(): void {
     this.reload();

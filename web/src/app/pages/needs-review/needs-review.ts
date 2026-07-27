@@ -3,9 +3,10 @@ import { FormsModule } from '@angular/forms';
 import { Observable } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { InventoryItem, UpdateInventoryItem } from '../../core/models';
+import { Product, UpdateProduct } from '../../core/models';
 
 interface EditModel {
+  sku: string;
   name: string;
   description: string;
   price: string;
@@ -26,7 +27,7 @@ interface EditModel {
           <p class="muted">Loading…</p>
         } @else if (listError()) {
           <p class="error">{{ listError() }}</p>
-        } @else if (items().length === 0) {
+        } @else if (products().length === 0) {
           <p class="muted">Nothing needs review. 🎉</p>
         } @else {
           @if (actionError()) {
@@ -37,8 +38,8 @@ interface EditModel {
               <thead>
                 <tr>
                   <th>SKU</th>
-                  <th>Serial</th>
                   <th>Name</th>
+                  <th>Type</th>
                   <th>Description</th>
                   <th>UPC</th>
                   <th class="num">Price</th>
@@ -46,26 +47,28 @@ interface EditModel {
                 </tr>
               </thead>
               <tbody>
-                @for (item of items(); track item.id) {
+                @for (p of products(); track p.id) {
                   <tr>
-                    <td class="muted">{{ item.sku }}</td>
-                    <td class="muted">{{ item.serial }}</td>
-                    <td><input name="name-{{ item.id }}" [(ngModel)]="edits[item.id].name" /></td>
+                    <td><input name="sku-{{ p.id }}" [(ngModel)]="edits[p.id].sku" /></td>
+                    <td><input name="name-{{ p.id }}" [(ngModel)]="edits[p.id].name" /></td>
                     <td>
-                      <input name="desc-{{ item.id }}" [(ngModel)]="edits[item.id].description" />
+                      <span class="type-badge" [class]="'tt-' + p.trackingType">{{ p.trackingType }}</span>
                     </td>
-                    <td><input name="upc-{{ item.id }}" [(ngModel)]="edits[item.id].upc" /></td>
+                    <td>
+                      <input name="desc-{{ p.id }}" [(ngModel)]="edits[p.id].description" />
+                    </td>
+                    <td><input name="upc-{{ p.id }}" [(ngModel)]="edits[p.id].upc" /></td>
                     <td class="num">
-                      <input class="price" name="price-{{ item.id }}" [(ngModel)]="edits[item.id].price" />
+                      <input class="price" name="price-{{ p.id }}" [(ngModel)]="edits[p.id].price" />
                     </td>
                     <td class="actions">
-                      <button class="ghost sm" (click)="save(item)" [disabled]="busyId() === item.id">
+                      <button class="ghost sm" (click)="save(p)" [disabled]="busyId() === p.id">
                         Save
                       </button>
-                      <button class="ghost sm" (click)="complete(item)" [disabled]="busyId() === item.id">
-                        Complete
+                      <button class="ghost sm" (click)="complete(p)" [disabled]="busyId() === p.id">
+                        Complete review
                       </button>
-                      <button class="ghost sm danger" (click)="remove(item)" [disabled]="busyId() === item.id">
+                      <button class="ghost sm danger" (click)="remove(p)" [disabled]="busyId() === p.id">
                         Delete
                       </button>
                     </td>
@@ -132,6 +135,25 @@ interface EditModel {
         text-align: right;
         max-width: 90px;
       }
+      .type-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .type-badge.tt-SERIALIZED {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .type-badge.tt-QUANTITY {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
+      }
       .muted {
         color: var(--muted);
       }
@@ -153,13 +175,13 @@ interface EditModel {
 export class NeedsReviewComponent implements OnInit {
   private readonly api = inject(ApiService);
 
-  readonly items = signal<InventoryItem[]>([]);
+  readonly products = signal<Product[]>([]);
   readonly loading = signal(false);
   readonly listError = signal<string | null>(null);
   readonly actionError = signal<string | null>(null);
-  readonly busyId = signal<string | null>(null);
+  readonly busyId = signal<number | null>(null);
 
-  edits: Record<string, EditModel> = {};
+  edits: Record<number, EditModel> = {};
 
   ngOnInit(): void {
     this.reload();
@@ -169,16 +191,17 @@ export class NeedsReviewComponent implements OnInit {
     this.loading.set(true);
     this.listError.set(null);
     this.actionError.set(null);
-    this.api.listInventory({ needsReview: true, limit: 100, offset: 0 }).subscribe({
-      next: (res) => {
-        this.items.set(res.data);
+    this.api.listProducts({ needsReview: true }).subscribe({
+      next: (rows) => {
+        this.products.set(rows);
         this.edits = {};
-        for (const it of res.data) {
-          this.edits[it.id] = {
-            name: it.name ?? '',
-            description: it.description ?? '',
-            price: it.price ?? '',
-            upc: it.upc ?? '',
+        for (const p of rows) {
+          this.edits[p.id] = {
+            sku: p.sku ?? '',
+            name: p.name ?? '',
+            description: p.description ?? '',
+            price: p.price ?? '',
+            upc: p.upc ?? '',
           };
         }
         this.loading.set(false);
@@ -190,31 +213,34 @@ export class NeedsReviewComponent implements OnInit {
     });
   }
 
-  save(item: InventoryItem): void {
-    const e = this.edits[item.id];
+  save(p: Product): void {
+    const e = this.edits[p.id];
     if (!e) return;
-    const dto: UpdateInventoryItem = {
+    const dto: UpdateProduct = {
+      sku: e.sku,
       name: e.name,
       description: e.description,
-      price: e.price,
-      upc: e.upc.trim() === '' ? null : e.upc.trim(),
+      upc: e.upc.trim() === '' ? undefined : e.upc.trim(),
     };
-    this.run(item, this.api.updateInventory(item.id, dto));
+    const price = Number(e.price);
+    if (e.price.trim() !== '' && Number.isFinite(price)) dto.price = price;
+    this.run(p, this.api.updateProduct(p.id, dto));
   }
 
-  complete(item: InventoryItem): void {
-    this.run(item, this.api.updateInventory(item.id, { needsReview: false }));
+  complete(p: Product): void {
+    this.run(p, this.api.updateProduct(p.id, { needsReview: false }));
   }
 
-  remove(item: InventoryItem): void {
-    if (!confirm(`Delete item ${item.sku} (serial ${item.serial})? This cannot be undone.`)) {
+  remove(p: Product): void {
+    if (!confirm(`Delete product ${p.sku} (${p.name})? This cannot be undone.`)) {
       return;
     }
-    this.run(item, this.api.deleteItem(item.id));
+    // A 409 means the product still has inventory; messageFor surfaces it.
+    this.run(p, this.api.deleteProduct(p.id));
   }
 
-  private run(item: InventoryItem, obs: Observable<unknown>): void {
-    this.busyId.set(item.id);
+  private run(p: Product, obs: Observable<unknown>): void {
+    this.busyId.set(p.id);
     this.actionError.set(null);
     obs.subscribe({
       next: () => {

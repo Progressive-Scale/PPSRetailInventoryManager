@@ -7,24 +7,23 @@ import {
   Branding,
   Company,
   CreateCompany,
-  CreateInventoryItem,
   CycleCount,
   CycleCountDetail,
   CreateInvitation,
   CreateStore,
   HealthResponse,
-  InventoryItem,
+  InventoryOpBody,
+  InventoryProductDetail,
   Invitation,
-  ItemStatus,
   Paginated,
   Product,
   CreateProduct,
   UpdateProduct,
   Store,
+  StoreInventoryRow,
   Transaction,
   TxType,
   UpdateCompany,
-  UpdateInventoryItem,
   UpdateStore,
   UpdateUser,
   User,
@@ -47,52 +46,39 @@ export class ApiService {
 
   // ---- inventory ----
   listInventory(opts: {
-    status?: ItemStatus;
     storeId?: number;
-    needsReview?: boolean;
+    search?: string;
     limit?: number;
     offset?: number;
-  }): Observable<Paginated<InventoryItem>> {
+  }): Observable<Paginated<StoreInventoryRow>> {
     let params = new HttpParams();
-    if (opts.status) params = params.set('status', opts.status);
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
-    if (opts.needsReview != null) params = params.set('needsReview', String(opts.needsReview));
+    if (opts.search) params = params.set('search', opts.search);
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
-    return this.http.get<Paginated<InventoryItem>>('/api/inventory', { params });
+    return this.http.get<Paginated<StoreInventoryRow>>('/api/inventory', { params });
   }
 
-  getInventoryItem(id: string): Observable<InventoryItem> {
-    return this.http.get<InventoryItem>(`/api/inventory/${id}`);
+  getInventoryProduct(productId: number): Observable<InventoryProductDetail> {
+    return this.http.get<InventoryProductDetail>(`/api/inventory/${productId}`);
   }
 
-  createInventory(dto: CreateInventoryItem): Observable<InventoryItem> {
-    return this.http.post<InventoryItem>('/api/inventory', dto);
+  sellInventory(body: InventoryOpBody): Observable<unknown> {
+    return this.http.post('/api/inventory/sell', body);
   }
 
-  updateInventory(id: string, dto: UpdateInventoryItem): Observable<InventoryItem> {
-    return this.http.patch<InventoryItem>(`/api/inventory/${id}`, dto);
+  returnInventory(body: InventoryOpBody): Observable<unknown> {
+    return this.http.post('/api/inventory/return', body);
   }
 
-  deleteItem(id: string): Observable<{ deleted: true; id: string }> {
-    return this.http.delete<{ deleted: true; id: string }>(`/api/inventory/${id}`);
-  }
-
-  sellItem(id: string, note?: string): Observable<InventoryItem> {
-    return this.http.post<InventoryItem>(`/api/inventory/${id}/sell`, { note });
-  }
-
-  returnItem(id: string, note?: string): Observable<InventoryItem> {
-    return this.http.post<InventoryItem>(`/api/inventory/${id}/return`, { note });
-  }
-
-  adjustItem(id: string, note?: string): Observable<InventoryItem> {
-    return this.http.post<InventoryItem>(`/api/inventory/${id}/adjust`, { note });
+  adjustInventory(body: InventoryOpBody): Observable<unknown> {
+    return this.http.post('/api/inventory/adjust', body);
   }
 
   // ---- transactions ----
   listTransactions(opts: {
     itemId?: string;
+    productId?: number;
     type?: TxType;
     storeId?: number;
     limit?: number;
@@ -100,6 +86,7 @@ export class ApiService {
   }): Observable<Paginated<Transaction>> {
     let params = new HttpParams();
     if (opts.itemId) params = params.set('itemId', opts.itemId);
+    if (opts.productId != null) params = params.set('productId', String(opts.productId));
     if (opts.type) params = params.set('type', opts.type);
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
@@ -142,9 +129,10 @@ export class ApiService {
   }
 
   // ---- products (company admin) ----
-  listProducts(active?: boolean): Observable<Product[]> {
+  listProducts(opts?: { active?: boolean; needsReview?: boolean }): Observable<Product[]> {
     let params = new HttpParams();
-    if (active != null) params = params.set('active', String(active));
+    if (opts?.active != null) params = params.set('active', String(opts.active));
+    if (opts?.needsReview != null) params = params.set('needsReview', String(opts.needsReview));
     return this.http.get<Product[]>('/api/products', { params });
   }
 

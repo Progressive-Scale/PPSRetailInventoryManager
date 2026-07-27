@@ -24,22 +24,78 @@ export interface Branding {
 
 export type ItemStatus = 'ON_HAND' | 'SOLD' | 'RETURNED_TO_WAREHOUSE' | 'ADJUSTED_OUT';
 
+export type TrackingType = 'SERIALIZED' | 'QUANTITY';
+
+/** A serialized inventory unit (one row per serial). */
 export interface InventoryItem {
   id: string;
   companyId: number;
   storeId: number;
+  productId: number;
   serial: string;
-  sku: string;
-  name: string;
-  description: string | null;
-  price: string;
-  upc: string | null;
   status: ItemStatus;
-  needsReview: boolean;
+  expirationDate: string | null;
   receivedAt: string | null;
   updatedAt: string;
   createdAt: string;
-  expirationDate: string | null;
+}
+
+/** Product-level row from the store_inventory view (GET /api/inventory). */
+export interface StoreInventoryRow {
+  companyId: number;
+  storeId: number;
+  productId: number;
+  sku: string;
+  upc: string | null;
+  name: string;
+  trackingType: TrackingType;
+  onHand: number;
+  matchedSerial?: string;
+}
+
+/** Quantity-tracked stock counter (one per store per product). */
+export interface InventoryStock {
+  id: number;
+  companyId: number;
+  storeId: number;
+  productId: number;
+  quantityOnHand: number;
+  updatedAt: string;
+}
+
+/** GET /api/inventory/:productId — serialized detail. */
+export interface SerializedInventoryDetail {
+  product: Product;
+  trackingType: 'SERIALIZED';
+  units: {
+    id: string;
+    storeId: number;
+    serial: string;
+    status: ItemStatus;
+    expirationDate: string | null;
+    receivedAt: string | null;
+    updatedAt: string;
+  }[];
+  statusCounts: Record<string, number>;
+}
+
+/** GET /api/inventory/:productId — quantity detail. */
+export interface QuantityInventoryDetail {
+  product: Product;
+  trackingType: 'QUANTITY';
+  stock: InventoryStock[];
+  ledger: Transaction[];
+}
+
+export type InventoryProductDetail = SerializedInventoryDetail | QuantityInventoryDetail;
+
+/** Body shared by sell/return/adjust. */
+export interface InventoryOpBody {
+  itemId?: string;
+  productId?: number;
+  quantity?: number;
+  storeId?: number;
+  note?: string;
 }
 
 export type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
@@ -48,12 +104,14 @@ export interface Transaction {
   id: number;
   companyId: number;
   storeId: number;
-  itemId: string;
+  itemId: string | null;
+  productId: number;
   type: TxType;
   quantityDelta: number;
   note: string | null;
   performedByUserId: number | null;
   source: TxSource;
+  cycleCountId: number | null;
   createdAt: string;
 }
 
@@ -99,6 +157,8 @@ export interface Product {
   description: string | null;
   price: string;
   upc: string | null;
+  trackingType: TrackingType;
+  needsReview: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -176,10 +236,21 @@ export interface CycleCountLine {
   id: number;
   companyId: number;
   cycleCountId: number;
-  itemId: string;
-  serial: string;
+  productId: number;
+  itemId: string | null;
+  serial: string | null;
+  quantity: number | null;
   resolution: CycleCountResolution;
   createdAt: string;
+  sku: string;
+  name: string;
+}
+
+export interface CycleCountNotCounted {
+  productId: number;
+  quantityOnHand: number;
+  sku: string;
+  name: string;
 }
 
 export interface CycleCountDetail {
@@ -187,6 +258,7 @@ export interface CycleCountDetail {
   lines: CycleCountLine[];
   linesByResolution: Record<CycleCountResolution, CycleCountLine[]>;
   markedSoldSerials: string[];
+  notCounted: CycleCountNotCounted[];
 }
 
 export interface Paginated<T> {
@@ -197,23 +269,6 @@ export interface Paginated<T> {
 }
 
 // ---- request DTOs ----
-
-export interface CreateInventoryItem {
-  serial: string;
-  sku: string;
-  name: string;
-  description?: string;
-  price?: string;
-  storeId?: number;
-}
-
-export interface UpdateInventoryItem {
-  name?: string;
-  description?: string;
-  price?: string;
-  upc?: string | null;
-  needsReview?: boolean;
-}
 
 export interface CreateStore {
   name: string;
@@ -245,6 +300,7 @@ export interface CreateProduct {
   description?: string;
   price?: number;
   upc?: string;
+  trackingType: TrackingType;
 }
 
 export interface UpdateProduct {
@@ -254,6 +310,8 @@ export interface UpdateProduct {
   price?: number;
   upc?: string;
   active?: boolean;
+  needsReview?: boolean;
+  trackingType?: TrackingType;
 }
 
 export interface CreateCompany {
