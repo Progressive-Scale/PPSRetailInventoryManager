@@ -446,6 +446,7 @@ export interface UpdateProduct {
 export interface CreateLocation {
   storeId: number;
   name: string;
+  isActive?: boolean;
 }
 
 export interface UpdateLocation {

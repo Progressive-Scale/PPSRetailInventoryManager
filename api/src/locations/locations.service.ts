@@ -117,6 +117,7 @@ export class LocationsService {
             name: dto.name.trim(),
             kind: 'CUSTOM',
             sortOrder: nextSort,
+            isActive: dto.isActive ?? true,
           })
           .returning();
         return row;

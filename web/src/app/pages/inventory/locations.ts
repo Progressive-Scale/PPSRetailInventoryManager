@@ -25,6 +25,9 @@ type SortField = 'name' | 'kind' | 'active';
               </select>
             </label>
           }
+          @if (isCompanyAdmin) {
+            <button (click)="openAdd()" [disabled]="storeId() == null">Add location</button>
+          }
           <button (click)="reload()" class="ghost" [disabled]="loading()">Refresh</button>
         </div>
       </div>
@@ -93,12 +96,34 @@ type SortField = 'name' | 'kind' | 'active';
           </table>
         </div>
 
-        @if (isCompanyAdmin) {
-          <form class="add-form" (ngSubmit)="add()">
-            <input name="new-loc" [(ngModel)]="newName" placeholder="New location name (e.g. Aisle 3)" />
-            <button type="submit" [disabled]="saving() || !newName.trim()">Add location</button>
-          </form>
-        }
+      }
+
+      @if (showAdd()) {
+        <div class="overlay" (click)="closeAdd()">
+          <div class="modal" (click)="$event.stopPropagation()">
+            <h3>Add location</h3>
+            @if (addError()) {
+              <p class="error">{{ addError() }}</p>
+            }
+            <form class="stacked" (ngSubmit)="create()">
+              <label>
+                Name
+                <input name="a-name" [(ngModel)]="newName" placeholder="e.g. Aisle 3" autofocus />
+              </label>
+              <label>
+                Status
+                <select name="a-active" [(ngModel)]="newActive">
+                  <option [ngValue]="true">Active</option>
+                  <option [ngValue]="false">Inactive</option>
+                </select>
+              </label>
+              <div class="modal-actions">
+                <button type="submit" [disabled]="saving() || !newName.trim()">Create</button>
+                <button type="button" class="ghost" (click)="closeAdd()">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
       }
     </section>
   `,
@@ -264,14 +289,44 @@ type SortField = 'name' | 'kind' | 'active';
         font-size: 0.8rem;
         margin-left: 0.25rem;
       }
-      .add-form {
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 4rem 1rem;
+        z-index: 80;
+      }
+      .modal {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        width: 100%;
+        max-width: 380px;
+        padding: 1.25rem;
+      }
+      .modal h3 {
+        margin: 0 0 0.75rem;
+        font-size: 1rem;
+      }
+      .stacked {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .stacked label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .modal-actions {
         display: flex;
         gap: 0.5rem;
-        margin-top: 0.85rem;
-      }
-      .add-form input {
-        flex: 1 1 260px;
-        max-width: 320px;
+        margin-top: 0.5rem;
       }
     `,
   ],
@@ -292,7 +347,12 @@ export class LocationsComponent implements OnInit {
   readonly editId = signal<number | null>(null);
   editName = '';
   editActive = true;
+
+  // Add-location modal.
+  readonly showAdd = signal(false);
+  readonly addError = signal<string | null>(null);
   newName = '';
+  newActive = true;
 
   // Client-side sort (the list is small — no round-trip needed).
   readonly sortField = signal<SortField | null>(null);
@@ -399,21 +459,32 @@ export class LocationsComponent implements OnInit {
     });
   }
 
-  add(): void {
+  openAdd(): void {
+    this.newName = '';
+    this.newActive = true;
+    this.addError.set(null);
+    this.showAdd.set(true);
+  }
+
+  closeAdd(): void {
+    this.showAdd.set(false);
+  }
+
+  create(): void {
     const sid = this.storeId();
     const name = this.newName.trim();
     if (sid == null || !name) return;
     this.saving.set(true);
-    this.error.set(null);
-    this.api.createLocation({ storeId: sid, name }).subscribe({
+    this.addError.set(null);
+    this.api.createLocation({ storeId: sid, name, isActive: this.newActive }).subscribe({
       next: () => {
         this.saving.set(false);
-        this.newName = '';
+        this.showAdd.set(false);
         this.reload();
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(messageFor(err));
+        this.addError.set(messageFor(err));
       },
     });
   }

@@ -21,6 +21,7 @@ export class ListLocationsQuery {
 export class CreateLocationDto {
   @IsInt() @IsPositive() storeId!: number;
   @IsString() @MinLength(1) @MaxLength(80) name!: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 // Edit a location: rename, reorder, or toggle active. System locations may be
