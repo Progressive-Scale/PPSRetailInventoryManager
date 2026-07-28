@@ -35,21 +35,10 @@ type Tab = 'stores' | 'users' | 'invitations';
       <!-- STORES -->
       @if (tab() === 'stores') {
         <section class="card">
-          <h2>Create store</h2>
-          <form class="inline-form" (ngSubmit)="createStore()">
-            <input placeholder="Name" name="s-name" [(ngModel)]="storeDraft.name" required />
-            <input placeholder="Address" name="s-addr1" [(ngModel)]="storeDraft.address1" />
-            <input placeholder="Address 2" name="s-addr2" [(ngModel)]="storeDraft.address2" />
-            <input placeholder="City" name="s-city" [(ngModel)]="storeDraft.city" />
-            <input placeholder="State" name="s-state" [(ngModel)]="storeDraft.state" />
-            <input placeholder="Zip" name="s-zip" [(ngModel)]="storeDraft.zip" />
-            <textarea placeholder="Notes" name="s-notes" [(ngModel)]="storeDraft.notes"></textarea>
-            <button type="submit" [disabled]="saving()">Add store</button>
-          </form>
-        </section>
-
-        <section class="card">
-          <h2>Stores</h2>
+          <div class="section-head">
+            <h2>Stores</h2>
+            <button (click)="openAddStore()">Add</button>
+          </div>
           @if (loading()) {
             <p class="muted">Loading…</p>
           } @else if (stores().length === 0) {
@@ -102,6 +91,51 @@ type Tab = 'stores' | 'users' | 'invitations';
             </div>
           }
         </section>
+
+        @if (showAddStore()) {
+          <div class="overlay" (click)="closeAddStore()">
+            <div class="modal" (click)="$event.stopPropagation()">
+              <h2>Add store</h2>
+              @if (modalError()) {
+                <p class="error">{{ modalError() }}</p>
+              }
+              <form class="stacked-form" (ngSubmit)="createStore()">
+                <label>
+                  Name <span class="req">*</span>
+                  <input name="ms-name" [(ngModel)]="storeDraft.name" required />
+                </label>
+                <label>
+                  Address
+                  <input name="ms-addr1" [(ngModel)]="storeDraft.address1" />
+                </label>
+                <label>
+                  Address 2
+                  <input name="ms-addr2" [(ngModel)]="storeDraft.address2" />
+                </label>
+                <label>
+                  City
+                  <input name="ms-city" [(ngModel)]="storeDraft.city" />
+                </label>
+                <label>
+                  State
+                  <input name="ms-state" [(ngModel)]="storeDraft.state" />
+                </label>
+                <label>
+                  Zip
+                  <input name="ms-zip" [(ngModel)]="storeDraft.zip" />
+                </label>
+                <label>
+                  Notes
+                  <textarea name="ms-notes" rows="3" [(ngModel)]="storeDraft.notes"></textarea>
+                </label>
+                <div class="modal-actions">
+                  <button type="submit" [disabled]="saving() || !storeDraft.name.trim()">Add</button>
+                  <button type="button" class="ghost" (click)="closeAddStore()">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        }
       }
 
       <!-- USERS -->
@@ -286,11 +320,17 @@ type Tab = 'stores' | 'users' | 'invitations';
         align-items: center;
       }
       input,
-      select {
+      select,
+      textarea {
         padding: 0.45rem 0.55rem;
         border: 1px solid var(--border);
         border-radius: 8px;
         font-size: 0.9rem;
+        font-family: inherit;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 2.4rem;
       }
       .inline-form input {
         flex: 1 1 160px;
@@ -446,8 +486,11 @@ type Tab = 'stores' | 'users' | 'invitations';
         font-size: 0.85rem;
         color: var(--muted);
       }
-      .stacked-form input {
+      .stacked-form input,
+      .stacked-form textarea {
         font-size: 0.9rem;
+        width: 100%;
+        box-sizing: border-box;
       }
       .req {
         color: #b42318;
@@ -472,6 +515,10 @@ export class ManageComponent implements OnInit {
   readonly stores = signal<Store[]>([]);
   readonly users = signal<User[]>([]);
   readonly invitations = signal<Invitation[]>([]);
+
+  // Add-store modal.
+  readonly showAddStore = signal(false);
+  readonly modalError = signal<string | null>(null);
 
   storeDraft: CreateStore = {
     name: '',
@@ -561,9 +608,23 @@ export class ManageComponent implements OnInit {
   }
 
   // ---- stores ----
+  private blankStore(): CreateStore {
+    return { name: '', address1: '', address2: '', city: '', state: '', zip: '', notes: '' };
+  }
+
+  openAddStore(): void {
+    this.storeDraft = this.blankStore();
+    this.modalError.set(null);
+    this.showAddStore.set(true);
+  }
+
+  closeAddStore(): void {
+    this.showAddStore.set(false);
+  }
+
   createStore(): void {
-    if (!this.storeDraft.name) {
-      this.error.set('Store name is required.');
+    if (!this.storeDraft.name.trim()) {
+      this.modalError.set('Store name is required.');
       return;
     }
     const dto: CreateStore = { name: this.storeDraft.name };
@@ -574,24 +635,17 @@ export class ManageComponent implements OnInit {
     if (this.storeDraft.zip) dto.zip = this.storeDraft.zip;
     if (this.storeDraft.notes) dto.notes = this.storeDraft.notes;
     this.saving.set(true);
-    this.error.set(null);
+    this.modalError.set(null);
     this.api.createStore(dto).subscribe({
       next: () => {
         this.saving.set(false);
-        this.storeDraft = {
-          name: '',
-          address1: '',
-          address2: '',
-          city: '',
-          state: '',
-          zip: '',
-          notes: '',
-        };
+        this.storeDraft = this.blankStore();
+        this.showAddStore.set(false);
         this.loadStores();
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(messageFor(err));
+        this.modalError.set(messageFor(err));
       },
     });
   }
