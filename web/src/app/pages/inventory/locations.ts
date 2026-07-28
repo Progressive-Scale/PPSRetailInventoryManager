@@ -45,11 +45,11 @@ type SortField = 'name' | 'kind' | 'active';
           <table>
             <thead>
               <tr>
-                <th class="sortable" (click)="sort('name')">Name<span class="arrow">{{ icon('name') }}</span></th>
-                <th class="sortable" (click)="sort('kind')">Type<span class="arrow">{{ icon('kind') }}</span></th>
-                <th class="sortable" (click)="sort('active')">Status<span class="arrow">{{ icon('active') }}</span></th>
+                <th class="sortable col-name" (click)="sort('name')">Name<span class="arrow">{{ icon('name') }}</span></th>
+                <th class="sortable col-type" (click)="sort('kind')">Type<span class="arrow">{{ icon('kind') }}</span></th>
+                <th class="sortable col-status" (click)="sort('active')">Status<span class="arrow">{{ icon('active') }}</span></th>
                 @if (isCompanyAdmin) {
-                  <th class="actions"></th>
+                  <th class="actions col-actions"></th>
                 }
               </tr>
             </thead>
@@ -68,10 +68,10 @@ type SortField = 'name' | 'kind' | 'active';
                   </td>
                   <td>
                     @if (editId() === loc.id && loc.kind === 'CUSTOM') {
-                      <label class="chk">
-                        <input type="checkbox" name="edit-active" [(ngModel)]="editActive" />
-                        Active
-                      </label>
+                      <select class="cell-input" name="edit-active" [(ngModel)]="editActive">
+                        <option [ngValue]="true">Active</option>
+                        <option [ngValue]="false">Inactive</option>
+                      </select>
                     } @else {
                       <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
                     }
@@ -150,6 +150,7 @@ type SortField = 'name' | 'kind' | 'active';
         width: 100%;
         border-collapse: collapse;
         font-size: 0.9rem;
+        table-layout: fixed;
       }
       th,
       td {
@@ -157,6 +158,19 @@ type SortField = 'name' | 'kind' | 'active';
         padding: 0.5rem 0.6rem;
         border-bottom: 1px solid var(--border);
         vertical-align: middle;
+      }
+      /* Fixed widths so entering edit mode never reflows the columns. */
+      .col-name {
+        width: 42%;
+      }
+      .col-type {
+        width: 16%;
+      }
+      .col-status {
+        width: 18%;
+      }
+      .col-actions {
+        width: 24%;
       }
       td.actions,
       th.actions {
@@ -185,13 +199,8 @@ type SortField = 'name' | 'kind' | 'active';
       }
       .cell-input {
         width: 100%;
-        max-width: 260px;
-      }
-      .chk {
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-        font-size: 0.85rem;
+        max-width: none;
+        box-sizing: border-box;
       }
       .kind-badge {
         display: inline-block;
