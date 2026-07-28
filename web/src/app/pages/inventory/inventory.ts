@@ -95,14 +95,14 @@ interface Column {
             </div>
           </form>
 
-          @if (loading()) {
-            <p class="muted">Loading…</p>
-          } @else if (listError()) {
+          @if (listError()) {
             <p class="error">{{ listError() }}</p>
-          } @else if (rows().length === 0) {
+          } @else if (loading() && !loaded()) {
+            <p class="muted">Loading…</p>
+          } @else if (loaded() && rows().length === 0) {
             <p class="muted">No inventory matches.</p>
           } @else {
-            <div class="table-scroll">
+            <div class="table-scroll" [class.busy]="loading()">
               <table>
                 <thead>
                   <tr>
@@ -233,6 +233,11 @@ interface Column {
       }
       .table-scroll {
         overflow-x: auto;
+        transition: opacity 0.12s ease;
+      }
+      .table-scroll.busy {
+        opacity: 0.55;
+        pointer-events: none;
       }
       table {
         width: 100%;
@@ -385,6 +390,7 @@ export class InventoryComponent implements OnInit {
   readonly filterLocations = signal<StoreLocation[]>([]);
 
   readonly loading = signal(false);
+  readonly loaded = signal(false);
   readonly listError = signal<string | null>(null);
 
   // Item detail modal.
@@ -457,6 +463,7 @@ export class InventoryComponent implements OnInit {
           this.rows.set(res.data);
           this.total.set(res.total);
           this.loading.set(false);
+          this.loaded.set(true);
         },
         error: (err) => {
           this.loading.set(false);
