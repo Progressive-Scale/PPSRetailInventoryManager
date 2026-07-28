@@ -315,17 +315,46 @@ interface Column {
     @if (soldOpen()) {
       <div class="overlay" (click)="soldOpen.set(false)">
         <div class="modal" (click)="$event.stopPropagation()">
-          <h3>Mark {{ selectionCount() }} item(s) as sold</h3>
+          <h3>Mark items as sold</h3>
           @if (dialogError()) {
             <p class="error">{{ dialogError() }}</p>
           }
-          <p class="preview">Mark {{ selectionCount() }} selected item(s) as sold?</p>
-          <p class="muted small">
-            Serialized units are marked sold; UPC products sell their full on-hand at each
-            row's location.
-          </p>
+          @if (soldLoading()) {
+            <p class="muted">Loading…</p>
+          } @else {
+            @if (soldSerialCount > 0) {
+              <p class="preview">{{ soldSerialCount }} serialized unit(s) will be marked sold.</p>
+            }
+            @if (soldLines.length > 0) {
+              <p class="muted small">Choose how many to mark sold for each UPC product:</p>
+              <div class="sold-lines">
+                @for (line of soldLines; track line.row.rowId) {
+                  <div class="sold-line">
+                    <span class="sold-line-name">
+                      {{ line.row.name }} <span class="muted">@ {{ line.row.locationName }}</span>
+                    </span>
+                    <input
+                      type="number"
+                      min="1"
+                      [max]="line.row.onHand"
+                      [(ngModel)]="line.qty"
+                      [name]="'sold-' + line.row.rowId"
+                    />
+                    <span class="muted small">/ {{ line.row.onHand }}</span>
+                  </div>
+                }
+              </div>
+            }
+            @if (soldSerialCount === 0 && soldLines.length === 0) {
+              <p class="muted">Nothing to sell.</p>
+            }
+          }
           <div class="modal-actions">
-            <button class="danger-btn" (click)="commitSold()" [disabled]="busy()">
+            <button
+              class="danger-btn"
+              (click)="commitSold()"
+              [disabled]="busy() || soldLoading() || (soldSerialCount === 0 && soldLines.length === 0)"
+            >
               {{ busy() ? 'Working…' : 'Mark sold' }}
             </button>
             <button class="ghost" (click)="soldOpen.set(false)" [disabled]="busy()">Cancel</button>
@@ -688,6 +717,28 @@ interface Column {
         gap: 0.5rem;
         margin-top: 0.75rem;
       }
+      .sold-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        max-height: 40vh;
+        overflow-y: auto;
+        margin: 0.3rem 0 0.5rem;
+      }
+      .sold-line {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+      }
+      .sold-line-name {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .sold-line input {
+        flex: 0 0 72px;
+        width: 72px;
+      }
       .danger-btn {
         background: #b42318;
         border: 1px solid #b42318;
@@ -764,6 +815,11 @@ export class InventoryComponent implements OnInit {
 
   // Sold confirmation dialog.
   readonly soldOpen = signal(false);
+  readonly soldLoading = signal(false);
+  soldSerialCount = 0;
+  soldSerialIds: string[] = [];
+  private readonly soldSerialLabel = new Map<string, string>();
+  soldLines: { row: StockRow; qty: number }[] = [];
 
   readonly someSelected = computed(
     () => this.filterScope() || this.selectedRows().size > 0,
@@ -1144,44 +1200,63 @@ export class InventoryComponent implements OnInit {
   }
 
   // ---- bulk: mark sold ----
-  openSold(): void {
+  async openSold(): Promise<void> {
     this.dialogError.set(null);
+    this.soldSerialCount = 0;
+    this.soldSerialIds = [];
+    this.soldSerialLabel.clear();
+    this.soldLines = [];
     this.soldOpen.set(true);
+    this.soldLoading.set(true);
+    try {
+      const rows = await this.resolveSelection();
+      const serialRows = rows.filter((r) => r.rowKind === 'unit' && r.itemId);
+      for (const r of serialRows) this.soldSerialLabel.set(r.itemId as string, r.serial ?? (r.itemId as string));
+      this.soldSerialIds = serialRows.map((r) => r.itemId as string);
+      this.soldSerialCount = this.soldSerialIds.length;
+      // UPC lines get an editable quantity, defaulting to (and capped at) on-hand.
+      this.soldLines = rows
+        .filter((r) => r.rowKind === 'stock')
+        .map((r) => ({ row: r, qty: r.onHand }));
+    } catch (e) {
+      this.dialogError.set(messageFor(e));
+    }
+    this.soldLoading.set(false);
   }
 
   async commitSold(): Promise<void> {
     this.busy.set(true);
     this.dialogError.set(null);
     try {
-      const rows = await this.resolveSelection();
-      const serialRows = rows.filter((r) => r.rowKind === 'unit' && r.itemId);
-      const qtyRows = rows.filter((r) => r.rowKind === 'stock');
-      const bySerial = new Map(serialRows.map((r) => [r.itemId as string, r]));
-      const ids = [...bySerial.keys()];
       let sold = 0;
       const failures: string[] = [];
 
-      for (let i = 0; i < ids.length; i += 500) {
-        const chunk = ids.slice(i, i + 500);
+      for (let i = 0; i < this.soldSerialIds.length; i += 500) {
+        const chunk = this.soldSerialIds.slice(i, i + 500);
         const res = await firstValueFrom(this.api.bulkSell(chunk));
         for (const r of res.results) {
           if (r.ok) sold++;
-          else failures.push(`${bySerial.get(r.itemId)?.serial ?? r.itemId}: ${r.reason ?? 'skipped'}`);
+          else failures.push(`${this.soldSerialLabel.get(r.itemId) ?? r.itemId}: ${r.reason ?? 'skipped'}`);
         }
       }
-      for (const r of qtyRows) {
+      for (const line of this.soldLines) {
+        const qty = Math.floor(Number(line.qty));
+        if (!Number.isFinite(qty) || qty < 1 || qty > line.row.onHand) {
+          failures.push(`${line.row.name} @ ${line.row.locationName}: enter 1–${line.row.onHand}`);
+          continue;
+        }
         try {
           await firstValueFrom(
             this.api.sellInventory({
-              productId: r.productId,
-              quantity: r.onHand,
-              locationId: r.locationId,
-              storeId: r.storeId,
+              productId: line.row.productId,
+              quantity: qty,
+              locationId: line.row.locationId,
+              storeId: line.row.storeId,
             }),
           );
           sold++;
         } catch (e) {
-          failures.push(`${r.name} @ ${r.locationName}: ${messageFor(e)}`);
+          failures.push(`${line.row.name} @ ${line.row.locationName}: ${messageFor(e)}`);
         }
       }
 
