@@ -50,7 +50,7 @@ type SortField = 'name' | 'kind' | 'active';
             </thead>
             <tbody>
               @for (loc of displayLocations(); track loc.id) {
-                <tr [class.inactive-row]="!loc.isActive">
+                <tr>
                   <td class="name-cell">
                     @if (editId() === loc.id) {
                       <input class="cell-input" name="edit-name" [(ngModel)]="editName" />
@@ -251,9 +251,6 @@ type SortField = 'name' | 'kind' | 'active';
         background: #f4f4f5;
         color: #52525b;
         border-color: #e4e4e7;
-      }
-      .inactive-row {
-        opacity: 0.55;
       }
       .muted {
         color: var(--muted);
