@@ -86,7 +86,7 @@ type SortField = 'name' | 'kind' | 'active';
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
                         <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
                         @if (loc.kind === 'CUSTOM') {
-                          <button class="sm danger" (click)="remove(loc)" [disabled]="saving()">Delete</button>
+                          <button class="sm danger" (click)="askDelete(loc)" [disabled]="saving()">Delete</button>
                         }
                       } @else {
                         <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
@@ -125,6 +125,24 @@ type SortField = 'name' | 'kind' | 'active';
                 <button type="button" class="ghost" (click)="closeAdd()">Cancel</button>
               </div>
             </form>
+          </div>
+        </div>
+      }
+
+      @if (pendingDelete(); as loc) {
+        <div class="overlay" (click)="cancelDelete()">
+          <div class="modal" (click)="$event.stopPropagation()">
+            <h3>Delete location</h3>
+            <p class="confirm-text">
+              Delete <strong>{{ loc.name }}</strong>? This can't be undone.
+            </p>
+            @if (deleteError()) {
+              <p class="error">{{ deleteError() }}</p>
+            }
+            <div class="modal-actions">
+              <button class="danger-btn" (click)="confirmDelete()" [disabled]="saving()">Delete</button>
+              <button class="ghost" (click)="cancelDelete()" [disabled]="saving()">Cancel</button>
+            </div>
           </div>
         </div>
       }
@@ -337,6 +355,19 @@ type SortField = 'name' | 'kind' | 'active';
         gap: 0.5rem;
         margin-top: 0.5rem;
       }
+      .confirm-text {
+        font-size: 0.9rem;
+        margin: 0 0 0.75rem;
+      }
+      .danger-btn {
+        background: #b42318;
+        border: 1px solid #b42318;
+        color: #fff;
+      }
+      .danger-btn:hover {
+        background: #99200f;
+        border-color: #99200f;
+      }
     `,
   ],
 })
@@ -362,6 +393,10 @@ export class LocationsComponent implements OnInit {
   readonly addError = signal<string | null>(null);
   newName = '';
   newActive = true;
+
+  // Delete-confirmation modal.
+  readonly pendingDelete = signal<StoreLocation | null>(null);
+  readonly deleteError = signal<string | null>(null);
 
   // Client-side sort (the list is small — no round-trip needed).
   readonly sortField = signal<SortField | null>(null);
@@ -468,19 +503,30 @@ export class LocationsComponent implements OnInit {
     });
   }
 
-  remove(loc: StoreLocation): void {
-    if (!confirm(`Delete location "${loc.name}"? This cannot be undone.`)) return;
+  askDelete(loc: StoreLocation): void {
+    this.deleteError.set(null);
+    this.pendingDelete.set(loc);
+  }
+
+  cancelDelete(): void {
+    this.pendingDelete.set(null);
+  }
+
+  confirmDelete(): void {
+    const loc = this.pendingDelete();
+    if (!loc) return;
     this.saving.set(true);
-    this.error.set(null);
+    this.deleteError.set(null);
     this.api.deleteLocation(loc.id).subscribe({
       next: () => {
         this.saving.set(false);
+        this.pendingDelete.set(null);
         this.editId.set(null);
         this.reload();
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(messageFor(err));
+        this.deleteError.set(messageFor(err));
       },
     });
   }
