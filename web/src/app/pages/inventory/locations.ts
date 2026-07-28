@@ -29,11 +29,6 @@ type SortField = 'name' | 'kind' | 'active';
         </div>
       </div>
 
-      <p class="hint">
-        Every store has a <strong>Backroom</strong> and an <strong>On Floor</strong> location.
-        These can be renamed but not deactivated. Add custom locations (aisles, endcaps) as needed.
-      </p>
-
       @if (error()) {
         <p class="error">{{ error() }}</p>
       }
@@ -56,9 +51,15 @@ type SortField = 'name' | 'kind' | 'active';
             <tbody>
               @for (loc of displayLocations(); track loc.id) {
                 <tr [class.inactive-row]="!loc.isActive">
-                  <td>
+                  <td class="name-cell">
                     @if (editId() === loc.id) {
                       <input class="cell-input" name="edit-name" [(ngModel)]="editName" />
+                      @if (loc.kind !== 'CUSTOM') {
+                        <div class="sys-tip" role="note">
+                          This is a system location — you can rename it, but the Backroom and
+                          On Floor can't be deactivated or removed.
+                        </div>
+                      }
                     } @else {
                       {{ loc.name }}
                     }
@@ -133,10 +134,36 @@ type SortField = 'name' | 'kind' | 'active';
         font-size: 0.75rem;
         color: var(--muted);
       }
-      .hint {
+      .name-cell {
+        position: relative;
+      }
+      .sys-tip {
+        position: absolute;
+        left: 0.6rem;
+        top: calc(100% - 2px);
+        z-index: 5;
+        width: 240px;
+        max-width: 70vw;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+        padding: 0.5rem 0.6rem;
+        font-size: 0.75rem;
+        line-height: 1.35;
         color: var(--muted);
-        font-size: 0.82rem;
-        margin: 0 0 0.75rem;
+      }
+      .sys-tip::before {
+        content: '';
+        position: absolute;
+        top: -5px;
+        left: 16px;
+        width: 9px;
+        height: 9px;
+        background: var(--surface);
+        border-left: 1px solid var(--border);
+        border-top: 1px solid var(--border);
+        transform: rotate(45deg);
       }
       .table-scroll {
         overflow-x: auto;
