@@ -241,19 +241,33 @@ type Tab = 'stores' | 'users' | 'invitations';
         flex-direction: column;
         gap: 1.25rem;
       }
+      /* Chrome-style tabs connected to the form below. */
       .tabs {
         display: flex;
-        gap: 0.4rem;
+        gap: 4px;
+        padding-left: 6px;
+        margin-bottom: calc(-1.25rem - 1px);
+        position: relative;
+        z-index: 2;
       }
       .tabs button {
-        background: transparent;
+        background: #e6e9ef;
         color: var(--muted);
         border: 1px solid var(--border);
+        border-radius: 10px 10px 0 0;
+        padding: 0.5rem 1.15rem;
+        font-size: 0.88rem;
+        cursor: pointer;
+      }
+      .tabs button:hover:not(.active) {
+        background: #dce0e7;
+        color: #1f2937;
       }
       .tabs button.active {
-        background: var(--accent-soft);
+        background: var(--surface);
+        border-bottom-color: var(--surface);
         color: var(--brand, var(--accent));
-        border-color: var(--brand, var(--accent));
+        font-weight: 600;
       }
       .card {
         border: 1px solid var(--border);
