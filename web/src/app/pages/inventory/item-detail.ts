@@ -25,7 +25,7 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
           <div>
             <h2>{{ row.name }}</h2>
             <span class="muted">{{ row.sku }}</span>
-            <span class="type-badge" [class]="'tt-' + row.trackingType">{{ row.trackingType }}</span>
+            <span class="type-badge" [class]="'tt-' + row.trackingType">{{ row.trackingType === 'QUANTITY' ? 'UPC' : 'SERIALIZED' }}</span>
           </div>
           <button class="ghost" (click)="close.emit()">Close</button>
         </div>

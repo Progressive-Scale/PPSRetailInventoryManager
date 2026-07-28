@@ -72,7 +72,7 @@ interface Column {
               <select [(ngModel)]="typeFilter" name="f-type">
                 <option [ngValue]="null">All</option>
                 <option [ngValue]="'SERIALIZED'">Serialized</option>
-                <option [ngValue]="'QUANTITY'">Quantity</option>
+                <option [ngValue]="'QUANTITY'">UPC</option>
               </select>
             </label>
             <label class="f">
@@ -114,15 +114,19 @@ interface Column {
                 <button type="button" class="icon-btn" (click)="openMove()" [disabled]="busy()" title="Move to location">
                   <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" /></svg>
                 </button>
-                <button
-                  type="button"
-                  class="icon-btn"
-                  (click)="openExp()"
-                  [disabled]="busy() || !expirationEnabled()"
-                  [title]="expirationEnabled() ? 'Edit expiration date' : 'Quantity-type products cannot have an expiration date.'"
+                <span
+                  class="tip-wrap"
+                  [title]="expirationEnabled() ? 'Edit expiration date' : 'UPC items cannot have an expiration date.'"
                 >
-                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 3h-1V1h-2v2H7V1H5v2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 18H4V8h16v13zM9 12H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z" /></svg>
-                </button>
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    (click)="openExp()"
+                    [disabled]="busy() || !expirationEnabled()"
+                  >
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 3h-1V1h-2v2H7V1H5v2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 18H4V8h16v13zM9 12H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z" /></svg>
+                  </button>
+                </span>
                 <button type="button" class="icon-btn clear-btn" (click)="clearSelection()" title="Clear selection">✕</button>
               </span>
             </div>
@@ -196,7 +200,7 @@ interface Column {
                       <td class="muted">{{ row.upc || '—' }}</td>
                       <td>{{ row.name }}</td>
                       <td>
-                        <span class="type-badge" [class]="'tt-' + row.trackingType">{{ row.trackingType }}</span>
+                        <span class="type-badge" [class]="'tt-' + row.trackingType">{{ typeLabel(row.trackingType) }}</span>
                       </td>
                       @if (isCompanyAdmin) {
                         <td class="muted">{{ storeName(row.storeId) }}</td>
@@ -262,7 +266,7 @@ interface Column {
             </label>
             <p class="preview">Move {{ selectionCount() }} items to {{ moveTargetName() || '…' }}?</p>
             <p class="muted small">
-              Serialized units move directly; quantity products move their full on-hand from
+              Serialized units move directly; UPC products move their full on-hand from
               each row's current location.
             </p>
           }
@@ -537,6 +541,10 @@ interface Column {
         align-items: center;
         gap: 0.35rem;
         margin-left: auto;
+      }
+      /* Wrapper carries the tooltip so it still shows over a disabled button. */
+      .tip-wrap {
+        display: inline-flex;
       }
       .icon-btn {
         display: inline-flex;
@@ -1079,6 +1087,11 @@ export class InventoryComponent implements OnInit {
 
   storeName(id: number): string {
     return this.storeMap().get(id) ?? `#${id}`;
+  }
+
+  /** Display label for a tracking type (quantity products are shown as "UPC"). */
+  typeLabel(type: TrackingType): string {
+    return type === 'QUANTITY' ? 'UPC' : 'SERIALIZED';
   }
 
   expClass(date: string | null): string {
