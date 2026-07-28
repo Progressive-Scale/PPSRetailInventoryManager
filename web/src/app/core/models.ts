@@ -157,6 +157,23 @@ export type StockSortField =
 
 export type StockStatusFilter = 'ON_HAND' | 'SOLD' | 'ALL';
 
+/** An audit record for a manual field change on a serialized item. */
+export interface ItemAudit {
+  id: number;
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  source: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC';
+  note: string | null;
+  createdAt: string;
+  changedByUserId: number | null;
+  changedByEmail: string | null;
+}
+
+export interface BulkExpirationResult {
+  results: { itemId: string; ok: boolean; reason?: string }[];
+}
+
 /** A serialized unit row from GET /api/inventory/items (by expiration). */
 export interface ExpiringItem {
   id: string;

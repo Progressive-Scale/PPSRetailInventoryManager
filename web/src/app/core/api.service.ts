@@ -5,10 +5,12 @@ import {
   AdminInvite,
   ApiKey,
   AppNotification,
+  BulkExpirationResult,
   Branding,
   Company,
   CreateCompany,
   CreateLocation,
+  ItemAudit,
   CycleCount,
   CycleCountDetail,
   CreateInvitation,
@@ -149,6 +151,22 @@ export class ApiService {
 
   moveInventory(body: MoveInventoryBody): Observable<MoveResult> {
     return this.http.post<MoveResult>('/api/inventory/move', body);
+  }
+
+  /** Bulk-set expiration on serialized items (partial success). */
+  bulkExpiration(
+    itemIds: string[],
+    expirationDate: string | null,
+  ): Observable<BulkExpirationResult> {
+    return this.http.patch<BulkExpirationResult>('/api/inventory/bulk-expiration', {
+      itemIds,
+      expirationDate,
+    });
+  }
+
+  /** Audit trail (expiration changes) for a serialized item. */
+  itemAudit(itemId: string): Observable<ItemAudit[]> {
+    return this.http.get<ItemAudit[]>(`/api/inventory/items/${itemId}/audit`);
   }
 
   sellInventory(body: InventoryOpBody): Observable<unknown> {

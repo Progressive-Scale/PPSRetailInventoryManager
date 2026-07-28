@@ -11,7 +11,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { StockRow, StoreLocation, Transaction } from '../../core/models';
+import { ItemAudit, StockRow, StoreLocation, Transaction } from '../../core/models';
 
 type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
 
@@ -52,26 +52,41 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
           <h3>History</h3>
           @if (historyLoading()) {
             <p class="muted">Loading…</p>
-          } @else if (history().length === 0) {
+          } @else if (history().length === 0 && audit().length === 0) {
             <p class="muted">No activity.</p>
           } @else {
-            <table class="hist">
-              <thead>
-                <tr><th>When</th><th>Type</th><th class="num">Δ Qty</th><th>Movement</th><th>Source</th><th>Note</th></tr>
-              </thead>
-              <tbody>
-                @for (t of history(); track t.id) {
-                  <tr>
-                    <td class="muted">{{ t.createdAt | date: 'short' }}</td>
-                    <td>{{ t.type }}</td>
-                    <td class="num">{{ t.quantityDelta }}</td>
-                    <td class="muted">{{ movement(t) }}</td>
-                    <td><span class="src-badge" [class]="'src-' + t.source">{{ t.source }}</span></td>
-                    <td class="muted">{{ t.note }}</td>
-                  </tr>
+            @if (audit().length > 0) {
+              <ul class="audit">
+                @for (a of audit(); track a.id) {
+                  <li>
+                    <span class="muted">{{ a.createdAt | date: 'short' }}</span>
+                    Expiration {{ a.oldValue || '—' }} → {{ a.newValue || '—' }}
+                    <span class="muted">
+                      · {{ a.changedByEmail || 'system' }} · {{ auditSourceLabel(a.source) }}
+                    </span>
+                  </li>
                 }
-              </tbody>
-            </table>
+              </ul>
+            }
+            @if (history().length > 0) {
+              <table class="hist">
+                <thead>
+                  <tr><th>When</th><th>Type</th><th class="num">Δ Qty</th><th>Movement</th><th>Source</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                  @for (t of history(); track t.id) {
+                    <tr>
+                      <td class="muted">{{ t.createdAt | date: 'short' }}</td>
+                      <td>{{ t.type }}</td>
+                      <td class="num">{{ t.quantityDelta }}</td>
+                      <td class="muted">{{ movement(t) }}</td>
+                      <td><span class="src-badge" [class]="'src-' + t.source">{{ t.source }}</span></td>
+                      <td class="muted">{{ t.note }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            }
           }
         </section>
 
@@ -218,6 +233,19 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
       table.hist td.num {
         text-align: right;
       }
+      .audit {
+        list-style: none;
+        margin: 0 0 0.6rem;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        font-size: 0.82rem;
+      }
+      .audit li {
+        border-bottom: 1px dashed var(--border);
+        padding-bottom: 0.3rem;
+      }
       .muted {
         color: var(--muted);
       }
@@ -339,6 +367,7 @@ export class ItemDetailComponent implements OnInit {
   @Output() changed = new EventEmitter<void>();
 
   readonly history = signal<Transaction[]>([]);
+  readonly audit = signal<ItemAudit[]>([]);
   readonly historyLoading = signal(false);
 
   readonly mgmt = signal<Mgmt>(null);
@@ -351,7 +380,29 @@ export class ItemDetailComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadHistory();
+    if (this.row.rowKind === 'unit' && this.row.itemId) this.loadAudit();
     this.expirationDate = this.row.expirationDate ?? '';
+  }
+
+  private loadAudit(): void {
+    if (!this.row.itemId) return;
+    this.api.itemAudit(this.row.itemId).subscribe({
+      next: (rows) => this.audit.set(rows),
+      error: () => this.audit.set([]),
+    });
+  }
+
+  auditSourceLabel(source: string): string {
+    switch (source) {
+      case 'BULK_EDIT':
+        return 'bulk edit';
+      case 'SINGLE_EDIT':
+        return 'manual edit';
+      case 'SYNC':
+        return 'sync';
+      default:
+        return source;
+    }
   }
 
   private loadHistory(): void {
