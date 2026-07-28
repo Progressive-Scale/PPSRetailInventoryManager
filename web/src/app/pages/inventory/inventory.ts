@@ -114,18 +114,17 @@ interface Column {
                 <button type="button" class="icon-btn" (click)="openMove()" [disabled]="busy()" title="Move to location">
                   <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" /></svg>
                 </button>
-                <span
-                  class="tip-wrap"
-                  [title]="expirationEnabled() ? 'Edit expiration date' : 'UPC items cannot have an expiration date.'"
-                >
+                <span class="tip-wrap">
                   <button
                     type="button"
                     class="icon-btn"
                     (click)="openExp()"
                     [disabled]="busy() || !expirationEnabled()"
+                    [attr.aria-label]="expLabel()"
                   >
                     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 3h-1V1h-2v2H7V1H5v2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 18H4V8h16v13zM9 12H7v-2h2v2zm4 0h-2v-2h2v2zm4 0h-2v-2h2v2z" /></svg>
                   </button>
+                  <span class="tip-bubble">{{ expLabel() }}</span>
                 </span>
                 <button type="button" class="icon-btn clear-btn" (click)="clearSelection()" title="Clear selection">✕</button>
               </span>
@@ -542,9 +541,37 @@ interface Column {
         gap: 0.35rem;
         margin-left: auto;
       }
-      /* Wrapper carries the tooltip so it still shows over a disabled button. */
+      /* Fast custom tooltip on the wrapper — shows even over a disabled button,
+         with no native title delay. */
       .tip-wrap {
         display: inline-flex;
+        position: relative;
+      }
+      .tip-bubble {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 6px);
+        z-index: 90;
+        width: max-content;
+        max-width: 240px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font-size: 0.75rem;
+        line-height: 1.3;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-2px);
+        transition: opacity 0.08s ease, transform 0.08s ease;
+        pointer-events: none;
+      }
+      .tip-wrap:hover .tip-bubble {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
       }
       .icon-btn {
         display: inline-flex;
@@ -1092,6 +1119,13 @@ export class InventoryComponent implements OnInit {
   /** Display label for a tracking type (quantity products are shown as "UPC"). */
   typeLabel(type: TrackingType): string {
     return type === 'QUANTITY' ? 'UPC' : 'SERIALIZED';
+  }
+
+  /** Tooltip for the bulk edit-expiration button (also its aria-label). */
+  expLabel(): string {
+    return this.expirationEnabled()
+      ? 'Edit expiration date'
+      : 'UPC items cannot have an expiration date.';
   }
 
   expClass(date: string | null): string {
