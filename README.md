@@ -243,3 +243,16 @@ Deploy as **one service** from the repo root, plus a managed Postgres.
    once, or create them via the admin module).
 
 > Never commit real secrets — `.env` is git-ignored; use `api/.env.example`.
+
+## Inventory locations & expiration alerts
+
+Every store has named **locations** — two system locations (**Backroom**,
+**On Floor**; renamable, not deletable) plus any custom ones. Inventory lives at
+a location; staff **move** stock between locations from the portal or the
+scanner. Serialized units carry an **expiration date**, and a scheduled job
+raises alerts for on-floor units nearing/past expiration so staff rotate stock.
+
+> **Future feature:** expiration is **serialized-only**. Quantity products track
+> per-location counts but have no expiration (lot/batch expiration for quantity
+> products is a planned enhancement). The scanner's cycle-count screen is not yet
+> location-aware — counted quantities default to the Backroom (a follow-up).
