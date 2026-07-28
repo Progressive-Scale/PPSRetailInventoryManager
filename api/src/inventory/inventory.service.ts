@@ -678,6 +678,91 @@ export class InventoryService {
     });
   }
 
+  // ---- lookup (scanner resolve) ------------------------------------------
+
+  /**
+   * Resolve a scanned barcode for the Move-Items flow. `serial` -> the ON_HAND
+   * unit at the store (with its current location). `upc` -> the product, plus
+   * per-location stock for quantity products so the scanner can offer a source.
+   */
+  async lookup(
+    ctx: DataContext,
+    query: { serial?: string; upc?: string; storeId?: number },
+  ) {
+    const storeId = this.readStoreId(ctx, query.storeId);
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      if (query.serial) {
+        const conds: SQL[] = [
+          eq(inventoryItems.companyId, ctx.companyId),
+          eq(inventoryItems.serial, query.serial),
+          eq(inventoryItems.status, 'ON_HAND'),
+        ];
+        if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
+        const [unit] = await tx
+          .select({
+            id: inventoryItems.id,
+            storeId: inventoryItems.storeId,
+            productId: inventoryItems.productId,
+            productName: products.name,
+            sku: products.sku,
+            serial: inventoryItems.serial,
+            locationId: inventoryItems.locationId,
+            locationName: storeLocations.name,
+            locationKind: storeLocations.kind,
+            expirationDate: inventoryItems.expirationDate,
+          })
+          .from(inventoryItems)
+          .innerJoin(products, eq(products.id, inventoryItems.productId))
+          .innerJoin(storeLocations, eq(storeLocations.id, inventoryItems.locationId))
+          .where(and(...conds))
+          .limit(1);
+        if (!unit) throw new NotFoundException('No on-hand unit for that serial.');
+        return { kind: 'serial' as const, item: unit };
+      }
+
+      if (query.upc) {
+        const [product] = await tx
+          .select()
+          .from(products)
+          .where(and(eq(products.companyId, ctx.companyId), eq(products.upc, query.upc)))
+          .limit(1);
+        if (!product) throw new NotFoundException('No product for that barcode.');
+        let stockByLocation: Array<{
+          locationId: number;
+          locationName: string;
+          locationKind: string;
+          quantityOnHand: number;
+        }> = [];
+        if (product.trackingType === 'QUANTITY' && storeId != null) {
+          stockByLocation = await tx
+            .select({
+              locationId: inventoryStock.locationId,
+              locationName: storeLocations.name,
+              locationKind: storeLocations.kind,
+              quantityOnHand: inventoryStock.quantityOnHand,
+            })
+            .from(inventoryStock)
+            .innerJoin(storeLocations, eq(storeLocations.id, inventoryStock.locationId))
+            .where(
+              and(
+                eq(inventoryStock.companyId, ctx.companyId),
+                eq(inventoryStock.storeId, storeId),
+                eq(inventoryStock.productId, product.id),
+              ),
+            )
+            .orderBy(asc(storeLocations.sortOrder));
+        }
+        return {
+          kind: product.trackingType === 'QUANTITY' ? ('quantity' as const) : ('serialized' as const),
+          product,
+          stockByLocation,
+        };
+      }
+
+      throw new BadRequestException('Provide a serial or a upc.');
+    });
+  }
+
   // ---- internals ---------------------------------------------------------
 
   private resolveTarget(dto: InventoryActionDto): Target {

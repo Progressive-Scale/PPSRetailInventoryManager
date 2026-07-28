@@ -105,6 +105,29 @@ export class MoveInventoryDto {
   note?: string;
 }
 
+// Resolve a scanned barcode to a movable target. `serial` resolves an ON_HAND
+// unit (+ its location); `upc` resolves a product (+ per-location stock for
+// quantity products). Used by the scanner's Move-Items flow.
+export class LookupQuery {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  serial?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  upc?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  storeId?: number;
+}
+
 // Unit-level listing for the "in stock by expiration" view. Serialized units
 // only, with their location + expiration, sorted by expiration date.
 export class ListItemsQuery extends PaginationQuery {

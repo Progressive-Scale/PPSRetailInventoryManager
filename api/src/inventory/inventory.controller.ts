@@ -20,6 +20,7 @@ import {
   InventoryActionDto,
   ListInventoryQuery,
   ListItemsQuery,
+  LookupQuery,
   MoveInventoryDto,
 } from './dto/inventory.dto';
 
@@ -40,6 +41,12 @@ export class InventoryController {
   @Get('items')
   listItems(@Ctx() ctx: DataContext, @Query() query: ListItemsQuery) {
     return this.svc.listItems(ctx, query);
+  }
+
+  // Resolve a scanned serial/UPC for the Move-Items flow.
+  @Get('lookup')
+  lookup(@Ctx() ctx: DataContext, @Query() query: LookupQuery) {
+    return this.svc.lookup(ctx, query);
   }
 
   // Expansion for a single product: units (serialized) or stock + ledger.
