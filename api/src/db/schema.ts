@@ -44,6 +44,21 @@ export const transactionType = pgEnum('transaction_type', [
   'SALE',
   'ADJUSTMENT',
   'RETURN',
+  'MOVE',
+]);
+// Areas within a store. BACKROOM (not customer-facing) and ONFLOOR
+// (customer-purchasable) are system locations auto-created per store (renamable,
+// not deletable, identified by kind); CUSTOM are user-added.
+export const locationKind = pgEnum('location_kind', [
+  'BACKROOM',
+  'ONFLOOR',
+  'CUSTOM',
+]);
+export const notificationType = pgEnum('notification_type', ['EXPIRATION_WARNING']);
+export const notificationStatus = pgEnum('notification_status', [
+  'UNREAD',
+  'READ',
+  'DISMISSED',
 ]);
 export const transactionSource = pgEnum('transaction_source', [
   'PORTAL',
@@ -220,6 +235,41 @@ export const products = pgTable(
   ],
 );
 
+// Named areas within a store. Every store has exactly one BACKROOM and one
+// ONFLOOR system location (auto-created; renamable, not deletable) plus any
+// CUSTOM locations. System rows are identified by `kind`, not by name.
+export const storeLocations = pgTable(
+  'store_locations',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    name: text('name').notNull(),
+    kind: locationKind('kind').notNull().default('CUSTOM'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('store_locations_company_store_idx').on(t.companyId, t.storeId),
+    uniqueIndex('store_locations_company_store_name_uniq').on(
+      t.companyId,
+      t.storeId,
+      t.name,
+    ),
+    // Exactly one BACKROOM + one ONFLOOR per store (CUSTOM rows unconstrained).
+    uniqueIndex('store_locations_store_systemkind_uniq')
+      .on(t.storeId, t.kind)
+      .where(sql`${t.kind} <> 'CUSTOM'`),
+  ],
+);
+
 // SERIALIZED units only. One row per physical unit. Catalog fields (sku, name,
 // price, upc, description) live on products; expiration is per-unit.
 export const inventoryItems = pgTable(
@@ -236,6 +286,10 @@ export const inventoryItems = pgTable(
     productId: integer('product_id')
       .notNull()
       .references(() => products.id),
+    // The area of the store this unit lives in (defaults to BACKROOM on intake).
+    locationId: integer('location_id')
+      .notNull()
+      .references(() => storeLocations.id),
     // The ERP's serial / GS1 id. Unique per company.
     serial: text('serial').notNull(),
     status: itemStatus('status').notNull().default('ON_HAND'),
@@ -261,6 +315,7 @@ export const inventoryItems = pgTable(
       t.status,
     ),
     index('inventory_items_company_product_idx').on(t.companyId, t.productId),
+    index('inventory_items_company_location_idx').on(t.companyId, t.locationId),
   ],
 );
 
@@ -278,6 +333,10 @@ export const inventoryStock = pgTable(
     productId: integer('product_id')
       .notNull()
       .references(() => products.id),
+    // One counter row per product per store per location.
+    locationId: integer('location_id')
+      .notNull()
+      .references(() => storeLocations.id),
     quantityOnHand: integer('quantity_on_hand').notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -285,10 +344,11 @@ export const inventoryStock = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
-    uniqueIndex('inventory_stock_company_store_product_uniq').on(
+    uniqueIndex('inventory_stock_company_store_product_location_uniq').on(
       t.companyId,
       t.storeId,
       t.productId,
+      t.locationId,
     ),
     index('inventory_stock_company_idx').on(t.companyId),
     check('inventory_stock_qty_nonneg', sql`${t.quantityOnHand} >= 0`),
@@ -298,6 +358,12 @@ export const inventoryStock = pgTable(
 // The ledger. Append-only: one row per inventory state change, written in the
 // same transaction as the item/stock update. Covers both tracking types:
 // item_id is set for serialized units only; quantity_delta is ±N.
+//
+// Location context: RECEIPT rows record location_to_id (where stock landed,
+// BACKROOM on intake); SALE/ADJUSTMENT/RETURN record location_from_id (where it
+// left). MOVE rows set BOTH location_from_id and location_to_id; for a MOVE,
+// quantity_delta is 0 for serialized (item_id set) and the moved quantity as a
+// POSITIVE number for quantity products (from/to express the direction).
 export const inventoryTransactions = pgTable(
   'inventory_transactions',
   {
@@ -315,6 +381,11 @@ export const inventoryTransactions = pgTable(
     itemId: uuid('item_id').references(() => inventoryItems.id),
     type: transactionType('type').notNull(),
     quantityDelta: integer('quantity_delta').notNull(),
+    // Location context (see comment above). Nullable; set where known.
+    locationFromId: integer('location_from_id').references(
+      () => storeLocations.id,
+    ),
+    locationToId: integer('location_to_id').references(() => storeLocations.id),
     note: text('note'),
     performedByUserId: integer('performed_by_user_id').references(
       () => users.id,
@@ -387,6 +458,52 @@ export const outboxReturns = pgTable(
   (t) => [
     index('outbox_returns_company_idx').on(t.companyId),
     index('outbox_returns_pending_idx').on(t.deliveredAt, t.id),
+  ],
+);
+
+// Per-company (or per-store override) expiration-alert configuration.
+// A null store_id row is the company default.
+export const notificationSettings = pgTable(
+  'notification_settings',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    storeId: integer('store_id').references(() => stores.id),
+    expirationAlertDays: integer('expiration_alert_days').notNull().default(30),
+    enabled: boolean('enabled').notNull().default(true),
+  },
+  (t) => [
+    uniqueIndex('notification_settings_company_store_uniq').on(
+      t.companyId,
+      t.storeId,
+    ),
+  ],
+);
+
+// In-app notifications (currently expiration warnings; type is extensible).
+// payload = { itemId, serial, productName, expirationDate, daysLeft, expired }.
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    type: notificationType('type').notNull(),
+    payload: jsonb('payload').notNull(),
+    status: notificationStatus('status').notNull().default('UNREAD'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('notifications_company_status_idx').on(t.companyId, t.status),
+    index('notifications_company_store_idx').on(t.companyId, t.storeId),
   ],
 );
 
@@ -583,16 +700,21 @@ export type OutboxReturn = typeof outboxReturns.$inferSelect;
 export type CycleCount = typeof cycleCounts.$inferSelect;
 export type CycleCountLine = typeof cycleCountLines.$inferSelect;
 export type StoreInventoryRow = typeof storeInventory.$inferSelect;
+export type StoreLocation = typeof storeLocations.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
+export type NotificationSetting = typeof notificationSettings.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
 export type TrackingType = (typeof trackingType.enumValues)[number];
 export type ItemStatus = (typeof itemStatus.enumValues)[number];
+export type LocationKind = (typeof locationKind.enumValues)[number];
 export type CycleCountResolution =
   (typeof cycleCountResolution.enumValues)[number];
 
 // Every tenant-owned table, for the RLS migration + tenant-db assertions.
 export const TENANT_TABLES = [
   'stores',
+  'store_locations',
   'users',
   'invitations',
   'api_keys',
@@ -604,4 +726,6 @@ export const TENANT_TABLES = [
   'outbox_returns',
   'cycle_counts',
   'cycle_count_lines',
+  'notification_settings',
+  'notifications',
 ] as const;

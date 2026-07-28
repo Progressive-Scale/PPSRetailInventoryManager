@@ -22,6 +22,20 @@
       "when": 1785248939431,
       "tag": "0002_yummy_skullbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785250511129,
+      "tag": "0003_glossy_moon_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785250511130,
+      "tag": "0004_locations_rls_backfill",
+      "breakpoints": true
     }
   ]
 }

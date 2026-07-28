@@ -28,7 +28,16 @@ const {
   inventoryTransactions,
   cycleCounts,
   cycleCountLines,
+  storeLocations,
+  notificationSettings,
 } = schema;
+
+/** YYYY-MM-DD, `n` days from `base` (negative = past). */
+function addDays(base: Date, n: number): string {
+  const d = new Date(base);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 type TrackingType = schema.TrackingType;
@@ -44,15 +53,18 @@ interface ProductSeed {
   trackingType: TrackingType;
   needsReview?: boolean;
 }
+type LocationSlot = 'BACKROOM' | 'ONFLOOR';
 interface UnitSeed {
   sku: string;
   serial: string;
   status: ItemStatus;
+  location: LocationSlot;
   expirationDate?: string | null;
 }
 interface StockSeed {
   sku: string;
   quantity: number;
+  location: LocationSlot;
 }
 
 async function ensureCompany(db: Db, name: string, slug: string) {
@@ -110,6 +122,41 @@ async function ensureStore(
     .returning();
   if (!row) throw new Error(`Failed to create/find store '${name}'.`);
   return row;
+}
+
+/**
+ * Ensure a store's two SYSTEM locations exist and return their ids. Every store
+ * has exactly one BACKROOM and one ONFLOOR (renamable, not deletable). Custom
+ * locations may also exist but are not created here.
+ */
+async function ensureSystemLocations(
+  db: Db,
+  companyId: number,
+  storeId: number,
+): Promise<{ backroom: number; onfloor: number }> {
+  const defaults: Array<{ name: string; kind: 'BACKROOM' | 'ONFLOOR'; sortOrder: number }> = [
+    { name: 'Backroom', kind: 'BACKROOM', sortOrder: 0 },
+    { name: 'On Floor', kind: 'ONFLOOR', sortOrder: 1 },
+  ];
+  const existing = await db
+    .select()
+    .from(storeLocations)
+    .where(and(eq(storeLocations.companyId, companyId), eq(storeLocations.storeId, storeId)));
+  for (const d of defaults) {
+    if (existing.some((r) => r.kind === d.kind)) continue;
+    await db
+      .insert(storeLocations)
+      .values({ companyId, storeId, name: d.name, kind: d.kind, sortOrder: d.sortOrder });
+  }
+  const rows = await db
+    .select()
+    .from(storeLocations)
+    .where(and(eq(storeLocations.companyId, companyId), eq(storeLocations.storeId, storeId)));
+  const backroom = rows.find((r) => r.kind === 'BACKROOM');
+  const onfloor = rows.find((r) => r.kind === 'ONFLOOR');
+  if (!backroom || !onfloor)
+    throw new Error(`Failed to create system locations for store ${storeId}.`);
+  return { backroom: backroom.id, onfloor: onfloor.id };
 }
 
 async function ensureUser(
@@ -190,6 +237,7 @@ async function main(): Promise<void> {
     zip: '62701',
     notes: 'Flagship demo store.',
   });
+  const demoLoc = await ensureSystemLocations(db, demo.id, store.id);
   await ensureUser(db, demo.id, null, 'admin@demo.test', 'admin123', 'COMPANY_ADMIN');
   await ensureUser(db, demo.id, store.id, 'user@demo.test', 'store123', 'STORE_USER');
   const [storeUser] = await db
@@ -208,24 +256,38 @@ async function main(): Promise<void> {
   ];
   const demoBySku = await ensureProducts(db, demo.id, demoProducts);
 
-  // Serialized units (mixed statuses). SN-1005 starts ON_HAND and is swept to
-  // SOLD by the demo cycle count below.
+  // Serialized units (mixed statuses + locations). SN-1005 starts ON_HAND and
+  // is swept to SOLD by the demo cycle count below. Expirations are staggered
+  // relative to "today" so the ExpirationAlertsJob has data to alert on:
+  //   - ON_FLOOR + within/past the alert window  -> should raise a notification
+  //   - BACKROOM near-expiry                      -> should NOT alert (floor-only)
   const demoUnits: UnitSeed[] = [
-    { sku: 'TS-BLK-M', serial: 'SN-1001', status: 'ON_HAND', expirationDate: '2027-01-31' },
-    { sku: 'TS-BLK-M', serial: 'SN-1005', status: 'ON_HAND' },
-    { sku: 'HD-GRY-L', serial: 'SN-1003', status: 'SOLD' },
-    { sku: 'CAP-RED', serial: 'SN-1004', status: 'ON_HAND', expirationDate: '2026-10-15' },
-    { sku: 'CAP-RED', serial: 'SN-1006', status: 'SOLD' },
-    { sku: 'REVIEW-SN-UNKNOWN', serial: 'SN-REV-1', status: 'ON_HAND' },
+    // On floor, far-out expiry — no alert.
+    { sku: 'TS-BLK-M', serial: 'SN-1001', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 200) },
+    // Backroom, swept SOLD by the cycle count below.
+    { sku: 'TS-BLK-M', serial: 'SN-1005', status: 'ON_HAND', location: 'BACKROOM' },
+    // Backroom near-expiry — must NOT alert (not customer-facing).
+    { sku: 'TS-BLK-M', serial: 'SN-1009', status: 'ON_HAND', location: 'BACKROOM', expirationDate: addDays(now, 5) },
+    { sku: 'HD-GRY-L', serial: 'SN-1003', status: 'SOLD', location: 'BACKROOM' },
+    // On floor, already expired — alert (expired flag).
+    { sku: 'HD-GRY-L', serial: 'SN-1007', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, -8) },
+    // On floor, 5 days out — alert (within 7/30).
+    { sku: 'CAP-RED', serial: 'SN-1004', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 5) },
+    // On floor, 23 days out — alert (within 30).
+    { sku: 'CAP-RED', serial: 'SN-1008', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 23) },
+    { sku: 'CAP-RED', serial: 'SN-1006', status: 'SOLD', location: 'BACKROOM' },
+    { sku: 'REVIEW-SN-UNKNOWN', serial: 'SN-REV-1', status: 'ON_HAND', location: 'BACKROOM' },
   ];
   for (const u of demoUnits) {
     const product = demoBySku.get(u.sku)!;
+    const locationId = u.location === 'ONFLOOR' ? demoLoc.onfloor : demoLoc.backroom;
     const [item] = await db
       .insert(inventoryItems)
       .values({
         companyId: demo.id,
         storeId: store.id,
         productId: product.id,
+        locationId,
         serial: u.serial,
         status: u.status,
         expirationDate: u.expirationDate ?? null,
@@ -246,6 +308,7 @@ async function main(): Promise<void> {
       quantityDelta: 1,
       note: 'Seeded handoff',
       source: 'SYNC',
+      locationToId: locationId,
     });
     if (u.status === 'SOLD') {
       await db.insert(inventoryTransactions).values({
@@ -257,24 +320,30 @@ async function main(): Promise<void> {
         quantityDelta: -1,
         note: 'Seeded sale',
         source: 'PORTAL',
+        locationFromId: locationId,
       });
     }
   }
 
-  // Quantity stock. SOCK-WHT is received at 40 then adjusted to 38 by the demo
-  // cycle count; GLOVE-BLK is received at 12 and left uncounted.
+  // Quantity stock, now per-location. SOCK-WHT sits in the BACKROOM (40, later
+  // adjusted to 38 by the demo cycle count) AND on the floor (10) to show a
+  // product split across two locations; GLOVE-BLK is backroom-only (12,
+  // uncounted).
   const demoStock: StockSeed[] = [
-    { sku: 'SOCK-WHT', quantity: 40 },
-    { sku: 'GLOVE-BLK', quantity: 12 },
+    { sku: 'SOCK-WHT', quantity: 40, location: 'BACKROOM' },
+    { sku: 'SOCK-WHT', quantity: 10, location: 'ONFLOOR' },
+    { sku: 'GLOVE-BLK', quantity: 12, location: 'BACKROOM' },
   ];
   for (const s of demoStock) {
     const product = demoBySku.get(s.sku)!;
+    const locationId = s.location === 'ONFLOOR' ? demoLoc.onfloor : demoLoc.backroom;
     const [row] = await db
       .insert(inventoryStock)
       .values({
         companyId: demo.id,
         storeId: store.id,
         productId: product.id,
+        locationId,
         quantityOnHand: s.quantity,
       })
       .onConflictDoNothing({
@@ -282,6 +351,7 @@ async function main(): Promise<void> {
           inventoryStock.companyId,
           inventoryStock.storeId,
           inventoryStock.productId,
+          inventoryStock.locationId,
         ],
       })
       .returning();
@@ -294,6 +364,7 @@ async function main(): Promise<void> {
       quantityDelta: s.quantity,
       note: 'Seeded stock handoff',
       source: 'SYNC',
+      locationToId: locationId,
     });
   }
 
@@ -367,6 +438,7 @@ async function main(): Promise<void> {
         note: `Cycle count #${cc.id}`,
         source: 'CYCLE_COUNT',
         cycleCountId: cc.id,
+        locationFromId: demoLoc.backroom,
       });
       await db.insert(cycleCountLines).values({
         companyId: demo.id,
@@ -377,7 +449,8 @@ async function main(): Promise<void> {
         resolution: 'MARKED_SOLD',
       });
 
-      // Quantity product counted 38 (was 40) -> SALE -2, stock set to 38.
+      // Quantity product counted 38 (was 40) in the BACKROOM -> SALE -2, that
+      // location's stock row set to 38 (the on-floor row is untouched).
       await db
         .update(inventoryStock)
         .set({ quantityOnHand: 38, updatedAt: now })
@@ -386,6 +459,7 @@ async function main(): Promise<void> {
             eq(inventoryStock.companyId, demo.id),
             eq(inventoryStock.storeId, store.id),
             eq(inventoryStock.productId, sock.id),
+            eq(inventoryStock.locationId, demoLoc.backroom),
           ),
         );
       await db.insert(inventoryTransactions).values({
@@ -397,6 +471,7 @@ async function main(): Promise<void> {
         note: `Cycle count #${cc.id} (counted 38)`,
         source: 'CYCLE_COUNT',
         cycleCountId: cc.id,
+        locationFromId: demoLoc.backroom,
       });
       await db.insert(cycleCountLines).values({
         companyId: demo.id,
@@ -406,6 +481,26 @@ async function main(): Promise<void> {
         resolution: 'COUNTED_BY_UPC',
       });
     }
+  }
+
+  // --- Company-default notification settings (30-day expiration window) ---
+  const [existingSettings] = await db
+    .select()
+    .from(notificationSettings)
+    .where(
+      and(
+        eq(notificationSettings.companyId, demo.id),
+        isNull(notificationSettings.storeId),
+      ),
+    )
+    .limit(1);
+  if (!existingSettings) {
+    await db.insert(notificationSettings).values({
+      companyId: demo.id,
+      storeId: null,
+      expirationAlertDays: 30,
+      enabled: true,
+    });
   }
 
   // --- API key for the demo company's sync agent (plaintext shown once) ---
@@ -435,6 +530,7 @@ async function main(): Promise<void> {
     zip: '60504',
     notes: 'Central distribution warehouse.',
   });
+  const acmeLoc = await ensureSystemLocations(db, acme.id, acmeStore.id);
   await ensureUser(db, acme.id, null, 'admin@acme.test', 'admin123', 'COMPANY_ADMIN');
   const acmeBySku = await ensureProducts(db, acme.id, [
     { sku: 'ACME-WIDGET', name: 'Acme Widget', price: '5.00', upc: '0009990001', trackingType: 'SERIALIZED' },
@@ -448,6 +544,7 @@ async function main(): Promise<void> {
         companyId: acme.id,
         storeId: acmeStore.id,
         productId: widget.id,
+        locationId: acmeLoc.backroom,
         serial: 'SN-A1',
         status: 'ON_HAND',
         receivedAt: now,
@@ -466,6 +563,7 @@ async function main(): Promise<void> {
         quantityDelta: 1,
         note: 'Seeded handoff',
         source: 'SYNC',
+        locationToId: acmeLoc.backroom,
       });
     }
     const bolt = acmeBySku.get('ACME-BOLT')!;
@@ -475,6 +573,7 @@ async function main(): Promise<void> {
         companyId: acme.id,
         storeId: acmeStore.id,
         productId: bolt.id,
+        locationId: acmeLoc.backroom,
         quantityOnHand: 100,
       })
       .onConflictDoNothing({
@@ -482,6 +581,7 @@ async function main(): Promise<void> {
           inventoryStock.companyId,
           inventoryStock.storeId,
           inventoryStock.productId,
+          inventoryStock.locationId,
         ],
       })
       .returning();
@@ -494,6 +594,7 @@ async function main(): Promise<void> {
         quantityDelta: 100,
         note: 'Seeded stock handoff',
         source: 'SYNC',
+        locationToId: acmeLoc.backroom,
       });
     }
   }
