@@ -99,20 +99,12 @@ interface Column {
 
           @if (isCompanyAdmin && selectionCount() > 0) {
             <div class="bulk-bar">
-              <span class="bulk-count">{{ selectionCount() }} selected</span>
-              @if (canEscalate()) {
-                <span class="bulk-escalate">
-                  All {{ rows().length }} on this page selected —
-                  <button type="button" class="linkbtn" (click)="escalate()">
-                    Select all {{ total() }} matching current filters
-                  </button>
-                </span>
-              } @else if (filterScope()) {
-                <span class="bulk-escalate">All {{ total() }} matching current filters selected</span>
-              }
               <span class="bulk-actions">
                 <button type="button" class="icon-btn" (click)="openMove()" [disabled]="busy()" title="Move to location">
                   <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" /></svg>
+                </button>
+                <button type="button" class="icon-btn" (click)="openSold()" [disabled]="busy()" title="Mark as sold">
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z" /></svg>
                 </button>
                 <span class="tip-wrap">
                   <button
@@ -128,6 +120,17 @@ interface Column {
                 </span>
                 <button type="button" class="icon-btn clear-btn" (click)="clearSelection()" title="Clear selection">✕</button>
               </span>
+              <span class="bulk-count">{{ selectionCount() }} selected</span>
+              @if (canEscalate()) {
+                <span class="bulk-escalate">
+                  All {{ rows().length }} on this page selected —
+                  <button type="button" class="linkbtn" (click)="escalate()">
+                    Select all {{ total() }} matching current filters
+                  </button>
+                </span>
+              } @else if (filterScope()) {
+                <span class="bulk-escalate">All {{ total() }} matching current filters selected</span>
+              }
             </div>
           }
 
@@ -304,6 +307,28 @@ interface Column {
               {{ busy() ? 'Saving…' : 'Save' }}
             </button>
             <button class="ghost" (click)="expOpen.set(false)" [disabled]="busy()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    @if (soldOpen()) {
+      <div class="overlay" (click)="soldOpen.set(false)">
+        <div class="modal" (click)="$event.stopPropagation()">
+          <h3>Mark {{ selectionCount() }} item(s) as sold</h3>
+          @if (dialogError()) {
+            <p class="error">{{ dialogError() }}</p>
+          }
+          <p class="preview">Mark {{ selectionCount() }} selected item(s) as sold?</p>
+          <p class="muted small">
+            Serialized units are marked sold; UPC products sell their full on-hand at each
+            row's location.
+          </p>
+          <div class="modal-actions">
+            <button class="danger-btn" (click)="commitSold()" [disabled]="busy()">
+              {{ busy() ? 'Working…' : 'Mark sold' }}
+            </button>
+            <button class="ghost" (click)="soldOpen.set(false)" [disabled]="busy()">Cancel</button>
           </div>
         </div>
       </div>
@@ -539,7 +564,6 @@ interface Column {
         display: flex;
         align-items: center;
         gap: 0.35rem;
-        margin-left: auto;
       }
       /* Fast custom tooltip on the wrapper — shows even over a disabled button,
          with no native title delay. */
@@ -664,6 +688,15 @@ interface Column {
         gap: 0.5rem;
         margin-top: 0.75rem;
       }
+      .danger-btn {
+        background: #b42318;
+        border: 1px solid #b42318;
+        color: #fff;
+      }
+      .danger-btn:hover:not(:disabled) {
+        background: #99200f;
+        border-color: #99200f;
+      }
     `,
   ],
 })
@@ -728,6 +761,9 @@ export class InventoryComponent implements OnInit {
   readonly expOpen = signal(false);
   expDate = '';
   expClear = false;
+
+  // Sold confirmation dialog.
+  readonly soldOpen = signal(false);
 
   readonly someSelected = computed(
     () => this.filterScope() || this.selectedRows().size > 0,
@@ -938,6 +974,10 @@ export class InventoryComponent implements OnInit {
       this.expOpen.set(false);
       return;
     }
+    if (this.soldOpen()) {
+      this.soldOpen.set(false);
+      return;
+    }
     if (this.selectionCount() > 0) this.clearSelection();
   }
 
@@ -1094,6 +1134,62 @@ export class InventoryComponent implements OnInit {
       this.bulkFailures.set(failures);
       this.bulkMessage.set(
         `Updated ${ok} item(s)${failures.length ? `, ${failures.length} skipped` : ''}.`,
+      );
+      this.clearSelection();
+      this.reload();
+    } catch (e) {
+      this.busy.set(false);
+      this.dialogError.set(messageFor(e));
+    }
+  }
+
+  // ---- bulk: mark sold ----
+  openSold(): void {
+    this.dialogError.set(null);
+    this.soldOpen.set(true);
+  }
+
+  async commitSold(): Promise<void> {
+    this.busy.set(true);
+    this.dialogError.set(null);
+    try {
+      const rows = await this.resolveSelection();
+      const serialRows = rows.filter((r) => r.rowKind === 'unit' && r.itemId);
+      const qtyRows = rows.filter((r) => r.rowKind === 'stock');
+      const bySerial = new Map(serialRows.map((r) => [r.itemId as string, r]));
+      const ids = [...bySerial.keys()];
+      let sold = 0;
+      const failures: string[] = [];
+
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        const res = await firstValueFrom(this.api.bulkSell(chunk));
+        for (const r of res.results) {
+          if (r.ok) sold++;
+          else failures.push(`${bySerial.get(r.itemId)?.serial ?? r.itemId}: ${r.reason ?? 'skipped'}`);
+        }
+      }
+      for (const r of qtyRows) {
+        try {
+          await firstValueFrom(
+            this.api.sellInventory({
+              productId: r.productId,
+              quantity: r.onHand,
+              locationId: r.locationId,
+              storeId: r.storeId,
+            }),
+          );
+          sold++;
+        } catch (e) {
+          failures.push(`${r.name} @ ${r.locationName}: ${messageFor(e)}`);
+        }
+      }
+
+      this.busy.set(false);
+      this.soldOpen.set(false);
+      this.bulkFailures.set(failures);
+      this.bulkMessage.set(
+        `Sold ${sold} item(s)/line(s)${failures.length ? `, ${failures.length} skipped` : ''}.`,
       );
       this.clearSelection();
       this.reload();

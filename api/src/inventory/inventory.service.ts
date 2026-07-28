@@ -919,6 +919,75 @@ export class InventoryService {
     });
   }
 
+  /**
+   * Bulk mark serialized items as SOLD (partial success). Same tenant-scope /
+   * serialized validation as bulk-expiration (unknown ids fail the whole
+   * request); non-ON_HAND items are rejected per-item. One transaction; each
+   * sale writes a SALE ledger row from the unit's current location.
+   */
+  async bulkSell(
+    ctx: DataContext,
+    dto: { itemIds: string[]; note?: string },
+  ): Promise<{ results: Array<{ itemId: string; ok: boolean; reason?: string }> }> {
+    const ids = [...new Set(dto.itemIds)];
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const items = await tx
+        .select({
+          id: inventoryItems.id,
+          storeId: inventoryItems.storeId,
+          productId: inventoryItems.productId,
+          status: inventoryItems.status,
+          locationId: inventoryItems.locationId,
+        })
+        .from(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.companyId, ctx.companyId),
+            inArray(inventoryItems.id, ids),
+          ),
+        );
+      const found = new Map(items.map((i) => [i.id, i]));
+      const offending = ids.filter((id) => !found.has(id));
+      if (offending.length > 0) {
+        throw new BadRequestException({
+          message:
+            'Every id must be a serialized item in your company. Offending ids indicate a client bug.',
+          offendingIds: offending,
+        });
+      }
+
+      const results: Array<{ itemId: string; ok: boolean; reason?: string }> = [];
+      for (const it of items) {
+        if (it.status !== 'ON_HAND') {
+          results.push({
+            itemId: it.id,
+            ok: false,
+            reason: `item is ${it.status}, only ON_HAND items can be sold`,
+          });
+          continue;
+        }
+        await tx
+          .update(inventoryItems)
+          .set({ status: 'SOLD', updatedAt: new Date() })
+          .where(eq(inventoryItems.id, it.id));
+        await tx.insert(inventoryTransactions).values({
+          companyId: ctx.companyId,
+          storeId: it.storeId,
+          productId: it.productId,
+          itemId: it.id,
+          type: 'SALE',
+          quantityDelta: -1,
+          locationFromId: it.locationId,
+          note: dto.note ?? 'Bulk sold',
+          performedByUserId: ctx.userId,
+          source: 'PORTAL',
+        });
+        results.push({ itemId: it.id, ok: true });
+      }
+      return { results };
+    });
+  }
+
   /** Audit records for one serialized item (expiration changes), newest first. */
   async itemAuditTrail(ctx: DataContext, itemId: string) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {

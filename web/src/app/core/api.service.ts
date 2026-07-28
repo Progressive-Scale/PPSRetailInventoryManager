@@ -164,6 +164,11 @@ export class ApiService {
     });
   }
 
+  /** Bulk mark serialized items sold (partial success). */
+  bulkSell(itemIds: string[], note?: string): Observable<BulkExpirationResult> {
+    return this.http.post<BulkExpirationResult>('/api/inventory/bulk-sell', { itemIds, note });
+  }
+
   /** Audit trail (expiration changes) for a serialized item. */
   itemAudit(itemId: string): Observable<ItemAudit[]> {
     return this.http.get<ItemAudit[]>(`/api/inventory/items/${itemId}/audit`);

@@ -178,6 +178,19 @@ export class UpdateItemDto {
   expirationDate?: string | null;
 }
 
+// Bulk mark serialized items as sold.
+export class BulkSellDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  itemIds!: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
 // Admin bulk edit of serialized items' expiration date (null clears it).
 export class BulkExpirationDto {
   @IsArray()

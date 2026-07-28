@@ -19,6 +19,7 @@ import { DataContext } from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
 import {
   BulkExpirationDto,
+  BulkSellDto,
   InventoryActionDto,
   ListInventoryQuery,
   ListItemsQuery,
@@ -80,6 +81,13 @@ export class InventoryController {
   @HttpCode(HttpStatus.OK)
   move(@Ctx() ctx: DataContext, @Body() dto: MoveInventoryDto) {
     return this.svc.move(ctx, dto);
+  }
+
+  // Bulk mark serialized items sold (partial success).
+  @Post('bulk-sell')
+  @HttpCode(HttpStatus.OK)
+  bulkSell(@Ctx() ctx: DataContext, @Body() dto: BulkSellDto) {
+    return this.svc.bulkSell(ctx, dto);
   }
 
   // Admin: set a quantity product's on-hand at a location to an exact value.
