@@ -20,6 +20,7 @@ import {
 import { DataContext } from '../auth/auth.types';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { resolveOrCreateProduct } from '../products/product-catalog';
+import { systemLocationId } from '../locations/location-util';
 import {
   CloseCycleCountDto,
   ListCycleCountsQuery,
@@ -100,11 +101,12 @@ export class CycleCountsService {
         )
         .orderBy(inventoryItems.serial);
 
-      // Quantity stock at the store.
+      // Quantity stock at the store, summed across locations (the scanner's
+      // cycle-count snapshot is product-level and location-agnostic).
       const stock = await tx
         .select({
           productId: inventoryStock.productId,
-          quantityOnHand: inventoryStock.quantityOnHand,
+          quantityOnHand: sql<number>`coalesce(sum(${inventoryStock.quantityOnHand}), 0)::int`,
           sku: products.sku,
           name: products.name,
           upc: products.upc,
@@ -117,6 +119,7 @@ export class CycleCountsService {
             eq(inventoryStock.storeId, storeId),
           ),
         )
+        .groupBy(inventoryStock.productId, products.sku, products.name, products.upc)
         .orderBy(products.sku);
 
       const [cc] = await tx
@@ -147,6 +150,12 @@ export class CycleCountsService {
       const scannedSerials = dto.scannedSerials ?? [];
       const quantityCounts = dto.quantityCounts ?? [];
       const newItems = dto.newItems ?? [];
+      const backroomId = await systemLocationId(
+        tx,
+        ctx.companyId,
+        cc.storeId,
+        'BACKROOM',
+      );
 
       // Serialized ON_HAND universe for the store (snapshot before mutations).
       const universe = await tx
@@ -154,6 +163,7 @@ export class CycleCountsService {
           id: inventoryItems.id,
           serial: inventoryItems.serial,
           productId: inventoryItems.productId,
+          locationId: inventoryItems.locationId,
         })
         .from(inventoryItems)
         .where(
@@ -182,10 +192,18 @@ export class CycleCountsService {
         }
       }
 
-      // 2) quantity counts -> set stock to counted, post ONE delta ledger row.
+      // 2) quantity counts -> set that location's stock to counted, post ONE
+      //    delta ledger row. Location defaults to BACKROOM (scanner omits it).
       for (const qc of quantityCounts) {
         const product = await this.resolveQuantityProduct(tx, ctx, qc);
-        const current = await this.currentStock(tx, ctx, cc.storeId, product.id);
+        const locationId = qc.locationId ?? backroomId;
+        const current = await this.currentStock(
+          tx,
+          ctx,
+          cc.storeId,
+          product.id,
+          locationId,
+        );
         const delta = qc.countedQuantity - current;
         if (delta !== 0) {
           await tx.insert(inventoryTransactions).values({
@@ -194,6 +212,8 @@ export class CycleCountsService {
             productId: product.id,
             type: delta < 0 ? 'SALE' : 'ADJUSTMENT',
             quantityDelta: delta,
+            locationFromId: delta < 0 ? locationId : null,
+            locationToId: delta > 0 ? locationId : null,
             note:
               delta < 0
                 ? `Cycle count #${cc.id}`
@@ -203,7 +223,14 @@ export class CycleCountsService {
             performedByUserId: ctx.userId,
           });
         }
-        await this.setStock(tx, ctx, cc.storeId, product.id, qc.countedQuantity);
+        await this.setStock(
+          tx,
+          ctx,
+          cc.storeId,
+          product.id,
+          locationId,
+          qc.countedQuantity,
+        );
         lines.push({
           productId: product.id,
           itemId: null,
@@ -213,12 +240,18 @@ export class CycleCountsService {
         });
       }
 
-      // 3) newItems -> create needs_review products + unit/stock + RECEIPT.
+      // 3) newItems -> create needs_review products + unit/stock (in BACKROOM)
+      //    + RECEIPT.
       for (const ni of newItems) {
-        const line = await this.applyNewItem(tx, ctx, cc.id, cc.storeId, ni, {
-          bySerial,
-          accounted,
-        });
+        const line = await this.applyNewItem(
+          tx,
+          ctx,
+          cc.id,
+          cc.storeId,
+          backroomId,
+          ni,
+          { bySerial, accounted },
+        );
         if (line) lines.push(line);
       }
 
@@ -237,6 +270,7 @@ export class CycleCountsService {
           itemId: it.id,
           type: 'SALE',
           quantityDelta: -1,
+          locationFromId: it.locationId,
           note: `Cycle count #${cc.id}`,
           source: 'CYCLE_COUNT',
           cycleCountId: cc.id,
@@ -380,6 +414,7 @@ export class CycleCountsService {
     ctx: DataContext,
     storeId: number,
     productId: number,
+    locationId: number,
   ): Promise<number> {
     const [row] = await tx
       .select({ q: inventoryStock.quantityOnHand })
@@ -389,6 +424,7 @@ export class CycleCountsService {
           eq(inventoryStock.companyId, ctx.companyId),
           eq(inventoryStock.storeId, storeId),
           eq(inventoryStock.productId, productId),
+          eq(inventoryStock.locationId, locationId),
         ),
       )
       .for('update');
@@ -400,6 +436,7 @@ export class CycleCountsService {
     ctx: DataContext,
     storeId: number,
     productId: number,
+    locationId: number,
     quantity: number,
   ): Promise<void> {
     const updated = await tx
@@ -410,6 +447,7 @@ export class CycleCountsService {
           eq(inventoryStock.companyId, ctx.companyId),
           eq(inventoryStock.storeId, storeId),
           eq(inventoryStock.productId, productId),
+          eq(inventoryStock.locationId, locationId),
         ),
       )
       .returning({ id: inventoryStock.id });
@@ -418,6 +456,7 @@ export class CycleCountsService {
         companyId: ctx.companyId,
         storeId,
         productId,
+        locationId,
         quantityOnHand: quantity,
       });
     }
@@ -428,10 +467,11 @@ export class CycleCountsService {
     ctx: DataContext,
     storeId: number,
     productId: number,
+    locationId: number,
     delta: number,
   ): Promise<void> {
-    const current = await this.currentStock(tx, ctx, storeId, productId);
-    await this.setStock(tx, ctx, storeId, productId, current + delta);
+    const current = await this.currentStock(tx, ctx, storeId, productId, locationId);
+    await this.setStock(tx, ctx, storeId, productId, locationId, current + delta);
   }
 
   /** Create/attach a needs-review product for an unknown scan. Returns the line. */
@@ -440,6 +480,7 @@ export class CycleCountsService {
     ctx: DataContext,
     cycleCountId: number,
     storeId: number,
+    locationId: number,
     ni: NewItemDto,
     scan: { bySerial: Map<string, { id: string; productId: number; serial: string }>; accounted: Set<string> },
   ): Promise<PendingLine | null> {
@@ -486,6 +527,7 @@ export class CycleCountsService {
           companyId: ctx.companyId,
           storeId,
           productId: product.id,
+          locationId,
           serial,
           status: 'ON_HAND',
           expirationDate: ni.expirationDate ?? null,
@@ -499,6 +541,7 @@ export class CycleCountsService {
         itemId: item.id,
         type: 'RECEIPT',
         quantityDelta: 1,
+        locationToId: locationId,
         note: `Cycle count #${cycleCountId} new item`,
         source: 'CYCLE_COUNT',
         cycleCountId,
@@ -539,13 +582,14 @@ export class CycleCountsService {
         `UPC ${upc} belongs to serialized product ${product.sku}.`,
       );
     }
-    await this.addStock(tx, ctx, storeId, product.id, qty);
+    await this.addStock(tx, ctx, storeId, product.id, locationId, qty);
     await tx.insert(inventoryTransactions).values({
       companyId: ctx.companyId,
       storeId,
       productId: product.id,
       type: 'RECEIPT',
       quantityDelta: qty,
+      locationToId: locationId,
       note: `Cycle count #${cycleCountId} new item`,
       source: 'CYCLE_COUNT',
       cycleCountId,
@@ -600,7 +644,7 @@ export class CycleCountsService {
     const stockRows = await tx
       .select({
         productId: inventoryStock.productId,
-        quantityOnHand: inventoryStock.quantityOnHand,
+        quantityOnHand: sql<number>`coalesce(sum(${inventoryStock.quantityOnHand}), 0)::int`,
         sku: products.sku,
         name: products.name,
       })
@@ -611,7 +655,8 @@ export class CycleCountsService {
           eq(inventoryStock.companyId, ctx.companyId),
           eq(inventoryStock.storeId, cc.storeId),
         ),
-      );
+      )
+      .groupBy(inventoryStock.productId, products.sku, products.name);
     const notCounted = stockRows.filter((s) => !touchedProductIds.has(s.productId));
 
     return {

@@ -11,7 +11,7 @@ import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryTransactions } from '../db/schema';
 import { Paginated, PaginationQuery, resolvePaging } from '../common/pagination';
 
-const TX_TYPES = ['RECEIPT', 'SALE', 'ADJUSTMENT', 'RETURN'] as const;
+const TX_TYPES = ['RECEIPT', 'SALE', 'ADJUSTMENT', 'RETURN', 'MOVE'] as const;
 
 class ListTransactionsQuery extends PaginationQuery {
   @IsOptional()

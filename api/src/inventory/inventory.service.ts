@@ -4,7 +4,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, ilike, inArray, or, sql, SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  lte,
+  or,
+  sql,
+  SQL,
+} from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   InventoryItem,
@@ -17,12 +29,19 @@ import {
   products,
   stores,
   storeInventory,
+  storeLocations,
 } from '../db/schema';
 import { DataContext } from '../auth/auth.types';
-import { InventoryActionDto, ListInventoryQuery } from './dto/inventory.dto';
+import {
+  InventoryActionDto,
+  ListInventoryQuery,
+  ListItemsQuery,
+  MoveInventoryDto,
+} from './dto/inventory.dto';
+import { loadLocation } from '../locations/location-util';
 import { Paginated, resolvePaging } from '../common/pagination';
 
-type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
+type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN' | 'MOVE';
 
 // The action target resolved from a request body.
 type Target =
@@ -178,6 +197,9 @@ export class InventoryService {
           .select({
             id: inventoryItems.id,
             storeId: inventoryItems.storeId,
+            locationId: inventoryItems.locationId,
+            locationName: storeLocations.name,
+            locationKind: storeLocations.kind,
             serial: inventoryItems.serial,
             status: inventoryItems.status,
             expirationDate: inventoryItems.expirationDate,
@@ -185,6 +207,10 @@ export class InventoryService {
             updatedAt: inventoryItems.updatedAt,
           })
           .from(inventoryItems)
+          .innerJoin(
+            storeLocations,
+            eq(storeLocations.id, inventoryItems.locationId),
+          )
           .where(and(...conds))
           .orderBy(asc(inventoryItems.serial));
         const statusCounts = units.reduce<Record<string, number>>((acc, u) => {
@@ -200,9 +226,23 @@ export class InventoryService {
       ];
       if (storeId != null) stockConds.push(eq(inventoryStock.storeId, storeId));
       const stock = await tx
-        .select()
+        .select({
+          id: inventoryStock.id,
+          storeId: inventoryStock.storeId,
+          productId: inventoryStock.productId,
+          locationId: inventoryStock.locationId,
+          locationName: storeLocations.name,
+          locationKind: storeLocations.kind,
+          quantityOnHand: inventoryStock.quantityOnHand,
+          updatedAt: inventoryStock.updatedAt,
+        })
         .from(inventoryStock)
-        .where(and(...stockConds));
+        .innerJoin(
+          storeLocations,
+          eq(storeLocations.id, inventoryStock.locationId),
+        )
+        .where(and(...stockConds))
+        .orderBy(asc(storeLocations.sortOrder));
 
       const ledgerConds: SQL[] = [
         eq(inventoryTransactions.companyId, ctx.companyId),
@@ -243,6 +283,7 @@ export class InventoryService {
         ctx,
         target.productId,
         storeId,
+        this.requireLocationId(dto),
         -target.quantity,
         'SALE',
         dto.note,
@@ -272,6 +313,7 @@ export class InventoryService {
         ctx,
         target.productId,
         storeId,
+        this.requireLocationId(dto),
         -target.quantity,
         'ADJUSTMENT',
         dto.note,
@@ -321,6 +363,7 @@ export class InventoryService {
         ctx,
         target.productId,
         storeId,
+        this.requireLocationId(dto),
         -target.quantity,
         'RETURN',
         dto.note,
@@ -344,6 +387,294 @@ export class InventoryService {
         },
       });
       return { kind: 'stock' as const, ...res };
+    });
+  }
+
+  // ---- move (between locations) ------------------------------------------
+
+  /**
+   * Move inventory between locations in one transaction. Serialized mode moves
+   * each unit in `itemIds` to `toLocationId` (per-unit result, partial success
+   * allowed). Quantity mode moves `quantity` of `productId` from `fromLocationId`
+   * to `toLocationId`. A MOVE ledger row records from/to for each move.
+   */
+  async move(ctx: DataContext, dto: MoveInventoryDto) {
+    const isSerial = dto.itemIds !== undefined && dto.itemIds.length > 0;
+    const isQuantity =
+      dto.productId !== undefined &&
+      dto.fromLocationId !== undefined &&
+      dto.quantity !== undefined;
+    if (isSerial === isQuantity) {
+      throw new BadRequestException(
+        'Provide either itemIds (serialized) or productId + fromLocationId + quantity.',
+      );
+    }
+
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const toLoc = await loadLocation(tx, ctx.companyId, dto.toLocationId);
+      if (!toLoc) throw new BadRequestException('Unknown destination location.');
+      if (!toLoc.isActive) {
+        throw new BadRequestException('Destination location is not active.');
+      }
+      this.assertStoreScope(ctx, toLoc.storeId);
+
+      if (isSerial) {
+        return this.moveSerial(tx, ctx, dto.itemIds!, toLoc, dto.note);
+      }
+      return this.moveQuantity(
+        tx,
+        ctx,
+        dto.productId!,
+        dto.fromLocationId!,
+        toLoc,
+        dto.quantity!,
+        dto.note,
+      );
+    });
+  }
+
+  private assertStoreScope(ctx: DataContext, storeId: number): void {
+    if (ctx.role === 'STORE_USER' && ctx.storeId !== storeId) {
+      throw new BadRequestException('Cannot act on another store.');
+    }
+  }
+
+  private async moveSerial(
+    tx: Tx,
+    ctx: DataContext,
+    itemIds: string[],
+    toLoc: { id: number; storeId: number },
+    note?: string,
+  ) {
+    const results: Array<{
+      itemId: string;
+      status: 'moved' | 'unchanged' | 'error';
+      reason?: string;
+    }> = [];
+    let moved = 0;
+    for (const itemId of itemIds) {
+      try {
+        const unit = await this.loadUnit(tx, ctx, itemId);
+        if (unit.status !== 'ON_HAND') {
+          results.push({
+            itemId,
+            status: 'error',
+            reason: `unit is ${unit.status}, only ON_HAND units can move`,
+          });
+          continue;
+        }
+        if (unit.storeId !== toLoc.storeId) {
+          results.push({
+            itemId,
+            status: 'error',
+            reason: 'unit is in a different store',
+          });
+          continue;
+        }
+        if (unit.locationId === toLoc.id) {
+          results.push({ itemId, status: 'unchanged' });
+          continue;
+        }
+        const fromLocationId = unit.locationId;
+        await tx
+          .update(inventoryItems)
+          .set({ locationId: toLoc.id, updatedAt: new Date() })
+          .where(eq(inventoryItems.id, itemId));
+        await tx.insert(inventoryTransactions).values({
+          companyId: ctx.companyId,
+          storeId: unit.storeId,
+          productId: unit.productId,
+          itemId: unit.id,
+          type: 'MOVE',
+          quantityDelta: 0,
+          locationFromId: fromLocationId,
+          locationToId: toLoc.id,
+          note: note ?? null,
+          performedByUserId: ctx.userId,
+          source: 'PORTAL',
+        });
+        results.push({ itemId, status: 'moved' });
+        moved++;
+      } catch (err) {
+        results.push({
+          itemId,
+          status: 'error',
+          reason: err instanceof Error ? err.message.slice(0, 200) : 'error',
+        });
+      }
+    }
+    return { mode: 'serial' as const, toLocationId: toLoc.id, moved, results };
+  }
+
+  private async moveQuantity(
+    tx: Tx,
+    ctx: DataContext,
+    productId: number,
+    fromLocationId: number,
+    toLoc: { id: number; storeId: number },
+    quantity: number,
+    note?: string,
+  ) {
+    if (fromLocationId === toLoc.id) {
+      throw new BadRequestException('Source and destination are the same.');
+    }
+    const product = await this.loadProduct(tx, ctx, productId);
+    if (product.trackingType !== 'QUANTITY') {
+      throw new BadRequestException(
+        'Product is serialized; move it by itemIds.',
+      );
+    }
+    const fromLoc = await loadLocation(tx, ctx.companyId, fromLocationId);
+    if (!fromLoc || fromLoc.storeId !== toLoc.storeId) {
+      throw new BadRequestException(
+        'Source location does not belong to the destination store.',
+      );
+    }
+    const storeId = toLoc.storeId;
+
+    // Lock + decrement source.
+    const [src] = await tx
+      .select()
+      .from(inventoryStock)
+      .where(
+        and(
+          eq(inventoryStock.companyId, ctx.companyId),
+          eq(inventoryStock.storeId, storeId),
+          eq(inventoryStock.productId, productId),
+          eq(inventoryStock.locationId, fromLocationId),
+        ),
+      )
+      .for('update');
+    const available = src?.quantityOnHand ?? 0;
+    if (available < quantity) {
+      throw new ConflictException(
+        `Insufficient stock: ${available} at source, cannot move ${quantity}.`,
+      );
+    }
+    const fromRemaining = available - quantity;
+    await tx
+      .update(inventoryStock)
+      .set({ quantityOnHand: fromRemaining, updatedAt: new Date() })
+      .where(eq(inventoryStock.id, src!.id));
+
+    // Increment destination (create the row if it doesn't exist yet).
+    const [dst] = await tx
+      .select()
+      .from(inventoryStock)
+      .where(
+        and(
+          eq(inventoryStock.companyId, ctx.companyId),
+          eq(inventoryStock.storeId, storeId),
+          eq(inventoryStock.productId, productId),
+          eq(inventoryStock.locationId, toLoc.id),
+        ),
+      )
+      .for('update');
+    let toOnHand: number;
+    if (dst) {
+      toOnHand = dst.quantityOnHand + quantity;
+      await tx
+        .update(inventoryStock)
+        .set({ quantityOnHand: toOnHand, updatedAt: new Date() })
+        .where(eq(inventoryStock.id, dst.id));
+    } else {
+      toOnHand = quantity;
+      await tx.insert(inventoryStock).values({
+        companyId: ctx.companyId,
+        storeId,
+        productId,
+        locationId: toLoc.id,
+        quantityOnHand: toOnHand,
+      });
+    }
+
+    // One MOVE ledger row: positive delta, from/to express the direction.
+    await tx.insert(inventoryTransactions).values({
+      companyId: ctx.companyId,
+      storeId,
+      productId,
+      itemId: null,
+      type: 'MOVE',
+      quantityDelta: quantity,
+      locationFromId: fromLocationId,
+      locationToId: toLoc.id,
+      note: note ?? null,
+      performedByUserId: ctx.userId,
+      source: 'PORTAL',
+    });
+
+    return {
+      mode: 'quantity' as const,
+      productId,
+      fromLocationId,
+      toLocationId: toLoc.id,
+      quantity,
+      fromRemaining,
+      toOnHand,
+    };
+  }
+
+  // ---- items (serialized, by expiration) ---------------------------------
+
+  /** Serialized units with location + expiration, sorted by expiration date. */
+  async listItems(ctx: DataContext, query: ListItemsQuery) {
+    const { limit, offset } = resolvePaging(query);
+    const storeId = this.readStoreId(ctx, query.storeId);
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const conds: SQL[] = [
+        eq(inventoryItems.companyId, ctx.companyId),
+        eq(inventoryItems.status, 'ON_HAND'),
+      ];
+      if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
+      if (query.locationId != null)
+        conds.push(eq(inventoryItems.locationId, query.locationId));
+      if (query.productId != null)
+        conds.push(eq(inventoryItems.productId, query.productId));
+
+      // Expiration filters. expiringWithinDays wins over an explicit date if both.
+      let cutoff: string | undefined = query.expiresBefore;
+      if (query.expiringWithinDays != null) {
+        const d = new Date();
+        d.setDate(d.getDate() + query.expiringWithinDays);
+        cutoff = d.toISOString().slice(0, 10);
+      }
+      if (cutoff) {
+        // A date comparison already excludes NULL expirations.
+        conds.push(lte(inventoryItems.expirationDate, cutoff));
+      } else if (query.hasExpiration === 'true') {
+        conds.push(isNotNull(inventoryItems.expirationDate));
+      }
+
+      const where = and(...conds);
+      const rows = await tx
+        .select({
+          id: inventoryItems.id,
+          storeId: inventoryItems.storeId,
+          productId: inventoryItems.productId,
+          sku: products.sku,
+          name: products.name,
+          locationId: inventoryItems.locationId,
+          locationName: storeLocations.name,
+          locationKind: storeLocations.kind,
+          serial: inventoryItems.serial,
+          expirationDate: inventoryItems.expirationDate,
+          receivedAt: inventoryItems.receivedAt,
+        })
+        .from(inventoryItems)
+        .innerJoin(products, eq(products.id, inventoryItems.productId))
+        .innerJoin(
+          storeLocations,
+          eq(storeLocations.id, inventoryItems.locationId),
+        )
+        .where(where)
+        .orderBy(asc(inventoryItems.expirationDate), asc(inventoryItems.serial))
+        .limit(limit)
+        .offset(offset);
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(inventoryItems)
+        .where(where);
+      return { data: rows, total: Number(count), limit, offset };
     });
   }
 
@@ -390,6 +721,8 @@ export class InventoryService {
       itemId: item.id,
       type,
       quantityDelta: -1,
+      // The unit left its current location.
+      locationFromId: item.locationId,
       note: note ?? null,
       performedByUserId: ctx.userId,
       source: 'PORTAL',
@@ -397,22 +730,33 @@ export class InventoryService {
     return item;
   }
 
-  /** Apply a signed quantity delta to a stock counter + ledger row (one txn). */
+  /**
+   * Apply a signed quantity delta to a stock counter at a specific location +
+   * write one ledger row (one txn). A negative delta removes from that location
+   * (records location_from_id); a positive delta adds to it (location_to_id).
+   */
   private async quantityMove(
     tx: Tx,
     ctx: DataContext,
     productId: number,
     storeId: number,
+    locationId: number,
     delta: number,
     type: TxType,
     note?: string,
-  ): Promise<{ product: Product; storeId: number; quantityOnHand: number }> {
+  ): Promise<{
+    product: Product;
+    storeId: number;
+    locationId: number;
+    quantityOnHand: number;
+  }> {
     const product = await this.loadProduct(tx, ctx, productId);
     if (product.trackingType !== 'QUANTITY') {
       throw new BadRequestException(
         'Product is serialized; act on a unit (itemId) instead.',
       );
     }
+    await this.assertLocationInStore(tx, ctx, locationId, storeId);
     const [stock] = await tx
       .select()
       .from(inventoryStock)
@@ -421,6 +765,7 @@ export class InventoryService {
           eq(inventoryStock.companyId, ctx.companyId),
           eq(inventoryStock.storeId, storeId),
           eq(inventoryStock.productId, productId),
+          eq(inventoryStock.locationId, locationId),
         ),
       )
       .for('update');
@@ -428,7 +773,7 @@ export class InventoryService {
     const next = current + delta;
     if (next < 0) {
       throw new ConflictException(
-        `Insufficient stock: ${current} on hand, cannot remove ${-delta}.`,
+        `Insufficient stock: ${current} on hand at that location, cannot remove ${-delta}.`,
       );
     }
     if (stock) {
@@ -441,6 +786,7 @@ export class InventoryService {
         companyId: ctx.companyId,
         storeId,
         productId,
+        locationId,
         quantityOnHand: next,
       });
     }
@@ -451,11 +797,38 @@ export class InventoryService {
       itemId: null,
       type,
       quantityDelta: delta,
+      locationFromId: delta < 0 ? locationId : null,
+      locationToId: delta > 0 ? locationId : null,
       note: note ?? null,
       performedByUserId: ctx.userId,
       source: 'PORTAL',
     });
-    return { product, storeId, quantityOnHand: next };
+    return { product, storeId, locationId, quantityOnHand: next };
+  }
+
+  /** A location must exist, be in the given store, and be active. */
+  private async assertLocationInStore(
+    tx: Tx,
+    ctx: DataContext,
+    locationId: number,
+    storeId: number,
+  ): Promise<void> {
+    const loc = await loadLocation(tx, ctx.companyId, locationId);
+    if (!loc || loc.storeId !== storeId) {
+      throw new BadRequestException('Location does not belong to that store.');
+    }
+    if (!loc.isActive) {
+      throw new BadRequestException('Location is not active.');
+    }
+  }
+
+  private requireLocationId(dto: InventoryActionDto): number {
+    if (dto.locationId === undefined) {
+      throw new BadRequestException(
+        'locationId is required for quantity products.',
+      );
+    }
+    return dto.locationId;
   }
 
   private async storeOf(tx: Tx, storeId: number) {

@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3
+# Sync Agent Integration Contract — v3.1
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,11 +10,21 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3`
+- **Contract version:** `v3.1`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
+
+## What's new in v3.1
+
+Stores now have named **locations** (areas). Every handoff — both `unit` and
+`stock` — lands in the store's **Backroom** system location; store staff then
+move stock onto the sales floor in the app. The agent sends **no** location
+field: routing to the Backroom is automatic and this is transparent to the
+agent. `expirationDate` remains **unit-only** (serialized); quantity handoffs
+carry no expiration (lot/batch expiration for quantity products is a planned
+future feature).
 
 ## What's new in v3
 

@@ -12,6 +12,7 @@ import {
 } from '../db/schema';
 import { HandoffItemDto } from './dto/sync.dto';
 import { resolveOrCreateProduct } from '../products/product-catalog';
+import { systemLocationId } from '../locations/location-util';
 
 export interface HandoffAck {
   kind: 'unit' | 'stock';
@@ -114,12 +115,15 @@ export class SyncService {
       return { kind: 'unit', serial: it.serial, status: 'already_processed' };
     }
 
+    // Handoffs always land in the store's BACKROOM; staff move to the floor.
+    const backroomId = await systemLocationId(tx, companyId, store.id, 'BACKROOM');
     const [item] = await tx
       .insert(inventoryItems)
       .values({
         companyId,
         storeId: store.id,
         productId: product.id,
+        locationId: backroomId,
         serial: it.serial,
         status: 'ON_HAND',
         expirationDate: it.expirationDate ?? null,
@@ -133,6 +137,7 @@ export class SyncService {
       itemId: item.id,
       type: 'RECEIPT',
       quantityDelta: 1,
+      locationToId: backroomId,
       note: 'Handoff from sync agent',
       source: 'SYNC',
     });
@@ -188,6 +193,8 @@ export class SyncService {
       return { kind: 'stock', handoffId: it.handoffId, status: 'already_processed' };
     }
 
+    // Stock handoffs land on the BACKROOM counter for the product at the store.
+    const backroomId = await systemLocationId(tx, companyId, store.id, 'BACKROOM');
     const [stock] = await tx
       .select()
       .from(inventoryStock)
@@ -196,6 +203,7 @@ export class SyncService {
           eq(inventoryStock.companyId, companyId),
           eq(inventoryStock.storeId, store.id),
           eq(inventoryStock.productId, product.id),
+          eq(inventoryStock.locationId, backroomId),
         ),
       )
       .for('update');
@@ -212,6 +220,7 @@ export class SyncService {
         companyId,
         storeId: store.id,
         productId: product.id,
+        locationId: backroomId,
         quantityOnHand: it.quantity,
       });
     }
@@ -221,6 +230,7 @@ export class SyncService {
       productId: product.id,
       type: 'RECEIPT',
       quantityDelta: it.quantity,
+      locationToId: backroomId,
       note: 'Stock handoff from sync agent',
       source: 'SYNC',
     });

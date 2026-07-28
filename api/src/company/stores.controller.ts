@@ -22,6 +22,7 @@ import { DataContext } from '../auth/auth.types';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryItems, stores } from '../db/schema';
 import { CreateStoreDto, UpdateStoreDto } from './company.dto';
+import { createSystemLocations } from '../locations/location-util';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(['COMPANY_ADMIN'])
@@ -56,6 +57,8 @@ export class StoresController {
           notes: dto.notes ?? null,
         })
         .returning();
+      // Every store starts with its two system locations (Backroom / On Floor).
+      await createSystemLocations(tx, ctx.companyId, row.id);
       return row;
     });
   }

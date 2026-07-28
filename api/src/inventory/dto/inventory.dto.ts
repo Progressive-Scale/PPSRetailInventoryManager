@@ -1,11 +1,16 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
+  IsBooleanString,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsPositive,
   IsString,
   IsUUID,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
@@ -27,8 +32,9 @@ export class ListInventoryQuery extends PaginationQuery {
   search?: string;
 }
 
-// A sell/return/adjust action. Serialized products target a unit by `itemId`;
-// quantity products target a `productId` + `quantity` (at a store).
+// A sell/return/adjust action. Serialized products target a unit by `itemId`
+// (the unit's own location is used); quantity products target a `productId` +
+// `quantity` at a specific `locationId`.
 export class InventoryActionDto {
   @IsOptional()
   @IsUUID()
@@ -44,6 +50,12 @@ export class InventoryActionDto {
   @IsPositive()
   quantity?: number;
 
+  // Quantity moves: which location the stock leaves from (required for quantity).
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  locationId?: number;
+
   // Quantity moves: required for COMPANY_ADMIN, ignored for STORE_USER.
   @IsOptional()
   @IsInt()
@@ -54,4 +66,80 @@ export class InventoryActionDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+// Move inventory between locations. Two mutually-exclusive modes:
+//   serialized — `itemIds` (each unit moves to `toLocationId`)
+//   quantity   — `productId` + `fromLocationId` + `quantity` -> `toLocationId`
+export class MoveInventoryDto {
+  @IsInt()
+  @IsPositive()
+  toLocationId!: number;
+
+  // Serialized mode.
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  itemIds?: string[];
+
+  // Quantity mode.
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  productId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  fromLocationId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  quantity?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+// Unit-level listing for the "in stock by expiration" view. Serialized units
+// only, with their location + expiration, sorted by expiration date.
+export class ListItemsQuery extends PaginationQuery {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  storeId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  locationId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productId?: number;
+
+  // Only units expiring on/before this calendar date (YYYY-MM-DD).
+  @IsOptional()
+  @IsISO8601()
+  expiresBefore?: string;
+
+  // Only units expiring within N days from today (convenience alt to expiresBefore).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expiringWithinDays?: number;
+
+  // 'true' -> only units that have an expiration date set.
+  @IsOptional()
+  @IsBooleanString()
+  hasExpiration?: string;
 }

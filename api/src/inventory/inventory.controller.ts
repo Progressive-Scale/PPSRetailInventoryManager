@@ -16,7 +16,12 @@ import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
-import { InventoryActionDto, ListInventoryQuery } from './dto/inventory.dto';
+import {
+  InventoryActionDto,
+  ListInventoryQuery,
+  ListItemsQuery,
+  MoveInventoryDto,
+} from './dto/inventory.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(['COMPANY_ADMIN', 'STORE_USER'])
@@ -30,6 +35,13 @@ export class InventoryController {
     return this.svc.list(ctx, query);
   }
 
+  // Serialized units with location + expiration (in-stock by expiration).
+  // Declared before :productId so the literal path wins over the int param.
+  @Get('items')
+  listItems(@Ctx() ctx: DataContext, @Query() query: ListItemsQuery) {
+    return this.svc.listItems(ctx, query);
+  }
+
   // Expansion for a single product: units (serialized) or stock + ledger.
   @Get(':productId')
   getProduct(
@@ -37,6 +49,13 @@ export class InventoryController {
     @Param('productId', ParseIntPipe) productId: number,
   ) {
     return this.svc.getProduct(ctx, productId);
+  }
+
+  // Move inventory between locations (serialized batch or one quantity line).
+  @Post('move')
+  @HttpCode(HttpStatus.OK)
+  move(@Ctx() ctx: DataContext, @Body() dto: MoveInventoryDto) {
+    return this.svc.move(ctx, dto);
   }
 
   @Post('sell')

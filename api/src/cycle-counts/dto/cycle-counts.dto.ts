@@ -20,9 +20,12 @@ export class OpenCycleCountDto {
 }
 
 // A physical count of a QUANTITY product. Identify by productId or upc.
+// locationId is optional — when omitted the count applies to the BACKROOM
+// (the scanner's cycle-count UI is location-agnostic and omits it).
 export class QuantityCountDto {
   @IsOptional() @IsInt() @IsPositive() productId?: number;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128) upc?: string;
+  @IsOptional() @IsInt() @IsPositive() locationId?: number;
   @IsInt() @Min(0) countedQuantity!: number;
 }
 
