@@ -74,23 +74,41 @@ async function ensureCompany(db: Db, name: string, slug: string) {
   return row;
 }
 
+interface StoreAddress {
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  notes?: string;
+}
+
 async function ensureStore(
   db: Db,
   companyId: number,
   name: string,
-  code: string,
-  building: string,
+  addr: StoreAddress = {},
 ) {
-  await db
-    .insert(stores)
-    .values({ companyId, name, code, externalBuildingId: building })
-    .onConflictDoNothing({ target: [stores.companyId, stores.code] });
-  const [row] = await db
+  const [existing] = await db
     .select()
     .from(stores)
-    .where(and(eq(stores.companyId, companyId), eq(stores.code, code)))
+    .where(and(eq(stores.companyId, companyId), eq(stores.name, name)))
     .limit(1);
-  if (!row) throw new Error(`Failed to create/find store '${code}'.`);
+  if (existing) return existing;
+  const [row] = await db
+    .insert(stores)
+    .values({
+      companyId,
+      name,
+      address1: addr.address1 ?? null,
+      address2: addr.address2 ?? null,
+      city: addr.city ?? null,
+      state: addr.state ?? null,
+      zip: addr.zip ?? null,
+      notes: addr.notes ?? null,
+    })
+    .returning();
+  if (!row) throw new Error(`Failed to create/find store '${name}'.`);
   return row;
 }
 
@@ -164,7 +182,14 @@ async function main(): Promise<void> {
   // Demo company — the full dual-tracking demo set.
   // =========================================================================
   const demo = await ensureCompany(db, 'Demo Retail Co', 'demo');
-  const store = await ensureStore(db, demo.id, 'Downtown', 'DT', 'BLDG-001');
+  const store = await ensureStore(db, demo.id, 'Downtown', {
+    address1: '100 Main St',
+    address2: 'Suite 200',
+    city: 'Springfield',
+    state: 'IL',
+    zip: '62701',
+    notes: 'Flagship demo store.',
+  });
   await ensureUser(db, demo.id, null, 'admin@demo.test', 'admin123', 'COMPANY_ADMIN');
   await ensureUser(db, demo.id, store.id, 'user@demo.test', 'store123', 'STORE_USER');
   const [storeUser] = await db
@@ -403,7 +428,13 @@ async function main(): Promise<void> {
   // Acme company — minimal second tenant, for cross-tenant / RLS checks.
   // =========================================================================
   const acme = await ensureCompany(db, 'Acme Supply', 'acme');
-  const acmeStore = await ensureStore(db, acme.id, 'Warehouse', 'WH', 'BLDG-ACME');
+  const acmeStore = await ensureStore(db, acme.id, 'Warehouse', {
+    address1: '500 Industrial Pkwy',
+    city: 'Aurora',
+    state: 'IL',
+    zip: '60504',
+    notes: 'Central distribution warehouse.',
+  });
   await ensureUser(db, acme.id, null, 'admin@acme.test', 'admin123', 'COMPANY_ADMIN');
   const acmeBySku = await ensureProducts(db, acme.id, [
     { sku: 'ACME-WIDGET', name: 'Acme Widget', price: '5.00', upc: '0009990001', trackingType: 'SERIALIZED' },

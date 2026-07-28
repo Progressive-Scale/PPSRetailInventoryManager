@@ -71,13 +71,13 @@ export class SyncService {
     if (!it.serial) {
       return { kind: 'unit', status: 'error', reason: 'unit handoff requires a serial' };
     }
-    const store = await this.storeByBuilding(tx, companyId, it.storeExternalBuildingId);
+    const store = await this.storeById(tx, companyId, it.storeId);
     if (!store) {
       return {
         kind: 'unit',
         serial: it.serial,
         status: 'error',
-        reason: `unknown store building '${it.storeExternalBuildingId}'`,
+        reason: `unknown store id '${it.storeId}'`,
       };
     }
     const product = await this.resolveProduct(tx, companyId, it, 'SERIALIZED');
@@ -157,13 +157,13 @@ export class SyncService {
         reason: 'stock handoff requires a positive quantity',
       };
     }
-    const store = await this.storeByBuilding(tx, companyId, it.storeExternalBuildingId);
+    const store = await this.storeById(tx, companyId, it.storeId);
     if (!store) {
       return {
         kind: 'stock',
         handoffId: it.handoffId,
         status: 'error',
-        reason: `unknown store building '${it.storeExternalBuildingId}'`,
+        reason: `unknown store id '${it.storeId}'`,
       };
     }
     const product = await this.resolveProduct(tx, companyId, it, 'QUANTITY');
@@ -247,16 +247,11 @@ export class SyncService {
     return product;
   }
 
-  private async storeByBuilding(tx: Tx, companyId: number, building: string) {
+  private async storeById(tx: Tx, companyId: number, storeId: number) {
     const [store] = await tx
       .select()
       .from(stores)
-      .where(
-        and(
-          eq(stores.companyId, companyId),
-          eq(stores.externalBuildingId, building),
-        ),
-      )
+      .where(and(eq(stores.companyId, companyId), eq(stores.id, storeId)))
       .limit(1);
     return store;
   }

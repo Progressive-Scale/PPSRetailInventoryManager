@@ -121,8 +121,12 @@ export interface Store {
   id: number;
   companyId: number;
   name: string;
-  code: string;
-  externalBuildingId: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  notes: string | null;
   createdAt: string;
 }
 
@@ -272,14 +276,22 @@ export interface Paginated<T> {
 
 export interface CreateStore {
   name: string;
-  code: string;
-  externalBuildingId?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  notes?: string;
 }
 
 export interface UpdateStore {
   name?: string;
-  code?: string;
-  externalBuildingId?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  notes?: string;
 }
 
 export interface UpdateUser {

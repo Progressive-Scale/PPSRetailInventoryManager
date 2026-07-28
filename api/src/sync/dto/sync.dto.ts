@@ -31,8 +31,8 @@ export class HandoffItemDto {
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price?: number;
   @IsOptional() @IsString() @MaxLength(128) upc?: string;
-  // Maps to a store via stores.external_building_id within the company.
-  @IsString() @MinLength(1) @MaxLength(128) storeExternalBuildingId!: string;
+  // The cloud store id (stores.id) within the company this line routes to.
+  @IsInt() @IsPositive() storeId!: number;
 
   // --- unit only ---
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128) serial?: string;

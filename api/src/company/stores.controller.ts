@@ -43,23 +43,20 @@ export class StoresController {
   @Post()
   create(@Ctx() ctx: DataContext, @Body() dto: CreateStoreDto) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      try {
-        const [row] = await tx
-          .insert(stores)
-          .values({
-            companyId: ctx.companyId,
-            name: dto.name,
-            code: dto.code,
-            externalBuildingId: dto.externalBuildingId ?? null,
-          })
-          .returning();
-        return row;
-      } catch (err) {
-        if (isUnique(err)) {
-          throw new ConflictException('A store with that code already exists.');
-        }
-        throw err;
-      }
+      const [row] = await tx
+        .insert(stores)
+        .values({
+          companyId: ctx.companyId,
+          name: dto.name,
+          address1: dto.address1 ?? null,
+          address2: dto.address2 ?? null,
+          city: dto.city ?? null,
+          state: dto.state ?? null,
+          zip: dto.zip ?? null,
+          notes: dto.notes ?? null,
+        })
+        .returning();
+      return row;
     });
   }
 
@@ -72,9 +69,12 @@ export class StoresController {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const patch: Record<string, unknown> = {};
       if (dto.name !== undefined) patch.name = dto.name;
-      if (dto.code !== undefined) patch.code = dto.code;
-      if (dto.externalBuildingId !== undefined)
-        patch.externalBuildingId = dto.externalBuildingId;
+      if (dto.address1 !== undefined) patch.address1 = dto.address1;
+      if (dto.address2 !== undefined) patch.address2 = dto.address2;
+      if (dto.city !== undefined) patch.city = dto.city;
+      if (dto.state !== undefined) patch.state = dto.state;
+      if (dto.zip !== undefined) patch.zip = dto.zip;
+      if (dto.notes !== undefined) patch.notes = dto.notes;
       const [row] = await tx
         .update(stores)
         .set(patch)
@@ -111,13 +111,4 @@ export class StoresController {
       return { deleted: true, id };
     });
   }
-}
-
-function isUnique(err: unknown): boolean {
-  return (
-    !!err &&
-    typeof err === 'object' &&
-    'code' in err &&
-    (err as { code?: string }).code === '23505'
-  );
 }

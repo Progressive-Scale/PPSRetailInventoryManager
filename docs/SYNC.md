@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v2
+# Sync Agent Integration Contract — v3
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,15 +10,22 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v2`
+- **Contract version:** `v3`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
 
+## What's new in v3
+
+Handoffs now route to a store by its **cloud store id** (`storeId`, the immutable
+integer id assigned by the cloud) instead of the old `storeExternalBuildingId`.
+Look up each store's `id` once (from the portal / stores list) and send it on
+every handoff line.
+
 ## What's new in v2
 
-Inventory is now **dual-tracked**, driven by each product's `trackingType`:
+Inventory is **dual-tracked**, driven by each product's `trackingType`:
 
 - **Serialized** products — one physical unit per serial (`kind: "unit"`).
 - **Quantity** products — a per-store counter, moved by ±N (`kind: "stock"`).
@@ -40,10 +47,9 @@ The agent's job, in a loop:
 ## 1. Handoffs — `POST /api/sync/handoffs`
 
 Report items shipped/handed off to a store. The batch may mix `unit` and
-`stock` lines. `storeExternalBuildingId` maps to a store via its
-`externalBuildingId` (set when the store is created in the portal); an
-unmatched building rejects that line only (the rest of the batch still
-succeeds).
+`stock` lines. `storeId` maps to a store by its cloud id (the integer `id`
+assigned when the store is created in the portal); an unknown id rejects that
+line only (the rest of the batch still succeeds).
 
 ### Request
 
@@ -64,7 +70,7 @@ Content-Type: application/json
       "price": 19.99,
       "upc": "0001110001",
       "expirationDate": "2026-12-31",
-      "storeExternalBuildingId": "BLDG-001"
+      "storeId": 3
     },
     {
       "kind": "stock",
@@ -74,14 +80,14 @@ Content-Type: application/json
       "upc": "0002220001",
       "price": 9.99,
       "quantity": 24,
-      "storeExternalBuildingId": "BLDG-001"
+      "storeId": 3
     }
   ]
 }
 ```
 
-**Common fields** (both kinds): `sku`*, `name`*, `storeExternalBuildingId`* are
-required; `description`, `price`, `upc` are optional.
+**Common fields** (both kinds): `sku`*, `name`*, `storeId`* (a positive integer,
+the cloud store id) are required; `description`, `price`, `upc` are optional.
 
 **`kind: "unit"`** (serialized): also requires `serial`*. `expirationDate` (a
 `YYYY-MM-DD` calendar date) optional. Idempotency key is **(company, serial)** —
@@ -110,7 +116,7 @@ position.
     { "kind": "unit",  "serial": "SN-1001", "status": "accepted" },
     { "kind": "stock", "handoffId": "ship-2026-07-27-line-42", "status": "accepted" },
     { "kind": "stock", "handoffId": "ship-2026-07-20-line-9", "status": "already_processed" },
-    { "kind": "unit",  "serial": "SN-9999", "status": "error", "reason": "unknown store building 'BLDG-XYZ'" }
+    { "kind": "unit",  "serial": "SN-9999", "status": "error", "reason": "unknown store id '999'" }
   ]
 }
 ```
@@ -162,7 +168,7 @@ Each return's `payload` carries a `kind` matching the product's tracking type.
         "sku": "TS-BLK-L",
         "name": "T-Shirt Black L",
         "upc": "0001110002",
-        "storeExternalBuildingId": "BLDG-001",
+        "storeId": 3,
         "returnedAt": "2026-07-27T19:03:00.000Z",
         "note": "overstock"
       },
@@ -182,7 +188,7 @@ Each return's `payload` carries a `kind` matching the product's tracking type.
         "name": "Socks White 6-pack",
         "upc": "0002220001",
         "quantity": 6,
-        "storeExternalBuildingId": "BLDG-001",
+        "storeId": 3,
         "returnedAt": "2026-07-27T19:05:00.000Z",
         "note": null
       },
@@ -194,8 +200,8 @@ Each return's `payload` carries a `kind` matching the product's tracking type.
 ```
 
 Apply each return in the ERP using `payload`. For `kind: "unit"` restore the
-serial; for `kind: "stock"` add `quantity` back to the product at that building.
-Track the `id` values you successfully applied.
+serial; for `kind: "stock"` add `quantity` back to the product at that store
+(`storeId`). Track the `id` values you successfully applied.
 
 ---
 
@@ -266,6 +272,6 @@ Guidance:
   (units key on `serial`, stock keys on `handoffId`, acks on outbox `id`).
 - Never key off array position.
 - Rate limiting is per API key; keep batches reasonable and back off on `429`.
-- This is contract **v2**. Additive fields may appear; ignore unknown fields.
+- This is contract **v3**. Additive fields may appear; ignore unknown fields.
   Breaking changes will bump the version and be announced.
 ```

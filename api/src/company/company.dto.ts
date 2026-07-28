@@ -11,14 +11,22 @@ import {
 
 export class CreateStoreDto {
   @IsString() @MinLength(1) @MaxLength(128) name!: string;
-  @IsString() @MinLength(1) @MaxLength(32) code!: string;
-  @IsOptional() @IsString() @MaxLength(128) externalBuildingId?: string;
+  @IsOptional() @IsString() @MaxLength(256) address1?: string;
+  @IsOptional() @IsString() @MaxLength(256) address2?: string;
+  @IsOptional() @IsString() @MaxLength(128) city?: string;
+  @IsOptional() @IsString() @MaxLength(64) state?: string;
+  @IsOptional() @IsString() @MaxLength(32) zip?: string;
+  @IsOptional() @IsString() @MaxLength(2000) notes?: string;
 }
 
 export class UpdateStoreDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128) name?: string;
-  @IsOptional() @IsString() @MinLength(1) @MaxLength(32) code?: string;
-  @IsOptional() @IsString() @MaxLength(128) externalBuildingId?: string;
+  @IsOptional() @IsString() @MaxLength(256) address1?: string;
+  @IsOptional() @IsString() @MaxLength(256) address2?: string;
+  @IsOptional() @IsString() @MaxLength(128) city?: string;
+  @IsOptional() @IsString() @MaxLength(64) state?: string;
+  @IsOptional() @IsString() @MaxLength(32) zip?: string;
+  @IsOptional() @IsString() @MaxLength(2000) notes?: string;
 }
 
 const COMPANY_ROLES = ['COMPANY_ADMIN', 'STORE_USER'] as const;

@@ -15,6 +15,13 @@
       "when": 1785163452337,
       "tag": "0001_rls_and_view",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785248939431,
+      "tag": "0002_yummy_skullbuster",
+      "breakpoints": true
     }
   ]
 }

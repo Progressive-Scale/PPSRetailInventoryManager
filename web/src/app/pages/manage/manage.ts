@@ -38,12 +38,12 @@ type Tab = 'stores' | 'users' | 'invitations';
           <h2>Create store</h2>
           <form class="inline-form" (ngSubmit)="createStore()">
             <input placeholder="Name" name="s-name" [(ngModel)]="storeDraft.name" required />
-            <input placeholder="Code" name="s-code" [(ngModel)]="storeDraft.code" required />
-            <input
-              placeholder="External building ID"
-              name="s-ext"
-              [(ngModel)]="storeDraft.externalBuildingId"
-            />
+            <input placeholder="Address" name="s-addr1" [(ngModel)]="storeDraft.address1" />
+            <input placeholder="Address 2" name="s-addr2" [(ngModel)]="storeDraft.address2" />
+            <input placeholder="City" name="s-city" [(ngModel)]="storeDraft.city" />
+            <input placeholder="State" name="s-state" [(ngModel)]="storeDraft.state" />
+            <input placeholder="Zip" name="s-zip" [(ngModel)]="storeDraft.zip" />
+            <textarea placeholder="Notes" name="s-notes" [(ngModel)]="storeDraft.notes"></textarea>
             <button type="submit" [disabled]="saving()">Add store</button>
           </form>
         </section>
@@ -60,8 +60,9 @@ type Tab = 'stores' | 'users' | 'invitations';
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Code</th>
-                    <th>External building</th>
+                    <th>City</th>
+                    <th>State</th>
+                    <th>Zip</th>
                     <th class="actions"></th>
                   </tr>
                 </thead>
@@ -69,17 +70,24 @@ type Tab = 'stores' | 'users' | 'invitations';
                   @for (s of stores(); track s.id) {
                     <tr>
                       @if (editStoreId() === s.id) {
-                        <td><input name="es-name" [(ngModel)]="storeEdit.name" /></td>
-                        <td><input name="es-code" [(ngModel)]="storeEdit.code" /></td>
-                        <td><input name="es-ext" [(ngModel)]="storeEdit.externalBuildingId" /></td>
+                        <td>
+                          <input name="es-name" placeholder="Name" [(ngModel)]="storeEdit.name" />
+                          <input name="es-addr1" placeholder="Address" [(ngModel)]="storeEdit.address1" />
+                          <input name="es-addr2" placeholder="Address 2" [(ngModel)]="storeEdit.address2" />
+                          <textarea name="es-notes" placeholder="Notes" [(ngModel)]="storeEdit.notes"></textarea>
+                        </td>
+                        <td><input name="es-city" [(ngModel)]="storeEdit.city" /></td>
+                        <td><input name="es-state" [(ngModel)]="storeEdit.state" /></td>
+                        <td><input name="es-zip" [(ngModel)]="storeEdit.zip" /></td>
                         <td class="actions">
                           <button class="sm" (click)="saveStore(s)" [disabled]="saving()">Save</button>
                           <button class="sm ghost" (click)="editStoreId.set(null)">Cancel</button>
                         </td>
                       } @else {
                         <td>{{ s.name }}</td>
-                        <td>{{ s.code }}</td>
-                        <td class="muted">{{ s.externalBuildingId }}</td>
+                        <td class="muted">{{ s.city }}</td>
+                        <td class="muted">{{ s.state }}</td>
+                        <td class="muted">{{ s.zip }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditStore(s)">Edit</button>
                           <button class="sm danger" (click)="deleteStore(s)" [disabled]="saving()">
@@ -451,9 +459,25 @@ export class ManageComponent implements OnInit {
   readonly users = signal<User[]>([]);
   readonly invitations = signal<Invitation[]>([]);
 
-  storeDraft: CreateStore = { name: '', code: '', externalBuildingId: '' };
+  storeDraft: CreateStore = {
+    name: '',
+    address1: '',
+    address2: '',
+    city: '',
+    state: '',
+    zip: '',
+    notes: '',
+  };
   readonly editStoreId = signal<number | null>(null);
-  storeEdit: CreateStore = { name: '', code: '', externalBuildingId: '' };
+  storeEdit: CreateStore = {
+    name: '',
+    address1: '',
+    address2: '',
+    city: '',
+    state: '',
+    zip: '',
+    notes: '',
+  };
 
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
   inviteStoreId: number | null = null;
@@ -524,18 +548,31 @@ export class ManageComponent implements OnInit {
 
   // ---- stores ----
   createStore(): void {
-    if (!this.storeDraft.name || !this.storeDraft.code) {
-      this.error.set('Store name and code are required.');
+    if (!this.storeDraft.name) {
+      this.error.set('Store name is required.');
       return;
     }
-    const dto: CreateStore = { name: this.storeDraft.name, code: this.storeDraft.code };
-    if (this.storeDraft.externalBuildingId) dto.externalBuildingId = this.storeDraft.externalBuildingId;
+    const dto: CreateStore = { name: this.storeDraft.name };
+    if (this.storeDraft.address1) dto.address1 = this.storeDraft.address1;
+    if (this.storeDraft.address2) dto.address2 = this.storeDraft.address2;
+    if (this.storeDraft.city) dto.city = this.storeDraft.city;
+    if (this.storeDraft.state) dto.state = this.storeDraft.state;
+    if (this.storeDraft.zip) dto.zip = this.storeDraft.zip;
+    if (this.storeDraft.notes) dto.notes = this.storeDraft.notes;
     this.saving.set(true);
     this.error.set(null);
     this.api.createStore(dto).subscribe({
       next: () => {
         this.saving.set(false);
-        this.storeDraft = { name: '', code: '', externalBuildingId: '' };
+        this.storeDraft = {
+          name: '',
+          address1: '',
+          address2: '',
+          city: '',
+          state: '',
+          zip: '',
+          notes: '',
+        };
         this.loadStores();
       },
       error: (err) => {
@@ -549,8 +586,12 @@ export class ManageComponent implements OnInit {
     this.editStoreId.set(s.id);
     this.storeEdit = {
       name: s.name,
-      code: s.code,
-      externalBuildingId: s.externalBuildingId ?? '',
+      address1: s.address1 ?? '',
+      address2: s.address2 ?? '',
+      city: s.city ?? '',
+      state: s.state ?? '',
+      zip: s.zip ?? '',
+      notes: s.notes ?? '',
     };
   }
 
@@ -560,8 +601,12 @@ export class ManageComponent implements OnInit {
     this.api
       .updateStore(s.id, {
         name: this.storeEdit.name,
-        code: this.storeEdit.code,
-        externalBuildingId: this.storeEdit.externalBuildingId,
+        address1: this.storeEdit.address1,
+        address2: this.storeEdit.address2,
+        city: this.storeEdit.city,
+        state: this.storeEdit.state,
+        zip: this.storeEdit.zip,
+        notes: this.storeEdit.notes,
       })
       .subscribe({
         next: () => {

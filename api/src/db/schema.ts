@@ -100,21 +100,17 @@ export const stores = pgTable(
       .notNull()
       .references(() => companies.id),
     name: text('name').notNull(),
-    code: text('code').notNull(),
-    // Maps to the customer ERP's building/location id.
-    externalBuildingId: text('external_building_id'),
+    address1: text('address1'),
+    address2: text('address2'),
+    city: text('city'),
+    state: text('state'),
+    zip: text('zip'),
+    notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (t) => [
-    index('stores_company_idx').on(t.companyId),
-    uniqueIndex('stores_company_code_uniq').on(t.companyId, t.code),
-    uniqueIndex('stores_company_building_uniq').on(
-      t.companyId,
-      t.externalBuildingId,
-    ),
-  ],
+  (t) => [index('stores_company_idx').on(t.companyId)],
 );
 
 export const users = pgTable(
