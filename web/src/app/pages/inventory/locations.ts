@@ -5,6 +5,8 @@ import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { Store, StoreLocation } from '../../core/models';
 
+type SortField = 'name' | 'kind' | 'active';
+
 @Component({
   selector: 'app-locations',
   imports: [FormsModule],
@@ -29,8 +31,7 @@ import { Store, StoreLocation } from '../../core/models';
 
       <p class="hint">
         Every store has a <strong>Backroom</strong> and an <strong>On Floor</strong> location.
-        These can be renamed or reordered but not removed. Add custom locations (aisles, endcaps)
-        as needed.
+        These can be renamed but not deactivated. Add custom locations (aisles, endcaps) as needed.
       </p>
 
       @if (error()) {
@@ -40,24 +41,21 @@ import { Store, StoreLocation } from '../../core/models';
       @if (loading()) {
         <p class="muted">Loading…</p>
       } @else {
-        <div class="table-scroll">
+        <div class="table-scroll" [class.busy]="saving()">
           <table>
             <thead>
               <tr>
-                <th>Order</th>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th class="actions"></th>
+                <th class="sortable" (click)="sort('name')">Name<span class="arrow">{{ icon('name') }}</span></th>
+                <th class="sortable" (click)="sort('kind')">Type<span class="arrow">{{ icon('kind') }}</span></th>
+                <th class="sortable" (click)="sort('active')">Status<span class="arrow">{{ icon('active') }}</span></th>
+                @if (isCompanyAdmin) {
+                  <th class="actions"></th>
+                }
               </tr>
             </thead>
             <tbody>
-              @for (loc of locations(); track loc.id; let i = $index) {
+              @for (loc of displayLocations(); track loc.id) {
                 <tr [class.inactive-row]="!loc.isActive">
-                  <td class="reorder">
-                    <button class="link" (click)="move(i, -1)" [disabled]="i === 0 || saving()" title="Move up">▲</button>
-                    <button class="link" (click)="move(i, 1)" [disabled]="i === locations().length - 1 || saving()" title="Move down">▼</button>
-                  </td>
                   <td>
                     @if (editId() === loc.id) {
                       <input class="cell-input" name="edit-name" [(ngModel)]="editName" />
@@ -68,28 +66,38 @@ import { Store, StoreLocation } from '../../core/models';
                   <td>
                     <span class="kind-badge" [class]="'k-' + loc.kind">{{ kindLabel(loc.kind) }}</span>
                   </td>
-                  <td class="muted">{{ loc.isActive ? 'Active' : 'Removed' }}</td>
-                  <td class="actions">
-                    @if (editId() === loc.id) {
-                      <button class="sm" (click)="saveName(loc)" [disabled]="saving()">Save</button>
-                      <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
+                  <td>
+                    @if (editId() === loc.id && loc.kind === 'CUSTOM') {
+                      <label class="chk">
+                        <input type="checkbox" name="edit-active" [(ngModel)]="editActive" />
+                        Active
+                      </label>
                     } @else {
-                      <button class="sm ghost" (click)="startEdit(loc)">Rename</button>
-                      @if (loc.kind === 'CUSTOM' && loc.isActive) {
-                        <button class="sm danger" (click)="remove(loc)" [disabled]="saving()">Remove</button>
-                      }
+                      <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
                     }
                   </td>
+                  @if (isCompanyAdmin) {
+                    <td class="actions">
+                      @if (editId() === loc.id) {
+                        <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
+                        <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
+                      } @else {
+                        <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
+                      }
+                    </td>
+                  }
                 </tr>
               }
             </tbody>
           </table>
         </div>
 
-        <form class="add-form" (ngSubmit)="add()">
-          <input name="new-loc" [(ngModel)]="newName" placeholder="New location name (e.g. Aisle 3)" />
-          <button type="submit" [disabled]="saving() || !newName.trim()">Add location</button>
-        </form>
+        @if (isCompanyAdmin) {
+          <form class="add-form" (ngSubmit)="add()">
+            <input name="new-loc" [(ngModel)]="newName" placeholder="New location name (e.g. Aisle 3)" />
+            <button type="submit" [disabled]="saving() || !newName.trim()">Add location</button>
+          </form>
+        }
       }
     </section>
   `,
@@ -132,6 +140,11 @@ import { Store, StoreLocation } from '../../core/models';
       }
       .table-scroll {
         overflow-x: auto;
+        transition: opacity 0.12s ease;
+      }
+      .table-scroll.busy {
+        opacity: 0.55;
+        pointer-events: none;
       }
       table {
         width: 100%;
@@ -150,8 +163,18 @@ import { Store, StoreLocation } from '../../core/models';
         text-align: right;
         white-space: nowrap;
       }
-      td.reorder {
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
         white-space: nowrap;
+      }
+      th.sortable:hover {
+        color: var(--brand, var(--accent));
+      }
+      .arrow {
+        display: inline-block;
+        width: 1em;
+        color: var(--brand, var(--accent));
       }
       input,
       select {
@@ -163,6 +186,12 @@ import { Store, StoreLocation } from '../../core/models';
       .cell-input {
         width: 100%;
         max-width: 260px;
+      }
+      .chk {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
       }
       .kind-badge {
         display: inline-block;
@@ -202,19 +231,6 @@ import { Store, StoreLocation } from '../../core/models';
         font-size: 0.8rem;
         margin-left: 0.25rem;
       }
-      button.danger {
-        color: #b42318;
-      }
-      button.link {
-        background: transparent;
-        border: none;
-        color: var(--muted);
-        padding: 0 0.2rem;
-        cursor: pointer;
-      }
-      button.link:disabled {
-        opacity: 0.3;
-      }
       .add-form {
         display: flex;
         gap: 0.5rem;
@@ -242,9 +258,33 @@ export class LocationsComponent implements OnInit {
 
   readonly editId = signal<number | null>(null);
   editName = '';
+  editActive = true;
   newName = '';
 
-  readonly orderedIds = computed(() => this.locations().map((l) => l.id));
+  // Client-side sort (the list is small — no round-trip needed).
+  readonly sortField = signal<SortField | null>(null);
+  readonly sortDir = signal<'asc' | 'desc'>('asc');
+
+  private static readonly KIND_ORDER: Record<string, number> = {
+    BACKROOM: 0,
+    ONFLOOR: 1,
+    CUSTOM: 2,
+  };
+
+  readonly displayLocations = computed(() => {
+    const field = this.sortField();
+    const list = [...this.locations()];
+    if (!field) return list; // server order (sortOrder, id)
+    const dir = this.sortDir() === 'asc' ? 1 : -1;
+    return list.sort((a, b) => {
+      let cmp = 0;
+      if (field === 'name') cmp = a.name.localeCompare(b.name);
+      else if (field === 'kind')
+        cmp = LocationsComponent.KIND_ORDER[a.kind] - LocationsComponent.KIND_ORDER[b.kind];
+      else cmp = Number(a.isActive) - Number(b.isActive);
+      return cmp * dir;
+    });
+  });
 
   ngOnInit(): void {
     if (this.isCompanyAdmin) {
@@ -284,17 +324,36 @@ export class LocationsComponent implements OnInit {
     });
   }
 
+  sort(field: SortField): void {
+    if (this.sortField() === field) {
+      this.sortDir.update((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      this.sortField.set(field);
+      this.sortDir.set('asc');
+    }
+  }
+
+  icon(field: SortField): string {
+    if (this.sortField() !== field) return '';
+    return this.sortDir() === 'asc' ? '▲' : '▼';
+  }
+
   startEdit(loc: StoreLocation): void {
     this.editName = loc.name;
+    this.editActive = loc.isActive;
+    this.error.set(null);
     this.editId.set(loc.id);
   }
 
-  saveName(loc: StoreLocation): void {
+  save(loc: StoreLocation): void {
     const name = this.editName.trim();
     if (!name) return;
+    const dto: { name: string; isActive?: boolean } = { name };
+    // Only custom locations can have their active status changed.
+    if (loc.kind === 'CUSTOM') dto.isActive = this.editActive;
     this.saving.set(true);
     this.error.set(null);
-    this.api.updateLocation(loc.id, { name }).subscribe({
+    this.api.updateLocation(loc.id, dto).subscribe({
       next: () => {
         this.saving.set(false);
         this.editId.set(null);
@@ -318,43 +377,6 @@ export class LocationsComponent implements OnInit {
         this.saving.set(false);
         this.newName = '';
         this.reload();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
-  remove(loc: StoreLocation): void {
-    if (!confirm(`Remove location "${loc.name}"?`)) return;
-    this.saving.set(true);
-    this.error.set(null);
-    this.api.deleteLocation(loc.id).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.reload();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
-  move(index: number, delta: number): void {
-    const sid = this.storeId();
-    if (sid == null) return;
-    const ids = [...this.orderedIds()];
-    const target = index + delta;
-    if (target < 0 || target >= ids.length) return;
-    [ids[index], ids[target]] = [ids[target], ids[index]];
-    this.saving.set(true);
-    this.error.set(null);
-    this.api.reorderLocations(sid, ids).subscribe({
-      next: (rows) => {
-        this.saving.set(false);
-        this.locations.set(rows);
       },
       error: (err) => {
         this.saving.set(false);

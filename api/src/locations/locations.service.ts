@@ -133,10 +133,27 @@ export class LocationsService {
 
   async update(ctx: DataContext, id: number, dto: UpdateLocationDto) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      await this.load(tx, ctx, id); // scope + existence
+      const loc = await this.load(tx, ctx, id); // scope + existence
       const patch: Record<string, unknown> = {};
       if (dto.name !== undefined) patch.name = dto.name.trim();
       if (dto.sortOrder !== undefined) patch.sortOrder = dto.sortOrder;
+      if (dto.isActive !== undefined && dto.isActive !== loc.isActive) {
+        if (!dto.isActive) {
+          // Deactivating: system locations are permanent, and a location must
+          // be empty before it can be turned off.
+          if (loc.kind !== 'CUSTOM') {
+            throw new BadRequestException(
+              'System locations (Backroom / On Floor) cannot be deactivated.',
+            );
+          }
+          if (await this.locationOccupied(tx, ctx.companyId, id)) {
+            throw new ConflictException(
+              'Move inventory out of this location before deactivating it.',
+            );
+          }
+        }
+        patch.isActive = dto.isActive;
+      }
       if (Object.keys(patch).length === 0) {
         throw new BadRequestException('Nothing to update.');
       }

@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsPositive,
@@ -22,10 +23,12 @@ export class CreateLocationDto {
   @IsString() @MinLength(1) @MaxLength(80) name!: string;
 }
 
-// Rename and/or reorder a location (system rows may be renamed but not deleted).
+// Edit a location: rename, reorder, or toggle active. System locations may be
+// renamed but NOT deactivated (a store always needs its Backroom / On Floor).
 export class UpdateLocationDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
   @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 // Set sort_order for a store's locations by the given order.

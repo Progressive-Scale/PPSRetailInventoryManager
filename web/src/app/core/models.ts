@@ -451,6 +451,7 @@ export interface CreateLocation {
 export interface UpdateLocation {
   name?: string;
   sortOrder?: number;
+  isActive?: boolean;
 }
 
 // ---- notifications ----
