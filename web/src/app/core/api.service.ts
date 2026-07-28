@@ -203,10 +203,8 @@ export class ApiService {
     return this.http.post<StoreLocation[]>('/api/locations/reorder', { storeId, orderedIds });
   }
 
-  deleteLocation(id: number): Observable<{ deactivated: boolean; location: StoreLocation }> {
-    return this.http.delete<{ deactivated: boolean; location: StoreLocation }>(
-      `/api/locations/${id}`,
-    );
+  deleteLocation(id: number): Observable<{ deleted: boolean; id: number }> {
+    return this.http.delete<{ deleted: boolean; id: number }>(`/api/locations/${id}`);
   }
 
   // ---- notifications ----

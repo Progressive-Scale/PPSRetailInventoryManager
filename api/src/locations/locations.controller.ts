@@ -64,6 +64,6 @@ export class LocationsController {
   @HttpCode(HttpStatus.OK)
   @Roles(['COMPANY_ADMIN'])
   remove(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
-    return this.svc.deactivate(ctx, id);
+    return this.svc.remove(ctx, id);
   }
 }

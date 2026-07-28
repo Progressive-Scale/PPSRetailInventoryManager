@@ -4,11 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, or } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   inventoryItems,
   inventoryStock,
+  inventoryTransactions,
   StoreLocation,
   storeLocations,
   stores,
@@ -228,33 +229,51 @@ export class LocationsService {
     });
   }
 
-  /** Deactivate a CUSTOM location. System locations cannot be deactivated. */
-  async deactivate(ctx: DataContext, id: number) {
+  /**
+   * Permanently delete a CUSTOM location. System locations can't be deleted, and
+   * a location that still holds inventory or has any movement history can't be
+   * removed (the ledger references it) — deactivate it instead.
+   */
+  async remove(ctx: DataContext, id: number) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const loc = await this.load(tx, ctx, id);
       if (loc.kind !== 'CUSTOM') {
         throw new BadRequestException(
-          'System locations (Backroom / On Floor) cannot be removed.',
+          'System locations (Backroom / On Floor) cannot be deleted.',
         );
       }
-      // Block removal while inventory still lives here.
-      const occupied = await this.locationOccupied(tx, ctx.companyId, id);
-      if (occupied) {
+      if (await this.locationOccupied(tx, ctx.companyId, id)) {
         throw new ConflictException(
-          'Move inventory out of this location before removing it.',
+          'Move inventory out of this location before deleting it.',
         );
       }
-      const [row] = await tx
-        .update(storeLocations)
-        .set({ isActive: false })
+      const [hist] = await tx
+        .select({ id: inventoryTransactions.id })
+        .from(inventoryTransactions)
+        .where(
+          and(
+            eq(inventoryTransactions.companyId, ctx.companyId),
+            or(
+              eq(inventoryTransactions.locationFromId, id),
+              eq(inventoryTransactions.locationToId, id),
+            ),
+          ),
+        )
+        .limit(1);
+      if (hist) {
+        throw new ConflictException(
+          'This location has movement history and cannot be deleted — set it Inactive instead.',
+        );
+      }
+      await tx
+        .delete(storeLocations)
         .where(
           and(
             eq(storeLocations.id, id),
             eq(storeLocations.companyId, ctx.companyId),
           ),
-        )
-        .returning();
-      return { deactivated: true, location: row };
+        );
+      return { deleted: true, id };
     });
   }
 

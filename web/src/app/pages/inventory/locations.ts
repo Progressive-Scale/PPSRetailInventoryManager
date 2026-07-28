@@ -85,6 +85,9 @@ type SortField = 'name' | 'kind' | 'active';
                       @if (editId() === loc.id) {
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
                         <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
+                        @if (loc.kind === 'CUSTOM') {
+                          <button class="sm danger" (click)="remove(loc)" [disabled]="saving()">Delete</button>
+                        }
                       } @else {
                         <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
                       }
@@ -289,6 +292,9 @@ type SortField = 'name' | 'kind' | 'active';
         font-size: 0.8rem;
         margin-left: 0.25rem;
       }
+      button.danger {
+        color: #b42318;
+      }
       .overlay {
         position: fixed;
         inset: 0;
@@ -447,6 +453,23 @@ export class LocationsComponent implements OnInit {
     this.saving.set(true);
     this.error.set(null);
     this.api.updateLocation(loc.id, dto).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.editId.set(null);
+        this.reload();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  remove(loc: StoreLocation): void {
+    if (!confirm(`Delete location "${loc.name}"? This cannot be undone.`)) return;
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.deleteLocation(loc.id).subscribe({
       next: () => {
         this.saving.set(false);
         this.editId.set(null);
