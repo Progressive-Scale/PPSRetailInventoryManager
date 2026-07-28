@@ -140,7 +140,22 @@ export interface StockRow {
   serial: string | null;
   expirationDate: string | null;
   createdAt: string;
+  // Serialized unit status (ON_HAND / SOLD / …); null for quantity rows.
+  status: ItemStatus | null;
 }
+
+export type StockSortField =
+  | 'sku'
+  | 'barcode'
+  | 'name'
+  | 'type'
+  | 'store'
+  | 'onHand'
+  | 'location'
+  | 'expiration'
+  | 'created';
+
+export type StockStatusFilter = 'ON_HAND' | 'SOLD' | 'ALL';
 
 /** A serialized unit row from GET /api/inventory/items (by expiration). */
 export interface ExpiringItem {

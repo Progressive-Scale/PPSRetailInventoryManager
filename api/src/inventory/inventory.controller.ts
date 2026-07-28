@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -23,6 +24,8 @@ import {
   ListStockQuery,
   LookupQuery,
   MoveInventoryDto,
+  SetQuantityDto,
+  UpdateItemDto,
 } from './dto/inventory.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -70,6 +73,25 @@ export class InventoryController {
   @HttpCode(HttpStatus.OK)
   move(@Ctx() ctx: DataContext, @Body() dto: MoveInventoryDto) {
     return this.svc.move(ctx, dto);
+  }
+
+  // Admin: set a quantity product's on-hand at a location to an exact value.
+  @Post('set-quantity')
+  @HttpCode(HttpStatus.OK)
+  @Roles(['COMPANY_ADMIN'])
+  setQuantity(@Ctx() ctx: DataContext, @Body() dto: SetQuantityDto) {
+    return this.svc.setQuantity(ctx, dto);
+  }
+
+  // Admin: edit a serialized unit's expiration date (data correction).
+  @Patch('items/:itemId')
+  @Roles(['COMPANY_ADMIN'])
+  updateItem(
+    @Ctx() ctx: DataContext,
+    @Param('itemId') itemId: string,
+    @Body() dto: UpdateItemDto,
+  ) {
+    return this.svc.updateItem(ctx, itemId, dto);
   }
 
   @Post('sell')

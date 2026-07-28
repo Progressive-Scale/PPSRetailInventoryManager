@@ -15,7 +15,10 @@ import {
   CreateStore,
   ExpiringItem,
   StockRow,
+  StockSortField,
+  StockStatusFilter,
   HealthResponse,
+  InventoryItem,
   InventoryOpBody,
   InventoryProductDetail,
   Invitation,
@@ -81,8 +84,11 @@ export class ApiService {
     search?: string;
     locationId?: number;
     type?: TrackingType;
+    status?: StockStatusFilter;
     createdFrom?: string;
     createdTo?: string;
+    sortBy?: StockSortField;
+    sortDir?: 'asc' | 'desc';
     limit?: number;
     offset?: number;
   }): Observable<Paginated<StockRow>> {
@@ -91,11 +97,30 @@ export class ApiService {
     if (opts.search) params = params.set('search', opts.search);
     if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
     if (opts.type) params = params.set('type', opts.type);
+    if (opts.status) params = params.set('status', opts.status);
     if (opts.createdFrom) params = params.set('createdFrom', opts.createdFrom);
     if (opts.createdTo) params = params.set('createdTo', opts.createdTo);
+    if (opts.sortBy) params = params.set('sortBy', opts.sortBy);
+    if (opts.sortDir) params = params.set('sortDir', opts.sortDir);
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
     return this.http.get<Paginated<StockRow>>('/api/inventory/stock', { params });
+  }
+
+  /** Admin: edit a serialized unit's expiration date. */
+  updateItem(itemId: string, dto: { expirationDate: string | null }): Observable<InventoryItem> {
+    return this.http.patch<InventoryItem>(`/api/inventory/items/${itemId}`, dto);
+  }
+
+  /** Admin: set a quantity product's on-hand at a location to an exact value. */
+  setQuantity(body: {
+    productId: number;
+    locationId: number;
+    storeId?: number;
+    quantity: number;
+    note?: string;
+  }): Observable<unknown> {
+    return this.http.post('/api/inventory/set-quantity', body);
   }
 
   /** Serialized units with location + expiration (in-stock by expiration). */
@@ -144,6 +169,7 @@ export class ApiService {
     productId?: number;
     type?: TxType;
     storeId?: number;
+    locationId?: number;
     limit?: number;
     offset?: number;
   }): Observable<Paginated<Transaction>> {
@@ -152,6 +178,7 @@ export class ApiService {
     if (opts.productId != null) params = params.set('productId', String(opts.productId));
     if (opts.type) params = params.set('type', opts.type);
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
+    if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
     return this.http.get<Paginated<Transaction>>('/api/transactions', { params });

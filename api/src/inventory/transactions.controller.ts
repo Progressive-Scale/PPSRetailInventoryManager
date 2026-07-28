@@ -1,7 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsPositive, IsUUID } from 'class-validator';
-import { and, desc, eq, sql, SQL } from 'drizzle-orm';
+import { and, desc, eq, or, sql, SQL } from 'drizzle-orm';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -34,6 +34,13 @@ class ListTransactionsQuery extends PaginationQuery {
   @IsInt()
   @IsPositive()
   storeId?: number;
+
+  // Location-scoped history (matches either the from or the to location).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  locationId?: number;
 }
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -62,6 +69,13 @@ export class TransactionsController {
         conds.push(eq(inventoryTransactions.productId, query.productId));
       if (query.type)
         conds.push(eq(inventoryTransactions.type, query.type));
+      if (query.locationId != null)
+        conds.push(
+          or(
+            eq(inventoryTransactions.locationFromId, query.locationId),
+            eq(inventoryTransactions.locationToId, query.locationId),
+          )!,
+        );
 
       const where = and(...conds);
       const data = await tx

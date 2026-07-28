@@ -693,27 +693,57 @@ export class InventoryService {
     const term = query.search?.trim();
     const like = term ? `%${term}%` : null;
 
+    const statusScope = query.status ?? 'ON_HAND';
+    const includeStock = statusScope !== 'SOLD';
+    const unitStatusCond =
+      statusScope === 'SOLD'
+        ? sql`i.status = 'SOLD'`
+        : statusScope === 'ALL'
+          ? sql`TRUE`
+          : sql`i.status = 'ON_HAND'`;
+
+    // Whitelisted sort column (never interpolate user input into SQL directly).
+    const sortCols: Record<string, SQL> = {
+      sku: sql`c.sku`,
+      barcode: sql`c.upc`,
+      name: sql`c.name`,
+      type: sql`c.tracking_type`,
+      store: sql`c.store_id`,
+      onHand: sql`c.on_hand`,
+      location: sql`c.location_name`,
+      expiration: sql`c.expiration_date`,
+      created: sql`c.created_at`,
+    };
+    const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
+    const sortDir = query.sortDir === 'desc' ? sql`DESC` : sql`ASC`;
+
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      const cte = sql`
-        WITH combined AS (
-          SELECT 'unit'::text AS row_kind, i.id::text AS row_id, i.id AS item_id,
-                 p.id AS product_id, p.sku, p.upc, p.name,
-                 p.tracking_type::text AS tracking_type, i.store_id, 1 AS on_hand,
-                 l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
-                 i.serial, i.expiration_date, i.created_at
-          FROM inventory_items i
-          JOIN products p ON p.id = i.product_id
-          JOIN store_locations l ON l.id = i.location_id
-          WHERE i.company_id = ${ctx.companyId} AND i.status = 'ON_HAND'
+      const stockBranch = includeStock
+        ? sql`
           UNION ALL
           SELECT 'stock'::text, 'stock:' || s.id::text, NULL::uuid,
                  p.id, p.sku, p.upc, p.name, p.tracking_type::text, s.store_id, s.quantity_on_hand,
                  l.id, l.name, l.kind::text,
-                 NULL::text, NULL::date, s.created_at
+                 NULL::text, NULL::date, s.created_at, NULL::text
           FROM inventory_stock s
           JOIN products p ON p.id = s.product_id
           JOIN store_locations l ON l.id = s.location_id
-          WHERE s.company_id = ${ctx.companyId} AND s.quantity_on_hand > 0
+          WHERE s.company_id = ${ctx.companyId} AND s.quantity_on_hand > 0`
+        : sql``;
+
+      const cte = sql`
+        WITH combined AS (
+          SELECT 'unit'::text AS row_kind, i.id::text AS row_id, i.id AS item_id,
+                 p.id AS product_id, p.sku, p.upc, p.name,
+                 p.tracking_type::text AS tracking_type, i.store_id,
+                 (CASE WHEN i.status = 'ON_HAND' THEN 1 ELSE 0 END) AS on_hand,
+                 l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
+                 i.serial, i.expiration_date, i.created_at, i.status::text AS status
+          FROM inventory_items i
+          JOIN products p ON p.id = i.product_id
+          JOIN store_locations l ON l.id = i.location_id
+          WHERE i.company_id = ${ctx.companyId} AND ${unitStatusCond}
+          ${stockBranch}
         )`;
 
       const conds: SQL[] = [];
@@ -732,7 +762,7 @@ export class InventoryService {
       const pageRes = await tx.execute(sql`
         ${cte}
         SELECT c.* FROM combined c${where}
-        ORDER BY c.name ASC, c.serial ASC NULLS FIRST, c.location_name ASC
+        ORDER BY ${sortCol} ${sortDir} NULLS LAST, c.name ASC, c.serial ASC NULLS FIRST
         LIMIT ${limit} OFFSET ${offset}`);
       const countRes = await tx.execute(sql`
         ${cte}
@@ -759,8 +789,100 @@ export class InventoryService {
         serial: r.serial,
         expirationDate: r.expiration_date,
         createdAt: r.created_at,
+        status: r.status,
       }));
       return { data, total, limit, offset };
+    });
+  }
+
+  // ---- admin edits (data corrections) ------------------------------------
+
+  /** Edit a serialized unit's expiration date (COMPANY_ADMIN data correction). */
+  async updateItem(
+    ctx: DataContext,
+    itemId: string,
+    dto: { expirationDate?: string | null },
+  ) {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const item = await this.loadUnit(tx, ctx, itemId);
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (dto.expirationDate !== undefined) {
+        patch.expirationDate = dto.expirationDate; // string 'YYYY-MM-DD' or null
+      }
+      const [row] = await tx
+        .update(inventoryItems)
+        .set(patch)
+        .where(eq(inventoryItems.id, item.id))
+        .returning();
+      return row;
+    });
+  }
+
+  /**
+   * Set a quantity product's on-hand at a location to an exact value
+   * (COMPANY_ADMIN). Records the difference as an ADJUSTMENT ledger row.
+   */
+  async setQuantity(
+    ctx: DataContext,
+    dto: {
+      productId: number;
+      locationId: number;
+      storeId?: number;
+      quantity: number;
+      note?: string;
+    },
+  ) {
+    const storeId = this.writeStoreId(ctx, dto.storeId);
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const product = await this.loadProduct(tx, ctx, dto.productId);
+      if (product.trackingType !== 'QUANTITY') {
+        throw new BadRequestException('On-hand can only be set for quantity products.');
+      }
+      await this.assertLocationInStore(tx, ctx, dto.locationId, storeId);
+      const [stock] = await tx
+        .select()
+        .from(inventoryStock)
+        .where(
+          and(
+            eq(inventoryStock.companyId, ctx.companyId),
+            eq(inventoryStock.storeId, storeId),
+            eq(inventoryStock.productId, dto.productId),
+            eq(inventoryStock.locationId, dto.locationId),
+          ),
+        )
+        .for('update');
+      const current = stock?.quantityOnHand ?? 0;
+      const delta = dto.quantity - current;
+      if (stock) {
+        await tx
+          .update(inventoryStock)
+          .set({ quantityOnHand: dto.quantity, updatedAt: new Date() })
+          .where(eq(inventoryStock.id, stock.id));
+      } else {
+        await tx.insert(inventoryStock).values({
+          companyId: ctx.companyId,
+          storeId,
+          productId: dto.productId,
+          locationId: dto.locationId,
+          quantityOnHand: dto.quantity,
+        });
+      }
+      if (delta !== 0) {
+        await tx.insert(inventoryTransactions).values({
+          companyId: ctx.companyId,
+          storeId,
+          productId: dto.productId,
+          itemId: null,
+          type: 'ADJUSTMENT',
+          quantityDelta: delta,
+          locationFromId: delta < 0 ? dto.locationId : null,
+          locationToId: delta > 0 ? dto.locationId : null,
+          note: dto.note ?? `Set on-hand to ${dto.quantity}`,
+          performedByUserId: ctx.userId,
+          source: 'PORTAL',
+        });
+      }
+      return { productId: dto.productId, locationId: dto.locationId, quantityOnHand: dto.quantity };
     });
   }
 

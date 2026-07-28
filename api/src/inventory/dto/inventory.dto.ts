@@ -13,6 +13,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
 
@@ -106,6 +107,18 @@ export class MoveInventoryDto {
   note?: string;
 }
 
+const STOCK_SORT_FIELDS = [
+  'sku',
+  'barcode',
+  'name',
+  'type',
+  'store',
+  'onHand',
+  'location',
+  'expiration',
+  'created',
+] as const;
+
 // Combined flat stock listing: one row per serialized unit + one row per
 // quantity stock-location. Powers the portal's unified Stock grid.
 export class ListStockQuery extends PaginationQuery {
@@ -132,6 +145,12 @@ export class ListStockQuery extends PaginationQuery {
   @IsIn(['SERIALIZED', 'QUANTITY'])
   type?: 'SERIALIZED' | 'QUANTITY';
 
+  // Serialized status scope: ON_HAND (default), SOLD, or ALL. Quantity rows are
+  // included except when scoped to SOLD (they have no sold state).
+  @IsOptional()
+  @IsIn(['ON_HAND', 'SOLD', 'ALL'])
+  status?: 'ON_HAND' | 'SOLD' | 'ALL';
+
   // Create-date range (inclusive), YYYY-MM-DD.
   @IsOptional()
   @IsISO8601()
@@ -140,6 +159,32 @@ export class ListStockQuery extends PaginationQuery {
   @IsOptional()
   @IsISO8601()
   createdTo?: string;
+
+  @IsOptional()
+  @IsIn(STOCK_SORT_FIELDS as unknown as string[])
+  sortBy?: (typeof STOCK_SORT_FIELDS)[number];
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDir?: 'asc' | 'desc';
+}
+
+// Admin edit of a serialized unit's mutable fields (data correction).
+export class UpdateItemDto {
+  // YYYY-MM-DD, or null to clear the expiration.
+  @IsOptional()
+  @ValidateIf((o: UpdateItemDto) => o.expirationDate !== null)
+  @IsISO8601()
+  expirationDate?: string | null;
+}
+
+// Admin set of a quantity product's on-hand at a specific location.
+export class SetQuantityDto {
+  @IsInt() @IsPositive() productId!: number;
+  @IsInt() @IsPositive() locationId!: number;
+  @IsOptional() @IsInt() @IsPositive() storeId?: number;
+  @IsInt() @Min(0) quantity!: number;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 
 // Resolve a scanned barcode to a movable target. `serial` resolves an ON_HAND

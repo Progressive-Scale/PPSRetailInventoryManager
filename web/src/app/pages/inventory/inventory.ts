@@ -1,19 +1,32 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Observable } from 'rxjs';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { Store, StoreLocation, StockRow, TrackingType } from '../../core/models';
+import {
+  Store,
+  StoreLocation,
+  StockRow,
+  StockSortField,
+  StockStatusFilter,
+  TrackingType,
+} from '../../core/models';
 import { LocationsComponent } from './locations';
+import { ItemDetailComponent } from './item-detail';
 
-type ActionVerb = 'sell' | 'return' | 'adjust' | 'move';
 type SubTab = 'stock' | 'locations';
+
+interface Column {
+  label: string;
+  field: StockSortField;
+  num?: boolean;
+  adminOnly?: boolean;
+}
 
 @Component({
   selector: 'app-inventory',
-  imports: [FormsModule, DatePipe, LocationsComponent],
+  imports: [FormsModule, DatePipe, LocationsComponent, ItemDetailComponent],
   template: `
     <main class="container">
       <div class="tabs">
@@ -27,7 +40,6 @@ type SubTab = 'stock' | 'locations';
         <section class="card">
           <h2>Inventory</h2>
 
-          <!-- Filters -->
           <form class="filters" (ngSubmit)="applyFilters()">
             @if (isCompanyAdmin) {
               <label class="f">
@@ -62,6 +74,14 @@ type SubTab = 'stock' | 'locations';
               </select>
             </label>
             <label class="f">
+              Status
+              <select [(ngModel)]="statusFilter" name="f-status">
+                <option [ngValue]="'ON_HAND'">On hand</option>
+                <option [ngValue]="'SOLD'">Sold</option>
+                <option [ngValue]="'ALL'">All</option>
+              </select>
+            </label>
+            <label class="f">
               Created from
               <input type="date" name="f-from" [(ngModel)]="createdFrom" />
             </label>
@@ -86,28 +106,16 @@ type SubTab = 'stock' | 'locations';
               <table>
                 <thead>
                   <tr>
-                    <th></th>
-                    <th>SKU</th>
-                    <th>Barcode</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    @if (isCompanyAdmin) {
-                      <th>Store</th>
+                    @for (col of columns(); track col.field) {
+                      <th [class.num]="col.num" class="sortable" (click)="sort(col.field)">
+                        {{ col.label }}<span class="arrow">{{ sortIcon(col.field) }}</span>
+                      </th>
                     }
-                    <th class="num">On hand</th>
-                    <th>Location</th>
-                    <th>Expiration</th>
-                    <th>Created</th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (row of rows(); track row.rowId) {
-                    <tr>
-                      <td>
-                        <button class="link" (click)="toggleRow(row)">
-                          {{ expandedRowId() === row.rowId ? '▾' : '▸' }}
-                        </button>
-                      </td>
+                    <tr class="clickable" (click)="openRow(row)">
                       <td>
                         {{ row.sku }}
                         @if (row.serial) {
@@ -128,51 +136,12 @@ type SubTab = 'stock' | 'locations';
                       </td>
                       <td [class]="expClass(row.expirationDate)">
                         {{ row.expirationDate ? (row.expirationDate | date: 'shortDate') : '—' }}
+                        @if (row.rowKind === 'unit' && row.status !== 'ON_HAND') {
+                          <span class="st">{{ statusLabel(row.status) }}</span>
+                        }
                       </td>
                       <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
                     </tr>
-
-                    @if (expandedRowId() === row.rowId) {
-                      <tr class="sub-row">
-                        <td></td>
-                        <td [attr.colspan]="colspan()">
-                          @if (actionVerb()) {
-                            <form class="note-form" (ngSubmit)="commitAction(row)">
-                              <span class="note-label">{{ verbLabel(actionVerb()!) }}</span>
-                              @if (actionVerb() === 'move') {
-                                <span class="note-label">to</span>
-                                <select [(ngModel)]="actionTargetLocationId" name="a-target">
-                                  <option [ngValue]="null">Location…</option>
-                                  @for (l of rowLocations(); track l.id) {
-                                    <option [ngValue]="l.id" [disabled]="l.id === row.locationId">{{ l.name }}</option>
-                                  }
-                                </select>
-                              }
-                              @if (row.rowKind === 'stock') {
-                                <input class="qty-input" name="a-qty" type="number" min="1" step="1"
-                                  [max]="actionVerb() === 'move' || actionVerb() === 'sell' || actionVerb() === 'return' ? row.onHand : null"
-                                  [(ngModel)]="actionQuantity" placeholder="Qty" />
-                              }
-                              @if (row.rowKind === 'unit') {
-                                <input name="a-note" [(ngModel)]="actionNote" placeholder="Note (optional)" />
-                              }
-                              <button type="submit" [disabled]="saving()">Confirm</button>
-                              <button type="button" class="ghost" (click)="cancelAction()">Cancel</button>
-                            </form>
-                          } @else {
-                            <div class="verb-bar">
-                              <button class="ghost sm" (click)="beginAction('sell')">Sell</button>
-                              <button class="ghost sm" (click)="beginAction('return')">Return</button>
-                              <button class="ghost sm" (click)="beginAction('adjust')">Adjust</button>
-                              <button class="ghost sm" (click)="beginAction('move')">Move</button>
-                            </div>
-                          }
-                          @if (detailError()) {
-                            <p class="error">{{ detailError() }}</p>
-                          }
-                        </td>
-                      </tr>
-                    }
                   }
                 </tbody>
               </table>
@@ -187,6 +156,17 @@ type SubTab = 'stock' | 'locations';
         </section>
       }
     </main>
+
+    @if (selectedRow(); as row) {
+      <app-item-detail
+        [row]="row"
+        [isCompanyAdmin]="isCompanyAdmin"
+        [storeName]="storeName(row.storeId)"
+        [locations]="rowLocations()"
+        (close)="selectedRow.set(null)"
+        (changed)="reload()"
+      />
+    }
   `,
   styles: [
     `
@@ -270,6 +250,25 @@ type SubTab = 'stock' | 'locations';
       td.num {
         text-align: right;
       }
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+      th.sortable:hover {
+        color: var(--brand, var(--accent));
+      }
+      .arrow {
+        display: inline-block;
+        width: 1em;
+        color: var(--brand, var(--accent));
+      }
+      tr.clickable {
+        cursor: pointer;
+      }
+      tr.clickable:hover td {
+        background: var(--bg);
+      }
       .type-badge {
         display: inline-block;
         font-size: 0.7rem;
@@ -318,6 +317,12 @@ type SubTab = 'stock' | 'locations';
         color: var(--muted);
         font-family: ui-monospace, monospace;
       }
+      .st {
+        margin-left: 0.4rem;
+        font-size: 0.68rem;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
       .muted {
         color: var(--muted);
       }
@@ -332,41 +337,6 @@ type SubTab = 'stock' | 'locations';
       .error {
         color: #b42318;
         font-size: 0.85rem;
-      }
-      button.sm {
-        padding: 0.3rem 0.55rem;
-        font-size: 0.8rem;
-      }
-      button.link {
-        background: transparent;
-        border: none;
-        color: var(--muted);
-        padding: 0.1rem 0.3rem;
-      }
-      .sub-row td {
-        background: var(--bg);
-      }
-      .verb-bar {
-        display: flex;
-        gap: 0.4rem;
-        flex-wrap: wrap;
-      }
-      .note-form {
-        display: flex;
-        gap: 0.5rem;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .note-form input {
-        flex: 1 1 160px;
-      }
-      .note-form input.qty-input {
-        flex: 0 0 90px;
-        max-width: 90px;
-      }
-      .note-label {
-        font-size: 0.85rem;
-        color: var(--muted);
       }
       .pager {
         display: flex;
@@ -404,26 +374,39 @@ export class InventoryComponent implements OnInit {
   searchTerm = '';
   locationFilter: number | null = null;
   typeFilter: TrackingType | null = null;
+  statusFilter: StockStatusFilter = 'ON_HAND';
   createdFrom = '';
   createdTo = '';
 
-  // Locations for the location filter (for the currently selected store).
+  // Sort.
+  readonly sortBy = signal<StockSortField>('name');
+  readonly sortDir = signal<'asc' | 'desc'>('asc');
+
   readonly filterLocations = signal<StoreLocation[]>([]);
 
   readonly loading = signal(false);
-  readonly saving = signal(false);
   readonly listError = signal<string | null>(null);
-  readonly detailError = signal<string | null>(null);
 
-  // Per-row action expansion.
-  readonly expandedRowId = signal<string | null>(null);
+  // Item detail modal.
+  readonly selectedRow = signal<StockRow | null>(null);
   readonly rowLocations = signal<StoreLocation[]>([]);
-  readonly actionVerb = signal<ActionVerb | null>(null);
-  actionQuantity: number | null = null;
-  actionTargetLocationId: number | null = null;
-  actionNote = '';
 
-  readonly colspan = computed(() => (this.isCompanyAdmin ? 10 : 9));
+  readonly columns = computed<Column[]>(() => {
+    const cols: Column[] = [
+      { label: 'SKU', field: 'sku' },
+      { label: 'Barcode', field: 'barcode' },
+      { label: 'Name', field: 'name' },
+      { label: 'Type', field: 'type' },
+    ];
+    if (this.isCompanyAdmin) cols.push({ label: 'Store', field: 'store' });
+    cols.push(
+      { label: 'On hand', field: 'onHand', num: true },
+      { label: 'Location', field: 'location' },
+      { label: 'Expiration', field: 'expiration' },
+      { label: 'Created', field: 'created' },
+    );
+    return cols;
+  });
 
   readonly hasNext = computed(() => this.offset() + this.rows().length < this.total());
   readonly rangeLabel = computed(() => {
@@ -436,7 +419,6 @@ export class InventoryComponent implements OnInit {
     if (this.isCompanyAdmin) {
       this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
     } else {
-      // STORE_USER: preload their store's locations for the location filter.
       this.loadFilterLocations(this.auth.user()?.storeId ?? null);
     }
     this.reload();
@@ -456,15 +438,17 @@ export class InventoryComponent implements OnInit {
   reload(): void {
     this.loading.set(true);
     this.listError.set(null);
-    this.collapse();
     this.api
       .listStock({
         storeId: this.storeFilter() ?? undefined,
         search: this.searchTerm.trim() || undefined,
         locationId: this.locationFilter ?? undefined,
         type: this.typeFilter ?? undefined,
+        status: this.statusFilter,
         createdFrom: this.createdFrom || undefined,
         createdTo: this.createdTo || undefined,
+        sortBy: this.sortBy(),
+        sortDir: this.sortDir(),
         limit: this.limit(),
         offset: this.offset(),
       })
@@ -490,6 +474,7 @@ export class InventoryComponent implements OnInit {
     this.searchTerm = '';
     this.locationFilter = null;
     this.typeFilter = null;
+    this.statusFilter = 'ON_HAND';
     this.createdFrom = '';
     this.createdTo = '';
     this.offset.set(0);
@@ -504,6 +489,22 @@ export class InventoryComponent implements OnInit {
     this.reload();
   }
 
+  sort(field: StockSortField): void {
+    if (this.sortBy() === field) {
+      this.sortDir.update((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      this.sortBy.set(field);
+      this.sortDir.set('asc');
+    }
+    this.offset.set(0);
+    this.reload();
+  }
+
+  sortIcon(field: StockSortField): string {
+    if (this.sortBy() !== field) return '';
+    return this.sortDir() === 'asc' ? '▲' : '▼';
+  }
+
   prevPage(): void {
     if (this.offset() === 0) return;
     this.offset.set(Math.max(0, this.offset() - this.limit()));
@@ -516,108 +517,12 @@ export class InventoryComponent implements OnInit {
     this.reload();
   }
 
-  toggleRow(row: StockRow): void {
-    if (this.expandedRowId() === row.rowId) {
-      this.collapse();
-      return;
-    }
-    this.collapse();
-    this.expandedRowId.set(row.rowId);
-    // Load this row's store locations for the Move target picker.
+  openRow(row: StockRow): void {
+    this.selectedRow.set(row);
+    this.rowLocations.set([]);
     this.api.listLocations(row.storeId).subscribe({
       next: (locs) => this.rowLocations.set(locs.filter((l) => l.isActive)),
       error: () => this.rowLocations.set([]),
-    });
-  }
-
-  private collapse(): void {
-    this.expandedRowId.set(null);
-    this.rowLocations.set([]);
-    this.actionVerb.set(null);
-    this.detailError.set(null);
-    this.actionQuantity = null;
-    this.actionTargetLocationId = null;
-    this.actionNote = '';
-  }
-
-  beginAction(verb: ActionVerb): void {
-    this.detailError.set(null);
-    this.actionQuantity = null;
-    this.actionTargetLocationId = null;
-    this.actionNote = '';
-    this.actionVerb.set(verb);
-  }
-
-  cancelAction(): void {
-    this.actionVerb.set(null);
-  }
-
-  commitAction(row: StockRow): void {
-    const verb = this.actionVerb();
-    if (!verb) return;
-    this.detailError.set(null);
-
-    // Quantity rows need an amount for every verb.
-    let qty = 0;
-    if (row.rowKind === 'stock') {
-      qty = Number(this.actionQuantity);
-      if (!Number.isFinite(qty) || qty <= 0) {
-        this.detailError.set('Enter a quantity greater than zero.');
-        return;
-      }
-      if ((verb === 'sell' || verb === 'return' || verb === 'move') && qty > row.onHand) {
-        this.detailError.set(`Only ${row.onHand} on hand at this location.`);
-        return;
-      }
-    }
-
-    if (verb === 'move') {
-      if (this.actionTargetLocationId == null) {
-        this.detailError.set('Choose a destination location.');
-        return;
-      }
-      const body =
-        row.rowKind === 'unit'
-          ? { itemIds: [row.itemId!], toLocationId: this.actionTargetLocationId }
-          : {
-              productId: row.productId,
-              fromLocationId: row.locationId,
-              toLocationId: this.actionTargetLocationId,
-              quantity: qty,
-            };
-      this.run(this.api.moveInventory(body));
-      return;
-    }
-
-    const body =
-      row.rowKind === 'unit'
-        ? { itemId: row.itemId!, note: this.actionNote.trim() || undefined }
-        : {
-            productId: row.productId,
-            quantity: qty,
-            locationId: row.locationId,
-            storeId: row.storeId,
-          };
-    const call =
-      verb === 'sell'
-        ? this.api.sellInventory(body)
-        : verb === 'return'
-          ? this.api.returnInventory(body)
-          : this.api.adjustInventory(body);
-    this.run(call);
-  }
-
-  private run(obs: Observable<unknown>): void {
-    this.saving.set(true);
-    obs.subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.reload();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.detailError.set(messageFor(err));
-      },
     });
   }
 
@@ -625,7 +530,6 @@ export class InventoryComponent implements OnInit {
     return this.storeMap().get(id) ?? `#${id}`;
   }
 
-  /** '' | 'warn' (≤30d) | 'expired' (past) for the expiration cell. */
   expClass(date: string | null): string {
     if (!date) return '';
     const parsed = new Date(`${date}T00:00:00`);
@@ -636,7 +540,16 @@ export class InventoryComponent implements OnInit {
     return '';
   }
 
-  verbLabel(verb: ActionVerb): string {
-    return verb.charAt(0).toUpperCase() + verb.slice(1);
+  statusLabel(status: string | null): string {
+    switch (status) {
+      case 'SOLD':
+        return 'Sold';
+      case 'RETURNED_TO_WAREHOUSE':
+        return 'Returned';
+      case 'ADJUSTED_OUT':
+        return 'Adjusted';
+      default:
+        return '';
+    }
   }
 }
