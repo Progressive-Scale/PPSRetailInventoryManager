@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsInt,
@@ -17,6 +18,7 @@ export class CreateStoreDto {
   @IsOptional() @IsString() @MaxLength(64) state?: string;
   @IsOptional() @IsString() @MaxLength(32) zip?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 export class UpdateStoreDto {
@@ -27,6 +29,7 @@ export class UpdateStoreDto {
   @IsOptional() @IsString() @MaxLength(64) state?: string;
   @IsOptional() @IsString() @MaxLength(32) zip?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 const COMPANY_ROLES = ['COMPANY_ADMIN', 'STORE_USER'] as const;

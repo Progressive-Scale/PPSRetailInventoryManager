@@ -126,6 +126,7 @@ export const stores = pgTable(
     state: text('state'),
     zip: text('zip'),
     notes: text('notes'),
+    isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

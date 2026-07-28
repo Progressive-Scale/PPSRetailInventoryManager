@@ -45,43 +45,53 @@ type Tab = 'stores' | 'users' | 'invitations';
             <p class="muted">No stores yet.</p>
           } @else {
             <div class="table-scroll">
-              <table>
+              <table class="fixed">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>City</th>
-                    <th>State</th>
-                    <th>Zip</th>
-                    <th class="actions"></th>
+                    <th class="sc-name">Name</th>
+                    <th class="sc-addr">Address</th>
+                    <th class="sc-addr2">Address 2</th>
+                    <th class="sc-city">City</th>
+                    <th class="sc-state">State</th>
+                    <th class="sc-zip">Zip</th>
+                    <th class="sc-notes">Notes</th>
+                    <th class="sc-active">Active</th>
+                    <th class="actions sc-actions"></th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (s of stores(); track s.id) {
-                    <tr>
+                    <tr [class.inactive-row]="!s.isActive">
                       @if (editStoreId() === s.id) {
+                        <td><input class="cell-input" name="es-name" [(ngModel)]="storeEdit.name" /></td>
+                        <td><input class="cell-input" name="es-addr1" [(ngModel)]="storeEdit.address1" /></td>
+                        <td><input class="cell-input" name="es-addr2" [(ngModel)]="storeEdit.address2" /></td>
+                        <td><input class="cell-input" name="es-city" [(ngModel)]="storeEdit.city" /></td>
+                        <td><input class="cell-input" name="es-state" [(ngModel)]="storeEdit.state" /></td>
+                        <td><input class="cell-input" name="es-zip" [(ngModel)]="storeEdit.zip" /></td>
+                        <td><input class="cell-input" name="es-notes" [(ngModel)]="storeEdit.notes" /></td>
                         <td>
-                          <input name="es-name" placeholder="Name" [(ngModel)]="storeEdit.name" />
-                          <input name="es-addr1" placeholder="Address" [(ngModel)]="storeEdit.address1" />
-                          <input name="es-addr2" placeholder="Address 2" [(ngModel)]="storeEdit.address2" />
-                          <textarea name="es-notes" placeholder="Notes" [(ngModel)]="storeEdit.notes"></textarea>
+                          <select class="cell-input" name="es-active" [(ngModel)]="storeEdit.isActive">
+                            <option [ngValue]="true">Active</option>
+                            <option [ngValue]="false">Inactive</option>
+                          </select>
                         </td>
-                        <td><input name="es-city" [(ngModel)]="storeEdit.city" /></td>
-                        <td><input name="es-state" [(ngModel)]="storeEdit.state" /></td>
-                        <td><input name="es-zip" [(ngModel)]="storeEdit.zip" /></td>
                         <td class="actions">
                           <button class="sm" (click)="saveStore(s)" [disabled]="saving()">Save</button>
                           <button class="sm ghost" (click)="editStoreId.set(null)">Cancel</button>
+                          <button class="sm danger" (click)="askDeleteStore(s)" [disabled]="saving()">Delete</button>
                         </td>
                       } @else {
                         <td>{{ s.name }}</td>
+                        <td class="muted">{{ s.address1 }}</td>
+                        <td class="muted">{{ s.address2 }}</td>
                         <td class="muted">{{ s.city }}</td>
                         <td class="muted">{{ s.state }}</td>
                         <td class="muted">{{ s.zip }}</td>
+                        <td class="muted">{{ s.notes }}</td>
+                        <td>{{ s.isActive ? 'Active' : 'Inactive' }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditStore(s)">Edit</button>
-                          <button class="sm danger" (click)="deleteStore(s)" [disabled]="saving()">
-                            Delete
-                          </button>
                         </td>
                       }
                     </tr>
@@ -133,6 +143,29 @@ type Tab = 'stores' | 'users' | 'invitations';
                   <button type="button" class="ghost" (click)="closeAddStore()">Cancel</button>
                 </div>
               </form>
+            </div>
+          </div>
+        }
+
+        @if (pendingDeleteStore(); as s) {
+          <div class="overlay" (click)="pendingDeleteStore.set(null)">
+            <div class="modal" (click)="$event.stopPropagation()">
+              <h2>Delete store</h2>
+              <p>Delete <strong>{{ s.name }}</strong>? This can't be undone.</p>
+              <p class="muted note">
+                A store that still has inventory can't be deleted — make it inactive instead.
+              </p>
+              @if (storeDeleteError()) {
+                <p class="error">{{ storeDeleteError() }}</p>
+              }
+              <div class="modal-actions">
+                <button class="danger-btn" (click)="confirmDeleteStore()" [disabled]="saving()">
+                  {{ saving() ? 'Deleting…' : 'Delete' }}
+                </button>
+                <button class="ghost" (click)="pendingDeleteStore.set(null)" [disabled]="saving()">
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         }
@@ -501,6 +534,47 @@ type Tab = 'stores' | 'users' | 'invitations';
         gap: 0.5rem;
         margin-top: 0.5rem;
       }
+      .note {
+        font-size: 0.82rem;
+        margin: 0.25rem 0 0.5rem;
+      }
+      .danger-btn {
+        background: #b42318;
+        border: 1px solid #b42318;
+        color: #fff;
+      }
+      .danger-btn:hover:not(:disabled) {
+        background: #99200f;
+        border-color: #99200f;
+      }
+      /* Stores table: fixed column widths so entering edit mode never reflows. */
+      .sc-name {
+        width: 14%;
+      }
+      .sc-addr {
+        width: 13%;
+      }
+      .sc-addr2 {
+        width: 10%;
+      }
+      .sc-city {
+        width: 10%;
+      }
+      .sc-state {
+        width: 6%;
+      }
+      .sc-zip {
+        width: 7%;
+      }
+      .sc-notes {
+        width: 13%;
+      }
+      .sc-active {
+        width: 8%;
+      }
+      .sc-actions {
+        width: 19%;
+      }
     `,
   ],
 })
@@ -519,6 +593,10 @@ export class ManageComponent implements OnInit {
   // Add-store modal.
   readonly showAddStore = signal(false);
   readonly modalError = signal<string | null>(null);
+
+  // Delete-store confirmation modal.
+  readonly pendingDeleteStore = signal<Store | null>(null);
+  readonly storeDeleteError = signal<string | null>(null);
 
   storeDraft: CreateStore = {
     name: '',
@@ -660,6 +738,7 @@ export class ManageComponent implements OnInit {
       state: s.state ?? '',
       zip: s.zip ?? '',
       notes: s.notes ?? '',
+      isActive: s.isActive,
     };
   }
 
@@ -675,6 +754,7 @@ export class ManageComponent implements OnInit {
         state: this.storeEdit.state,
         zip: this.storeEdit.zip,
         notes: this.storeEdit.notes,
+        isActive: this.storeEdit.isActive,
       })
       .subscribe({
         next: () => {
@@ -689,18 +769,26 @@ export class ManageComponent implements OnInit {
       });
   }
 
-  deleteStore(s: Store): void {
-    if (!confirm(`Delete store "${s.name}"?`)) return;
+  askDeleteStore(s: Store): void {
+    this.storeDeleteError.set(null);
+    this.pendingDeleteStore.set(s);
+  }
+
+  confirmDeleteStore(): void {
+    const s = this.pendingDeleteStore();
+    if (!s) return;
     this.saving.set(true);
-    this.error.set(null);
+    this.storeDeleteError.set(null);
     this.api.deleteStore(s.id).subscribe({
       next: () => {
         this.saving.set(false);
+        this.pendingDeleteStore.set(null);
+        this.editStoreId.set(null);
         this.loadStores();
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(messageFor(err));
+        this.storeDeleteError.set(messageFor(err));
       },
     });
   }

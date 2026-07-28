@@ -261,6 +261,7 @@ export interface Store {
   state: string | null;
   zip: string | null;
   notes: string | null;
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -416,6 +417,7 @@ export interface CreateStore {
   state?: string;
   zip?: string;
   notes?: string;
+  isActive?: boolean;
 }
 
 export interface UpdateStore {
@@ -426,6 +428,7 @@ export interface UpdateStore {
   state?: string;
   zip?: string;
   notes?: string;
+  isActive?: boolean;
 }
 
 export interface UpdateUser {
