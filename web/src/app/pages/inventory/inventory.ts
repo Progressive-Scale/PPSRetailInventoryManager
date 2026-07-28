@@ -41,7 +41,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                 <input
                   name="q"
                   [(ngModel)]="searchTerm"
-                  placeholder="Name, SKU, UPC or serial"
+                  placeholder="Name, SKU, barcode or serial"
                 />
               </label>
               <button type="submit" class="ghost" [disabled]="loading()">Search</button>
@@ -63,7 +63,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                 <tr>
                   <th></th>
                   <th>SKU</th>
-                  <th>UPC</th>
+                  <th>Barcode</th>
                   <th>Name</th>
                   <th>Type</th>
                   @if (isCompanyAdmin) {
