@@ -178,6 +178,18 @@ export class UpdateItemDto {
   expirationDate?: string | null;
 }
 
+// Admin bulk edit of serialized items' expiration date (null clears it).
+export class BulkExpirationDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  itemIds!: string[];
+
+  @ValidateIf((o: BulkExpirationDto) => o.expirationDate !== null)
+  @IsISO8601()
+  expirationDate!: string | null;
+}
+
 // Admin set of a quantity product's on-hand at a specific location.
 export class SetQuantityDto {
   @IsInt() @IsPositive() productId!: number;

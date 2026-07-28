@@ -55,6 +55,11 @@ export const locationKind = pgEnum('location_kind', [
   'CUSTOM',
 ]);
 export const notificationType = pgEnum('notification_type', ['EXPIRATION_WARNING']);
+export const itemAuditSource = pgEnum('item_audit_source', [
+  'BULK_EDIT',
+  'SINGLE_EDIT',
+  'SYNC',
+]);
 export const notificationStatus = pgEnum('notification_status', [
   'UNREAD',
   'READ',
@@ -510,6 +515,34 @@ export const notifications = pgTable(
   ],
 );
 
+// Audit trail for manual field changes on a serialized item (currently the
+// expiration date). Expiration normally arrives from ERP sync, so manual
+// overrides must be traceable: who changed it, from what to what, and how.
+export const itemAudit = pgTable(
+  'item_audit',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    itemId: uuid('item_id')
+      .notNull()
+      .references(() => inventoryItems.id),
+    field: text('field').notNull(),
+    oldValue: text('old_value'),
+    newValue: text('new_value'),
+    changedByUserId: integer('changed_by_user_id').references(() => users.id),
+    source: itemAuditSource('source').notNull(),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('item_audit_company_item_idx').on(t.companyId, t.itemId),
+  ],
+);
+
 // Cycle counts — a store-wide physical count session. Closing resolves the
 // store's ON_HAND serialized units (present vs sold) and applies submitted
 // quantity counts, all in one transaction.
@@ -706,6 +739,7 @@ export type StoreInventoryRow = typeof storeInventory.$inferSelect;
 export type StoreLocation = typeof storeLocations.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type NotificationSetting = typeof notificationSettings.$inferSelect;
+export type ItemAudit = typeof itemAudit.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
 export type TrackingType = (typeof trackingType.enumValues)[number];
@@ -731,4 +765,5 @@ export const TENANT_TABLES = [
   'cycle_count_lines',
   'notification_settings',
   'notifications',
+  'item_audit',
 ] as const;

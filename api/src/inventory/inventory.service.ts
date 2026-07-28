@@ -23,10 +23,12 @@ import {
   inventoryItems,
   inventoryStock,
   inventoryTransactions,
+  itemAudit,
   ItemStatus,
   outboxReturns,
   Product,
   products,
+  users,
   stores,
   storeInventory,
   storeLocations,
@@ -814,7 +816,134 @@ export class InventoryService {
         .set(patch)
         .where(eq(inventoryItems.id, item.id))
         .returning();
+      // Audit the expiration change (traceable manual override of ERP sync).
+      if (
+        dto.expirationDate !== undefined &&
+        (item.expirationDate ?? null) !== (dto.expirationDate ?? null)
+      ) {
+        await this.writeExpirationAudit(
+          tx,
+          ctx,
+          item.id,
+          item.expirationDate ?? null,
+          dto.expirationDate ?? null,
+          'SINGLE_EDIT',
+        );
+      }
       return row;
+    });
+  }
+
+  /** One expiration-change audit row. Note reads "src: old → new". */
+  private async writeExpirationAudit(
+    tx: Tx,
+    ctx: DataContext,
+    itemId: string,
+    oldValue: string | null,
+    newValue: string | null,
+    source: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC',
+    label = source === 'BULK_EDIT' ? 'bulk edit' : 'edit',
+  ): Promise<void> {
+    await tx.insert(itemAudit).values({
+      companyId: ctx.companyId,
+      itemId,
+      field: 'expiration_date',
+      oldValue,
+      newValue,
+      changedByUserId: ctx.userId,
+      source,
+      note: `${label}: ${oldValue ?? '—'} → ${newValue ?? '—'}`,
+    });
+  }
+
+  /**
+   * Bulk-set the expiration date on serialized items (COMPANY_ADMIN). Every id
+   * must be a serialized item in tenant scope — any unknown / non-serialized id
+   * fails the WHOLE request (client bug). Editable (ON_HAND) items succeed even
+   * when others are rejected per-item (partial success). One transaction; each
+   * change writes an audit row.
+   */
+  async bulkExpiration(
+    ctx: DataContext,
+    dto: { itemIds: string[]; expirationDate: string | null },
+  ): Promise<{ results: Array<{ itemId: string; ok: boolean; reason?: string }> }> {
+    const ids = [...new Set(dto.itemIds)];
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const items = await tx
+        .select({
+          id: inventoryItems.id,
+          status: inventoryItems.status,
+          expirationDate: inventoryItems.expirationDate,
+        })
+        .from(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.companyId, ctx.companyId),
+            inArray(inventoryItems.id, ids),
+          ),
+        );
+      // inventory_items only holds serialized units, so any id not found here is
+      // either unknown, cross-tenant, or a quantity product — all client bugs.
+      const found = new Map(items.map((i) => [i.id, i]));
+      const offending = ids.filter((id) => !found.has(id));
+      if (offending.length > 0) {
+        throw new BadRequestException({
+          message:
+            'Every id must be a serialized item in your company. Offending ids indicate a client bug.',
+          offendingIds: offending,
+        });
+      }
+
+      const newValue = dto.expirationDate ?? null;
+      const results: Array<{ itemId: string; ok: boolean; reason?: string }> = [];
+      for (const it of items) {
+        if (it.status !== 'ON_HAND') {
+          results.push({
+            itemId: it.id,
+            ok: false,
+            reason: `item is ${it.status}, only ON_HAND items can be edited`,
+          });
+          continue;
+        }
+        const oldValue = it.expirationDate ?? null;
+        if (oldValue !== newValue) {
+          await tx
+            .update(inventoryItems)
+            .set({ expirationDate: newValue, updatedAt: new Date() })
+            .where(eq(inventoryItems.id, it.id));
+          await this.writeExpirationAudit(tx, ctx, it.id, oldValue, newValue, 'BULK_EDIT');
+        }
+        results.push({ itemId: it.id, ok: true });
+      }
+      return { results };
+    });
+  }
+
+  /** Audit records for one serialized item (expiration changes), newest first. */
+  async itemAuditTrail(ctx: DataContext, itemId: string) {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      await this.loadUnit(tx, ctx, itemId); // scope + existence
+      return tx
+        .select({
+          id: itemAudit.id,
+          field: itemAudit.field,
+          oldValue: itemAudit.oldValue,
+          newValue: itemAudit.newValue,
+          source: itemAudit.source,
+          note: itemAudit.note,
+          createdAt: itemAudit.createdAt,
+          changedByUserId: itemAudit.changedByUserId,
+          changedByEmail: users.email,
+        })
+        .from(itemAudit)
+        .leftJoin(users, eq(users.id, itemAudit.changedByUserId))
+        .where(
+          and(
+            eq(itemAudit.companyId, ctx.companyId),
+            eq(itemAudit.itemId, itemId),
+          ),
+        )
+        .orderBy(desc(itemAudit.createdAt));
     });
   }
 

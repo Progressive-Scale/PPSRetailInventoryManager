@@ -18,6 +18,7 @@ import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
 import {
+  BulkExpirationDto,
   InventoryActionDto,
   ListInventoryQuery,
   ListItemsQuery,
@@ -59,6 +60,12 @@ export class InventoryController {
     return this.svc.lookup(ctx, query);
   }
 
+  // Audit trail (expiration changes) for a serialized item — shown in history.
+  @Get('items/:itemId/audit')
+  itemAudit(@Ctx() ctx: DataContext, @Param('itemId') itemId: string) {
+    return this.svc.itemAuditTrail(ctx, itemId);
+  }
+
   // Expansion for a single product: units (serialized) or stock + ledger.
   @Get(':productId')
   getProduct(
@@ -81,6 +88,13 @@ export class InventoryController {
   @Roles(['COMPANY_ADMIN'])
   setQuantity(@Ctx() ctx: DataContext, @Body() dto: SetQuantityDto) {
     return this.svc.setQuantity(ctx, dto);
+  }
+
+  // Admin: bulk-set expiration on serialized items (partial success + audit).
+  @Patch('bulk-expiration')
+  @Roles(['COMPANY_ADMIN'])
+  bulkExpiration(@Ctx() ctx: DataContext, @Body() dto: BulkExpirationDto) {
+    return this.svc.bulkExpiration(ctx, dto);
   }
 
   // Admin: edit a serialized unit's expiration date (data correction).
