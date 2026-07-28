@@ -4,20 +4,30 @@ import { Observable } from 'rxjs';
 import {
   AdminInvite,
   ApiKey,
+  AppNotification,
   Branding,
   Company,
   CreateCompany,
+  CreateLocation,
   CycleCount,
   CycleCountDetail,
   CreateInvitation,
   CreateStore,
+  ExpiringItem,
   HealthResponse,
   InventoryOpBody,
   InventoryProductDetail,
   Invitation,
+  MoveInventoryBody,
+  MoveResult,
+  NotificationSettingsResponse,
+  NotificationStatus,
   Paginated,
   Product,
   CreateProduct,
+  PutNotificationSettings,
+  StoreLocation,
+  UpdateLocation,
   UpdateProduct,
   Store,
   StoreInventoryRow,
@@ -63,6 +73,34 @@ export class ApiService {
     return this.http.get<InventoryProductDetail>(`/api/inventory/${productId}`);
   }
 
+  /** Serialized units with location + expiration (in-stock by expiration). */
+  listItems(opts: {
+    storeId?: number;
+    locationId?: number;
+    productId?: number;
+    expiresBefore?: string;
+    expiringWithinDays?: number;
+    hasExpiration?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Observable<Paginated<ExpiringItem>> {
+    let params = new HttpParams();
+    if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
+    if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
+    if (opts.productId != null) params = params.set('productId', String(opts.productId));
+    if (opts.expiresBefore) params = params.set('expiresBefore', opts.expiresBefore);
+    if (opts.expiringWithinDays != null)
+      params = params.set('expiringWithinDays', String(opts.expiringWithinDays));
+    if (opts.hasExpiration != null) params = params.set('hasExpiration', String(opts.hasExpiration));
+    if (opts.limit != null) params = params.set('limit', String(opts.limit));
+    if (opts.offset != null) params = params.set('offset', String(opts.offset));
+    return this.http.get<Paginated<ExpiringItem>>('/api/inventory/items', { params });
+  }
+
+  moveInventory(body: MoveInventoryBody): Observable<MoveResult> {
+    return this.http.post<MoveResult>('/api/inventory/move', body);
+  }
+
   sellInventory(body: InventoryOpBody): Observable<unknown> {
     return this.http.post('/api/inventory/sell', body);
   }
@@ -92,6 +130,68 @@ export class ApiService {
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
     return this.http.get<Paginated<Transaction>>('/api/transactions', { params });
+  }
+
+  // ---- locations ----
+  listLocations(storeId?: number): Observable<StoreLocation[]> {
+    let params = new HttpParams();
+    if (storeId != null) params = params.set('storeId', String(storeId));
+    return this.http.get<StoreLocation[]>('/api/locations', { params });
+  }
+
+  createLocation(dto: CreateLocation): Observable<StoreLocation> {
+    return this.http.post<StoreLocation>('/api/locations', dto);
+  }
+
+  updateLocation(id: number, dto: UpdateLocation): Observable<StoreLocation> {
+    return this.http.patch<StoreLocation>(`/api/locations/${id}`, dto);
+  }
+
+  reorderLocations(storeId: number, orderedIds: number[]): Observable<StoreLocation[]> {
+    return this.http.post<StoreLocation[]>('/api/locations/reorder', { storeId, orderedIds });
+  }
+
+  deleteLocation(id: number): Observable<{ deactivated: boolean; location: StoreLocation }> {
+    return this.http.delete<{ deactivated: boolean; location: StoreLocation }>(
+      `/api/locations/${id}`,
+    );
+  }
+
+  // ---- notifications ----
+  listNotifications(opts?: {
+    status?: NotificationStatus;
+    storeId?: number;
+    limit?: number;
+    offset?: number;
+  }): Observable<Paginated<AppNotification>> {
+    let params = new HttpParams();
+    if (opts?.status) params = params.set('status', opts.status);
+    if (opts?.storeId != null) params = params.set('storeId', String(opts.storeId));
+    if (opts?.limit != null) params = params.set('limit', String(opts.limit));
+    if (opts?.offset != null) params = params.set('offset', String(opts.offset));
+    return this.http.get<Paginated<AppNotification>>('/api/notifications', { params });
+  }
+
+  notificationsUnreadCount(storeId?: number): Observable<{ unread: number }> {
+    let params = new HttpParams();
+    if (storeId != null) params = params.set('storeId', String(storeId));
+    return this.http.get<{ unread: number }>('/api/notifications/unread-count', { params });
+  }
+
+  updateNotification(id: number, status: NotificationStatus): Observable<AppNotification> {
+    return this.http.patch<AppNotification>(`/api/notifications/${id}`, { status });
+  }
+
+  runExpirationScan(): Observable<{ created: number }> {
+    return this.http.post<{ created: number }>('/api/notifications/run-expiration-scan', {});
+  }
+
+  getNotificationSettings(): Observable<NotificationSettingsResponse> {
+    return this.http.get<NotificationSettingsResponse>('/api/notification-settings');
+  }
+
+  putNotificationSettings(dto: PutNotificationSettings): Observable<unknown> {
+    return this.http.put('/api/notification-settings', dto);
   }
 
   // ---- cycle counts ----

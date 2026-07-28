@@ -5,50 +5,128 @@ import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import {
+  ExpiringItem,
   InventoryProductDetail,
   ItemStatus,
   QuantityInventoryDetail,
   SerializedInventoryDetail,
   Store,
   StoreInventoryRow,
+  StoreLocation,
 } from '../../core/models';
+import { LocationsComponent } from './locations';
 
 type ActionVerb = 'sell' | 'return' | 'adjust';
+type SubTab = 'stock' | 'locations' | 'expiring';
+type ExpFilter = 'expired' | 7 | 30 | 90 | 'all';
 
 @Component({
   selector: 'app-inventory',
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, LocationsComponent],
   template: `
     <main class="container">
-      <section class="card">
-        <div class="row-between">
-          <h2>Inventory</h2>
-          <div class="filters">
-            @if (isCompanyAdmin) {
-              <label class="inline">
-                Store
-                <select [ngModel]="storeFilter()" (ngModelChange)="onStoreFilter($event)" name="sf">
-                  <option [ngValue]="null">All</option>
-                  @for (s of stores(); track s.id) {
-                    <option [ngValue]="s.id">{{ s.name }}</option>
-                  }
-                </select>
-              </label>
-            }
-            <form class="inline search" (ngSubmit)="onSearch()">
-              <label class="inline">
-                Search
-                <input
-                  name="q"
-                  [(ngModel)]="searchTerm"
-                  placeholder="Name, SKU, barcode or serial"
-                />
-              </label>
-              <button type="submit" class="ghost" [disabled]="loading()">Search</button>
-            </form>
-            <button class="ghost" (click)="reload()" [disabled]="loading()">Refresh</button>
+      <div class="tabs">
+        <button [class.active]="tab() === 'stock'" (click)="tab.set('stock')">Stock</button>
+        <button [class.active]="tab() === 'expiring'" (click)="selectExpiring()">Expiring</button>
+        <button [class.active]="tab() === 'locations'" (click)="tab.set('locations')">Locations</button>
+      </div>
+
+      @if (tab() === 'locations') {
+        <app-locations />
+      } @else if (tab() === 'expiring') {
+        <section class="card">
+          <div class="row-between">
+            <h2>Expiring stock</h2>
+            <div class="filters">
+              @if (isCompanyAdmin) {
+                <label class="inline">
+                  Store
+                  <select [ngModel]="storeFilter()" (ngModelChange)="onStoreFilter($event)" name="ef-sf">
+                    <option [ngValue]="null">All</option>
+                    @for (s of stores(); track s.id) {
+                      <option [ngValue]="s.id">{{ s.name }}</option>
+                    }
+                  </select>
+                </label>
+              }
+              <button class="ghost" (click)="loadExpiring()" [disabled]="expLoading()">Refresh</button>
+            </div>
           </div>
-        </div>
+          <div class="chips">
+            <button class="chip" [class.active]="expFilter() === 'expired'" (click)="setExpFilter('expired')">Expired</button>
+            <button class="chip" [class.active]="expFilter() === 7" (click)="setExpFilter(7)">≤ 7 days</button>
+            <button class="chip" [class.active]="expFilter() === 30" (click)="setExpFilter(30)">≤ 30 days</button>
+            <button class="chip" [class.active]="expFilter() === 90" (click)="setExpFilter(90)">≤ 90 days</button>
+            <button class="chip" [class.active]="expFilter() === 'all'" (click)="setExpFilter('all')">All dated</button>
+          </div>
+
+          @if (expLoading()) {
+            <p class="muted">Loading…</p>
+          } @else if (expError()) {
+            <p class="error">{{ expError() }}</p>
+          } @else if (expItems().length === 0) {
+            <p class="muted">Nothing matches.</p>
+          } @else {
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Expires</th>
+                    <th>Serial</th>
+                    <th>Product</th>
+                    <th>Location</th>
+                    @if (isCompanyAdmin) {
+                      <th>Store</th>
+                    }
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (it of expItems(); track it.id) {
+                    <tr>
+                      <td [class]="expClass(it.expirationDate)">
+                        {{ it.expirationDate ? (it.expirationDate | date: 'shortDate') : '—' }}
+                      </td>
+                      <td class="mono">{{ it.serial }}</td>
+                      <td>{{ it.name }} <span class="muted">{{ it.sku }}</span></td>
+                      <td>
+                        <span class="kind-badge" [class]="'k-' + it.locationKind">{{ it.locationName }}</span>
+                      </td>
+                      @if (isCompanyAdmin) {
+                        <td class="muted">{{ storeName(it.storeId) }}</td>
+                      }
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </section>
+      } @else {
+        <section class="card">
+          <div class="row-between">
+            <h2>Inventory</h2>
+            <div class="filters">
+              @if (isCompanyAdmin) {
+                <label class="inline">
+                  Store
+                  <select [ngModel]="storeFilter()" (ngModelChange)="onStoreFilter($event)" name="sf">
+                    <option [ngValue]="null">All</option>
+                    @for (s of stores(); track s.id) {
+                      <option [ngValue]="s.id">{{ s.name }}</option>
+                    }
+                  </select>
+                </label>
+              }
+              <form class="inline search" (ngSubmit)="onSearch()">
+                <label class="inline">
+                  Search
+                  <input name="q" [(ngModel)]="searchTerm" placeholder="Name, SKU, barcode or serial" />
+                </label>
+                <button type="submit" class="ghost" [disabled]="loading()">Search</button>
+              </form>
+              <button class="ghost" (click)="reload()" [disabled]="loading()">Refresh</button>
+            </div>
+          </div>
 
         @if (loading()) {
           <p class="muted">Loading…</p>
@@ -111,11 +189,26 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                           @if (d.units.length === 0) {
                             <p class="muted">No units.</p>
                           } @else {
+                            @if (selectedUnitIds().size > 0) {
+                              <div class="move-bar">
+                                <span>{{ selectedUnitIds().size }} selected — move to</span>
+                                <select [(ngModel)]="moveTargetLocationId" name="mv-target">
+                                  <option [ngValue]="null">Location…</option>
+                                  @for (l of activeLocations(); track l.id) {
+                                    <option [ngValue]="l.id">{{ l.name }}</option>
+                                  }
+                                </select>
+                                <button (click)="moveSelectedUnits(d)" [disabled]="saving() || moveTargetLocationId === null">Move</button>
+                                <button class="ghost" (click)="clearSelection()">Clear</button>
+                              </div>
+                            }
                             <table class="sub">
                               <thead>
                                 <tr>
+                                  <th></th>
                                   <th>Serial</th>
                                   <th>Status</th>
+                                  <th>Location</th>
                                   <th>Expires</th>
                                   <th>Received</th>
                                   <th class="actions">Actions</th>
@@ -124,9 +217,17 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                               <tbody>
                                 @for (u of d.units; track u.id) {
                                   <tr>
-                                    <td>{{ u.serial }}</td>
+                                    <td>
+                                      @if (u.status === 'ON_HAND') {
+                                        <input type="checkbox" [checked]="selectedUnitIds().has(u.id)" (change)="toggleUnit(u.id)" />
+                                      }
+                                    </td>
+                                    <td class="mono">{{ u.serial }}</td>
                                     <td><span class="status">{{ statusLabel(u.status) }}</span></td>
-                                    <td class="muted" [class.expired]="isExpired(u.expirationDate)">
+                                    <td>
+                                      <span class="kind-badge" [class]="'k-' + u.locationKind">{{ u.locationName }}</span>
+                                    </td>
+                                    <td [class]="expClass(u.expirationDate)">
                                       {{ u.expirationDate ? (u.expirationDate | date: 'shortDate') : '—' }}
                                     </td>
                                     <td class="muted">
@@ -144,7 +245,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                                   </tr>
                                   @if (unitAction() && unitAction()!.unitId === u.id) {
                                     <tr class="action-row">
-                                      <td [attr.colspan]="5">
+                                      <td [attr.colspan]="7">
                                         <form class="note-form" (ngSubmit)="commitUnitAction()">
                                           <span class="note-label">{{ verbLabel(unitAction()!.verb) }} — optional note:</span>
                                           <input name="note" [(ngModel)]="actionNote" placeholder="Note" />
@@ -160,15 +261,18 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                           }
                         } @else if (quantityDetail(); as d) {
                           <div class="qty-summary">
-                            <h4>On hand</h4>
+                            <h4>On hand by location</h4>
                             @if (d.stock.length === 0) {
                               <p class="muted">No stock.</p>
                             } @else {
                               <ul class="stock-list">
                                 @for (st of d.stock; track st.id) {
                                   <li>
-                                    <span class="muted">{{ storeName(st.storeId) }}</span>
+                                    <span class="kind-badge" [class]="'k-' + st.locationKind">{{ st.locationName }}</span>
                                     <strong>{{ st.quantityOnHand }}</strong>
+                                    @if (isCompanyAdmin) {
+                                      <span class="muted">· {{ storeName(st.storeId) }}</span>
+                                    }
                                   </li>
                                 }
                               </ul>
@@ -178,23 +282,43 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                           <div class="qty-actions">
                             @if (qtyAction()) {
                               <form class="note-form" (ngSubmit)="commitQtyAction(row)">
-                                <span class="note-label">{{ verbLabel(qtyAction()!) }} — quantity:</span>
-                                <input
-                                  class="qty-input"
-                                  name="qty"
-                                  type="number"
-                                  min="1"
-                                  step="1"
-                                  [(ngModel)]="actionQuantity"
-                                />
+                                <span class="note-label">{{ verbLabel(qtyAction()!) }} — from</span>
+                                <select [(ngModel)]="actionLocationId" name="qa-loc">
+                                  <option [ngValue]="null">Location…</option>
+                                  @for (l of activeLocations(); track l.id) {
+                                    <option [ngValue]="l.id">{{ l.name }}</option>
+                                  }
+                                </select>
+                                <input class="qty-input" name="qty" type="number" min="1" step="1" [(ngModel)]="actionQuantity" />
                                 <input name="qnote" [(ngModel)]="actionNote" placeholder="Note" />
                                 <button type="submit" [disabled]="saving()">Confirm</button>
                                 <button type="button" class="ghost" (click)="cancelQtyAction()">Cancel</button>
+                              </form>
+                            } @else if (qtyMoveOpen()) {
+                              <form class="note-form" (ngSubmit)="commitQtyMove(row)">
+                                <span class="note-label">Move — from</span>
+                                <select [(ngModel)]="moveFromLocationId" name="mf">
+                                  <option [ngValue]="null">Location…</option>
+                                  @for (l of activeLocations(); track l.id) {
+                                    <option [ngValue]="l.id">{{ l.name }}</option>
+                                  }
+                                </select>
+                                <span class="note-label">to</span>
+                                <select [(ngModel)]="moveTargetLocationId" name="mt">
+                                  <option [ngValue]="null">Location…</option>
+                                  @for (l of activeLocations(); track l.id) {
+                                    <option [ngValue]="l.id">{{ l.name }}</option>
+                                  }
+                                </select>
+                                <input class="qty-input" name="mqty" type="number" min="1" step="1" [(ngModel)]="actionQuantity" />
+                                <button type="submit" [disabled]="saving()">Move</button>
+                                <button type="button" class="ghost" (click)="qtyMoveOpen.set(false)">Cancel</button>
                               </form>
                             } @else {
                               <button class="ghost sm" (click)="beginQtyAction('sell')">Sell</button>
                               <button class="ghost sm" (click)="beginQtyAction('return')">Return</button>
                               <button class="ghost sm" (click)="beginQtyAction('adjust')">Adjust</button>
+                              <button class="ghost sm" (click)="beginQtyMove()">Move</button>
                             }
                           </div>
 
@@ -209,6 +333,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                                     <th>When</th>
                                     <th>Type</th>
                                     <th class="num">Δ Qty</th>
+                                    <th>Movement</th>
                                     <th>Source</th>
                                     <th>Note</th>
                                   </tr>
@@ -219,6 +344,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
                                       <td class="muted">{{ tx.createdAt | date: 'short' }}</td>
                                       <td>{{ tx.type }}</td>
                                       <td class="num">{{ tx.quantityDelta }}</td>
+                                      <td class="muted">{{ movementLabel(tx.locationFromId, tx.locationToId) }}</td>
                                       <td>
                                         <span class="src-badge" [class]="'src-' + tx.source">{{ tx.source }}</span>
                                       </td>
@@ -239,16 +365,13 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
           </div>
 
           <div class="pager">
-            <button class="ghost" (click)="prevPage()" [disabled]="offset() === 0 || loading()">
-              Prev
-            </button>
+            <button class="ghost" (click)="prevPage()" [disabled]="offset() === 0 || loading()">Prev</button>
             <span class="muted">{{ rangeLabel() }}</span>
-            <button class="ghost" (click)="nextPage()" [disabled]="!hasNext() || loading()">
-              Next
-            </button>
+            <button class="ghost" (click)="nextPage()" [disabled]="!hasNext() || loading()">Next</button>
           </div>
         }
-      </section>
+        </section>
+      }
     </main>
   `,
   styles: [
@@ -260,6 +383,24 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
         display: flex;
         flex-direction: column;
         gap: 1.25rem;
+      }
+      .tabs {
+        display: flex;
+        gap: 0.4rem;
+      }
+      .tabs button {
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.4rem 0.9rem;
+        font-size: 0.88rem;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .tabs button.active {
+        color: var(--brand, var(--accent));
+        border-color: var(--brand, var(--accent));
+        background: var(--accent-soft);
       }
       .card {
         border: 1px solid var(--border);
@@ -301,6 +442,26 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
         font-size: 0.75rem;
         color: var(--muted);
       }
+      .chips {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.85rem;
+      }
+      .chip {
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.25rem 0.7rem;
+        font-size: 0.78rem;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .chip.active {
+        color: var(--brand, var(--accent));
+        border-color: var(--brand, var(--accent));
+        background: var(--accent-soft);
+      }
       input,
       select {
         padding: 0.45rem 0.55rem;
@@ -332,6 +493,10 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
         text-align: right;
         white-space: nowrap;
       }
+      .mono {
+        font-family: ui-monospace, monospace;
+        font-size: 0.85rem;
+      }
       .status {
         font-size: 0.78rem;
         padding: 0.1rem 0.45rem;
@@ -358,6 +523,29 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
         color: #067647;
         border-color: #abefc6;
       }
+      .kind-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .k-BACKROOM {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .k-ONFLOOR {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
+      }
+      .k-CUSTOM {
+        background: #f4f4f5;
+        color: #52525b;
+        border-color: #e4e4e7;
+      }
       .matched {
         margin-left: 0.5rem;
         font-size: 0.7rem;
@@ -369,6 +557,11 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
       }
       td.expired {
         color: #b42318;
+        font-weight: 600;
+      }
+      td.warn {
+        color: #b54708;
+        font-weight: 600;
       }
       .error {
         color: #b42318;
@@ -398,6 +591,13 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
       .action-row td {
         background: var(--surface);
       }
+      .move-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.4rem 0;
+        font-size: 0.85rem;
+      }
       .note-form {
         display: flex;
         gap: 0.5rem;
@@ -405,7 +605,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
         flex-wrap: wrap;
       }
       .note-form input {
-        flex: 1 1 200px;
+        flex: 1 1 160px;
       }
       .note-form input.qty-input {
         flex: 0 0 90px;
@@ -432,7 +632,7 @@ type ActionVerb = 'sell' | 'return' | 'adjust';
       .stock-list li {
         display: flex;
         gap: 0.4rem;
-        align-items: baseline;
+        align-items: center;
       }
       .pager {
         display: flex;
@@ -475,6 +675,8 @@ export class InventoryComponent implements OnInit {
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
 
+  readonly tab = signal<SubTab>('stock');
+
   readonly rows = signal<StoreInventoryRow[]>([]);
   readonly total = signal(0);
   readonly limit = signal(20);
@@ -500,12 +702,29 @@ export class InventoryComponent implements OnInit {
   readonly detailLoading = signal(false);
   readonly detailError = signal<string | null>(null);
 
+  // Locations for the expanded row's store (for move + quantity-op pickers).
+  readonly detailLocations = signal<StoreLocation[]>([]);
+  readonly activeLocations = computed(() => this.detailLocations().filter((l) => l.isActive));
+
   // Serialized per-unit action.
   readonly unitAction = signal<{ unitId: string; verb: ActionVerb } | null>(null);
   // Quantity action for the expanded row.
   readonly qtyAction = signal<ActionVerb | null>(null);
+  readonly qtyMoveOpen = signal(false);
+  // Serialized multi-select move.
+  readonly selectedUnitIds = signal<Set<string>>(new Set());
+  moveTargetLocationId: number | null = null;
+  moveFromLocationId: number | null = null;
+
   actionNote = '';
   actionQuantity: number | null = null;
+  actionLocationId: number | null = null;
+
+  // Expiring tab.
+  readonly expItems = signal<ExpiringItem[]>([]);
+  readonly expFilter = signal<ExpFilter>(30);
+  readonly expLoading = signal(false);
+  readonly expError = signal<string | null>(null);
 
   readonly serializedDetail = computed<SerializedInventoryDetail | null>(() => {
     const d = this.detail();
@@ -569,6 +788,7 @@ export class InventoryComponent implements OnInit {
     this.storeFilter.set(value);
     this.offset.set(0);
     this.reload();
+    if (this.tab() === 'expiring') this.loadExpiring();
   }
 
   onSearch(): void {
@@ -608,16 +828,27 @@ export class InventoryComponent implements OnInit {
         this.detailError.set(messageFor(err));
       },
     });
+    // Load this store's locations for move / quantity-op pickers.
+    this.api.listLocations(row.storeId).subscribe({
+      next: (locs) => this.detailLocations.set(locs),
+      error: () => this.detailLocations.set([]),
+    });
   }
 
   private collapse(): void {
     this.expandedKey.set(null);
     this.detail.set(null);
     this.detailError.set(null);
+    this.detailLocations.set([]);
     this.unitAction.set(null);
     this.qtyAction.set(null);
+    this.qtyMoveOpen.set(false);
+    this.selectedUnitIds.set(new Set());
     this.actionNote = '';
     this.actionQuantity = null;
+    this.actionLocationId = null;
+    this.moveTargetLocationId = null;
+    this.moveFromLocationId = null;
   }
 
   private refreshDetail(productId: number): void {
@@ -667,10 +898,47 @@ export class InventoryComponent implements OnInit {
     });
   }
 
+  // ---- serialized multi-select move ----
+  toggleUnit(id: string): void {
+    const next = new Set(this.selectedUnitIds());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.selectedUnitIds.set(next);
+  }
+
+  clearSelection(): void {
+    this.selectedUnitIds.set(new Set());
+    this.moveTargetLocationId = null;
+  }
+
+  moveSelectedUnits(d: SerializedInventoryDetail): void {
+    if (this.moveTargetLocationId === null || this.selectedUnitIds().size === 0) return;
+    this.saving.set(true);
+    this.detailError.set(null);
+    this.api
+      .moveInventory({
+        itemIds: [...this.selectedUnitIds()],
+        toLocationId: this.moveTargetLocationId,
+      })
+      .subscribe({
+        next: () => {
+          this.saving.set(false);
+          this.clearSelection();
+          this.refreshDetail(d.product.id);
+        },
+        error: (err) => {
+          this.saving.set(false);
+          this.detailError.set(messageFor(err));
+        },
+      });
+  }
+
   // ---- quantity actions ----
   beginQtyAction(verb: ActionVerb): void {
     this.actionNote = '';
     this.actionQuantity = null;
+    this.actionLocationId = null;
+    this.qtyMoveOpen.set(false);
     this.qtyAction.set(verb);
   }
 
@@ -686,9 +954,14 @@ export class InventoryComponent implements OnInit {
       this.detailError.set('Enter a quantity greater than zero.');
       return;
     }
+    if (this.actionLocationId === null) {
+      this.detailError.set('Choose a location.');
+      return;
+    }
     const body = {
       productId: row.productId,
       quantity: qty,
+      locationId: this.actionLocationId,
       storeId: row.storeId,
       note: this.actionNote.trim() || undefined,
     };
@@ -714,6 +987,51 @@ export class InventoryComponent implements OnInit {
     });
   }
 
+  // ---- quantity move between locations ----
+  beginQtyMove(): void {
+    this.actionQuantity = null;
+    this.moveFromLocationId = null;
+    this.moveTargetLocationId = null;
+    this.qtyAction.set(null);
+    this.qtyMoveOpen.set(true);
+  }
+
+  commitQtyMove(row: StoreInventoryRow): void {
+    const qty = Number(this.actionQuantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      this.detailError.set('Enter a quantity greater than zero.');
+      return;
+    }
+    if (this.moveFromLocationId === null || this.moveTargetLocationId === null) {
+      this.detailError.set('Choose source and destination locations.');
+      return;
+    }
+    if (this.moveFromLocationId === this.moveTargetLocationId) {
+      this.detailError.set('Source and destination must differ.');
+      return;
+    }
+    this.saving.set(true);
+    this.detailError.set(null);
+    this.api
+      .moveInventory({
+        productId: row.productId,
+        fromLocationId: this.moveFromLocationId,
+        toLocationId: this.moveTargetLocationId,
+        quantity: qty,
+      })
+      .subscribe({
+        next: () => {
+          this.saving.set(false);
+          this.qtyMoveOpen.set(false);
+          this.refreshDetail(row.productId);
+        },
+        error: (err) => {
+          this.saving.set(false);
+          this.detailError.set(messageFor(err));
+        },
+      });
+  }
+
   /** Refresh on-hand totals in the product list without collapsing the row. */
   private reloadCounts(): void {
     this.api
@@ -734,15 +1052,73 @@ export class InventoryComponent implements OnInit {
       });
   }
 
+  // ---- expiring tab ----
+  selectExpiring(): void {
+    this.tab.set('expiring');
+    if (this.expItems().length === 0) this.loadExpiring();
+  }
+
+  setExpFilter(f: ExpFilter): void {
+    this.expFilter.set(f);
+    this.loadExpiring();
+  }
+
+  loadExpiring(): void {
+    this.expLoading.set(true);
+    this.expError.set(null);
+    const f = this.expFilter();
+    const opts: {
+      storeId?: number;
+      expiringWithinDays?: number;
+      expiresBefore?: string;
+      hasExpiration?: boolean;
+    } = { storeId: this.storeFilter() ?? undefined };
+    if (f === 'expired') {
+      opts.expiresBefore = new Date().toISOString().slice(0, 10);
+    } else if (f === 'all') {
+      opts.hasExpiration = true;
+    } else {
+      opts.expiringWithinDays = f;
+    }
+    this.api.listItems({ ...opts, limit: 200 }).subscribe({
+      next: (res) => {
+        this.expItems.set(res.data);
+        this.expLoading.set(false);
+      },
+      error: (err) => {
+        this.expLoading.set(false);
+        this.expError.set(messageFor(err));
+      },
+    });
+  }
+
+  // ---- helpers ----
   storeName(id: number): string {
     return this.storeMap().get(id) ?? `#${id}`;
   }
 
-  isExpired(date: string | null): boolean {
-    if (!date) return false;
-    const parsed = new Date(date);
-    if (Number.isNaN(parsed.getTime())) return false;
-    return parsed.getTime() < Date.now();
+  private locName(id: number | null): string {
+    if (id == null) return '—';
+    return this.detailLocations().find((l) => l.id === id)?.name ?? `#${id}`;
+  }
+
+  movementLabel(fromId: number | null, toId: number | null): string {
+    if (fromId && toId) return `${this.locName(fromId)} → ${this.locName(toId)}`;
+    if (toId) return `→ ${this.locName(toId)}`;
+    if (fromId) return `${this.locName(fromId)} →`;
+    return '—';
+  }
+
+  /** '' | 'warn' (≤30d) | 'expired' (past) for the expiration cell. */
+  expClass(date: string | null): string {
+    if (!date) return '';
+    const parsed = new Date(`${date}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return '';
+    const now = new Date();
+    const days = Math.round((parsed.getTime() - now.getTime()) / 86_400_000);
+    if (days < 0) return 'expired';
+    if (days <= 30) return 'warn';
+    return '';
   }
 
   verbLabel(verb: ActionVerb): string {

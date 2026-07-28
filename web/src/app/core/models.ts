@@ -26,6 +26,20 @@ export type ItemStatus = 'ON_HAND' | 'SOLD' | 'RETURNED_TO_WAREHOUSE' | 'ADJUSTE
 
 export type TrackingType = 'SERIALIZED' | 'QUANTITY';
 
+export type LocationKind = 'BACKROOM' | 'ONFLOOR' | 'CUSTOM';
+
+/** A named area within a store. BACKROOM/ONFLOOR are system (not deletable). */
+export interface StoreLocation {
+  id: number;
+  companyId: number;
+  storeId: number;
+  name: string;
+  kind: LocationKind;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
 /** A serialized inventory unit (one row per serial). */
 export interface InventoryItem {
   id: string;
@@ -63,19 +77,37 @@ export interface InventoryStock {
   updatedAt: string;
 }
 
+/** A serialized unit as returned in product detail (with its location). */
+export interface DetailUnit {
+  id: string;
+  storeId: number;
+  locationId: number;
+  locationName: string;
+  locationKind: LocationKind;
+  serial: string;
+  status: ItemStatus;
+  expirationDate: string | null;
+  receivedAt: string | null;
+  updatedAt: string;
+}
+
+/** A per-location stock counter row as returned in product detail. */
+export interface DetailStockRow {
+  id: number;
+  storeId: number;
+  productId: number;
+  locationId: number;
+  locationName: string;
+  locationKind: LocationKind;
+  quantityOnHand: number;
+  updatedAt: string;
+}
+
 /** GET /api/inventory/:productId — serialized detail. */
 export interface SerializedInventoryDetail {
   product: Product;
   trackingType: 'SERIALIZED';
-  units: {
-    id: string;
-    storeId: number;
-    serial: string;
-    status: ItemStatus;
-    expirationDate: string | null;
-    receivedAt: string | null;
-    updatedAt: string;
-  }[];
+  units: DetailUnit[];
   statusCounts: Record<string, number>;
 }
 
@@ -83,22 +115,67 @@ export interface SerializedInventoryDetail {
 export interface QuantityInventoryDetail {
   product: Product;
   trackingType: 'QUANTITY';
-  stock: InventoryStock[];
+  stock: DetailStockRow[];
   ledger: Transaction[];
+}
+
+/** A serialized unit row from GET /api/inventory/items (by expiration). */
+export interface ExpiringItem {
+  id: string;
+  storeId: number;
+  productId: number;
+  sku: string;
+  name: string;
+  locationId: number;
+  locationName: string;
+  locationKind: LocationKind;
+  serial: string;
+  expirationDate: string | null;
+  receivedAt: string | null;
 }
 
 export type InventoryProductDetail = SerializedInventoryDetail | QuantityInventoryDetail;
 
-/** Body shared by sell/return/adjust. */
+/** Body shared by sell/return/adjust. Quantity ops require `locationId`. */
 export interface InventoryOpBody {
   itemId?: string;
   productId?: number;
   quantity?: number;
+  locationId?: number;
   storeId?: number;
   note?: string;
 }
 
-export type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN';
+/** POST /api/inventory/move — serialized batch OR one quantity line. */
+export interface MoveInventoryBody {
+  toLocationId: number;
+  itemIds?: string[];
+  productId?: number;
+  fromLocationId?: number;
+  quantity?: number;
+  note?: string;
+}
+
+export interface MoveSerialResult {
+  mode: 'serial';
+  toLocationId: number;
+  moved: number;
+  results: { itemId: string; status: 'moved' | 'unchanged' | 'error'; reason?: string }[];
+}
+
+export interface MoveQuantityResult {
+  mode: 'quantity';
+  productId: number;
+  fromLocationId: number;
+  toLocationId: number;
+  quantity: number;
+  fromRemaining: number;
+  toOnHand: number;
+}
+
+export type MoveResult = MoveSerialResult | MoveQuantityResult;
+
+export type TxType = 'RECEIPT' | 'SALE' | 'ADJUSTMENT' | 'RETURN' | 'MOVE';
 
 export interface Transaction {
   id: number;
@@ -108,6 +185,8 @@ export interface Transaction {
   productId: number;
   type: TxType;
   quantityDelta: number;
+  locationFromId: number | null;
+  locationToId: number | null;
   note: string | null;
   performedByUserId: number | null;
   source: TxSource;
@@ -324,6 +403,59 @@ export interface UpdateProduct {
   active?: boolean;
   needsReview?: boolean;
   trackingType?: TrackingType;
+}
+
+export interface CreateLocation {
+  storeId: number;
+  name: string;
+}
+
+export interface UpdateLocation {
+  name?: string;
+  sortOrder?: number;
+}
+
+// ---- notifications ----
+
+export type NotificationType = 'EXPIRATION_WARNING';
+export type NotificationStatus = 'UNREAD' | 'READ' | 'DISMISSED';
+
+export interface ExpirationPayload {
+  itemId: string;
+  serial: string;
+  productName: string;
+  expirationDate: string;
+  daysLeft: number;
+  expired: boolean;
+}
+
+export interface AppNotification {
+  id: number;
+  companyId: number;
+  storeId: number;
+  type: NotificationType;
+  payload: ExpirationPayload;
+  status: NotificationStatus;
+  createdAt: string;
+}
+
+export interface NotificationSetting {
+  id: number;
+  companyId: number;
+  storeId: number | null;
+  expirationAlertDays: number;
+  enabled: boolean;
+}
+
+export interface NotificationSettingsResponse {
+  companyDefault: NotificationSetting | null;
+  overrides: NotificationSetting[];
+}
+
+export interface PutNotificationSettings {
+  storeId?: number;
+  expirationAlertDays: number;
+  enabled: boolean;
 }
 
 export interface CreateCompany {

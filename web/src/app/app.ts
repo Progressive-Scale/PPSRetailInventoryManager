@@ -1,7 +1,9 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from './core/auth.service';
 import { BrandingStore } from './core/branding.store';
+import { NotificationStore } from './core/notification.store';
 import { Role } from './core/models';
 import { isAdminHost } from './core/tenant';
 
@@ -13,7 +15,7 @@ interface NavLink {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, DatePipe],
   template: `
     @if (auth.isLoggedIn() && auth.user(); as u) {
       <div class="shell" [class.drawer-open]="drawerOpen()">
@@ -54,6 +56,59 @@ interface NavLink {
               <strong class="company">{{ appName() }}</strong>
             </div>
             <div class="user">
+              @if (showBell()) {
+                <div class="bell-wrap">
+                  <button class="ghost bell" (click)="toggleBell()" aria-label="Notifications">
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+                    </svg>
+                    @if (notifications.unread() > 0) {
+                      <span class="bell-badge">{{ notifications.unread() }}</span>
+                    }
+                  </button>
+                  @if (bellOpen()) {
+                    <div class="bell-dropdown">
+                      <div class="bell-head">
+                        <strong>Alerts</strong>
+                        @if (isCompanyAdmin()) {
+                          <a routerLink="/notification-settings" (click)="bellOpen.set(false)">Settings</a>
+                        }
+                      </div>
+                      @if (notifications.loading()) {
+                        <p class="muted pad">Loading…</p>
+                      } @else if (notifications.items().length === 0) {
+                        <p class="muted pad">No alerts.</p>
+                      } @else {
+                        <ul class="notif-list">
+                          @for (n of notifications.items(); track n.id) {
+                            <li [class.read]="n.status !== 'UNREAD'">
+                              <div class="notif-main">
+                                <span class="notif-title">
+                                  {{ n.payload.productName }}
+                                  <span class="notif-serial">{{ n.payload.serial }}</span>
+                                </span>
+                                <span class="notif-sub" [class.exp]="n.payload.expired">
+                                  @if (n.payload.expired) {
+                                    Expired {{ n.payload.expirationDate | date: 'shortDate' }}
+                                  } @else {
+                                    Expires in {{ n.payload.daysLeft }} day(s)
+                                  }
+                                </span>
+                              </div>
+                              <div class="notif-actions">
+                                @if (n.status === 'UNREAD') {
+                                  <button class="link" (click)="notifications.markRead(n.id)">Read</button>
+                                }
+                                <button class="link" (click)="notifications.dismiss(n.id)">Dismiss</button>
+                              </div>
+                            </li>
+                          }
+                        </ul>
+                      }
+                    </div>
+                  }
+                </div>
+              }
               <span class="email">{{ u.email }}</span>
               <span class="badge">{{ roleLabel(u.role) }}</span>
               <button class="ghost" (click)="signOut()">Sign out</button>
@@ -186,6 +241,108 @@ interface NavLink {
         flex: 1;
         min-width: 0;
       }
+      .bell-wrap {
+        position: relative;
+      }
+      .bell {
+        position: relative;
+        padding: 0.3rem;
+        line-height: 0;
+      }
+      .bell-badge {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 999px;
+        background: #b42318;
+        color: #fff;
+        font-size: 0.64rem;
+        line-height: 16px;
+        text-align: center;
+      }
+      .bell-dropdown {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 6px);
+        width: 320px;
+        max-height: 60vh;
+        overflow-y: auto;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+        z-index: 70;
+      }
+      .bell-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .bell-head a {
+        font-size: 0.78rem;
+        color: var(--brand, var(--accent));
+      }
+      .pad {
+        padding: 0.75rem;
+        margin: 0;
+      }
+      .notif-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .notif-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.55rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .notif-list li.read {
+        opacity: 0.55;
+      }
+      .notif-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        min-width: 0;
+      }
+      .notif-title {
+        font-size: 0.85rem;
+      }
+      .notif-serial {
+        font-family: ui-monospace, monospace;
+        font-size: 0.72rem;
+        color: var(--muted);
+        margin-left: 0.3rem;
+      }
+      .notif-sub {
+        font-size: 0.75rem;
+        color: #b54708;
+      }
+      .notif-sub.exp {
+        color: #b42318;
+        font-weight: 600;
+      }
+      .notif-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        white-space: nowrap;
+      }
+      .notif-actions .link {
+        background: transparent;
+        border: none;
+        color: var(--brand, var(--accent));
+        font-size: 0.75rem;
+        cursor: pointer;
+        padding: 0;
+      }
       .scrim {
         display: none;
       }
@@ -218,9 +375,19 @@ interface NavLink {
 export class App implements OnInit {
   readonly auth = inject(AuthService);
   private readonly branding = inject(BrandingStore);
+  readonly notifications = inject(NotificationStore);
   private readonly router = inject(Router);
 
   readonly drawerOpen = signal(false);
+  readonly bellOpen = signal(false);
+
+  /** The bell is for company/store users on a company host (not platform admin). */
+  readonly showBell = computed(() => {
+    const u = this.auth.user();
+    return !isAdminHost() && !!u && u.role !== 'PLATFORM_ADMIN';
+  });
+
+  readonly isCompanyAdmin = computed(() => this.auth.user()?.role === 'COMPANY_ADMIN');
 
   readonly logoUrl = computed(() => (isAdminHost() ? null : this.branding.logoUrl()));
 
@@ -243,6 +410,8 @@ export class App implements OnInit {
       'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
     platform:
       'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
+    alerts:
+      'M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z',
   };
 
   readonly navLinks = computed<NavLink[]>(() => {
@@ -258,6 +427,7 @@ export class App implements OnInit {
           { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
           { path: '/products', label: 'Products', icon: I.products },
           { path: '/manage', label: 'Manage', icon: I.manage },
+          { path: '/notification-settings', label: 'Alerts', icon: I.alerts },
           { path: '/settings', label: 'Settings', icon: I.settings },
         ];
       default:
@@ -273,10 +443,19 @@ export class App implements OnInit {
     if (!isAdminHost()) {
       this.branding.refresh();
     }
+    if (this.showBell()) {
+      this.notifications.start();
+    }
   }
 
   toggleDrawer(): void {
     this.drawerOpen.update((v) => !v);
+  }
+
+  toggleBell(): void {
+    const open = !this.bellOpen();
+    this.bellOpen.set(open);
+    if (open) this.notifications.refreshList();
   }
 
   roleLabel(role: Role): string {

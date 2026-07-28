@@ -52,6 +52,14 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/settings/settings').then((m) => m.SettingsComponent),
   },
   {
+    path: 'notification-settings',
+    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
+    loadComponent: () =>
+      import('./pages/notification-settings/notification-settings').then(
+        (m) => m.NotificationSettingsComponent,
+      ),
+  },
+  {
     path: 'platform',
     canActivate: [authGuard, roleGuard(['PLATFORM_ADMIN'])],
     loadComponent: () => import('./pages/platform/platform').then((m) => m.PlatformComponent),
