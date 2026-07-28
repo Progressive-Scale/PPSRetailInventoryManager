@@ -20,6 +20,7 @@ import {
   InventoryActionDto,
   ListInventoryQuery,
   ListItemsQuery,
+  ListStockQuery,
   LookupQuery,
   MoveInventoryDto,
 } from './dto/inventory.dto';
@@ -34,6 +35,12 @@ export class InventoryController {
   @Get()
   list(@Ctx() ctx: DataContext, @Query() query: ListInventoryQuery) {
     return this.svc.list(ctx, query);
+  }
+
+  // Combined flat stock grid: one row per unit / per quantity stock-location.
+  @Get('stock')
+  listStock(@Ctx() ctx: DataContext, @Query() query: ListStockQuery) {
+    return this.svc.listStock(ctx, query);
   }
 
   // Serialized units with location + expiration (in-stock by expiration).

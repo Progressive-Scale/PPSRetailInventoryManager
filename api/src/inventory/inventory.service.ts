@@ -36,6 +36,7 @@ import {
   InventoryActionDto,
   ListInventoryQuery,
   ListItemsQuery,
+  ListStockQuery,
   MoveInventoryDto,
 } from './dto/inventory.dto';
 import { loadLocation } from '../locations/location-util';
@@ -675,6 +676,91 @@ export class InventoryService {
         .from(inventoryItems)
         .where(where);
       return { data: rows, total: Number(count), limit, offset };
+    });
+  }
+
+  // ---- combined flat stock listing ---------------------------------------
+
+  /**
+   * One row per serialized ON_HAND unit + one row per quantity stock-location,
+   * unified. Filters: store, free-text (name/sku/upc/serial), location, tracking
+   * type, and a created-date range. A raw UNION keeps pagination + totals exact
+   * across both kinds (RLS still applies — these are the base tables).
+   */
+  async listStock(ctx: DataContext, query: ListStockQuery): Promise<Paginated<unknown>> {
+    const { limit, offset } = resolvePaging(query);
+    const storeId = this.readStoreId(ctx, query.storeId);
+    const term = query.search?.trim();
+    const like = term ? `%${term}%` : null;
+
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const cte = sql`
+        WITH combined AS (
+          SELECT 'unit'::text AS row_kind, i.id::text AS row_id, i.id AS item_id,
+                 p.id AS product_id, p.sku, p.upc, p.name,
+                 p.tracking_type::text AS tracking_type, i.store_id, 1 AS on_hand,
+                 l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
+                 i.serial, i.expiration_date, i.created_at
+          FROM inventory_items i
+          JOIN products p ON p.id = i.product_id
+          JOIN store_locations l ON l.id = i.location_id
+          WHERE i.company_id = ${ctx.companyId} AND i.status = 'ON_HAND'
+          UNION ALL
+          SELECT 'stock'::text, 'stock:' || s.id::text, NULL::uuid,
+                 p.id, p.sku, p.upc, p.name, p.tracking_type::text, s.store_id, s.quantity_on_hand,
+                 l.id, l.name, l.kind::text,
+                 NULL::text, NULL::date, s.created_at
+          FROM inventory_stock s
+          JOIN products p ON p.id = s.product_id
+          JOIN store_locations l ON l.id = s.location_id
+          WHERE s.company_id = ${ctx.companyId} AND s.quantity_on_hand > 0
+        )`;
+
+      const conds: SQL[] = [];
+      if (storeId != null) conds.push(sql`c.store_id = ${storeId}`);
+      if (query.locationId != null) conds.push(sql`c.location_id = ${query.locationId}`);
+      if (query.type) conds.push(sql`c.tracking_type = ${query.type}`);
+      if (query.createdFrom) conds.push(sql`c.created_at >= ${query.createdFrom}::date`);
+      if (query.createdTo)
+        conds.push(sql`c.created_at < (${query.createdTo}::date + interval '1 day')`);
+      if (like)
+        conds.push(
+          sql`(c.name ILIKE ${like} OR c.sku ILIKE ${like} OR c.upc ILIKE ${like} OR c.serial ILIKE ${like})`,
+        );
+      const where = conds.length ? sql` WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+
+      const pageRes = await tx.execute(sql`
+        ${cte}
+        SELECT c.* FROM combined c${where}
+        ORDER BY c.name ASC, c.serial ASC NULLS FIRST, c.location_name ASC
+        LIMIT ${limit} OFFSET ${offset}`);
+      const countRes = await tx.execute(sql`
+        ${cte}
+        SELECT count(*)::int AS n FROM combined c${where}`);
+
+      const rows = (pageRes as unknown as { rows: Record<string, unknown>[] }).rows;
+      const total = Number(
+        (countRes as unknown as { rows: Array<{ n: number }> }).rows[0]?.n ?? 0,
+      );
+      const data = rows.map((r) => ({
+        rowKind: r.row_kind,
+        rowId: r.row_id,
+        itemId: r.item_id,
+        productId: r.product_id,
+        sku: r.sku,
+        upc: r.upc,
+        name: r.name,
+        trackingType: r.tracking_type,
+        storeId: r.store_id,
+        onHand: r.on_hand,
+        locationId: r.location_id,
+        locationName: r.location_name,
+        locationKind: r.location_kind,
+        serial: r.serial,
+        expirationDate: r.expiration_date,
+        createdAt: r.created_at,
+      }));
+      return { data, total, limit, offset };
     });
   }
 

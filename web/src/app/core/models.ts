@@ -119,6 +119,29 @@ export interface QuantityInventoryDetail {
   ledger: Transaction[];
 }
 
+/**
+ * A flat stock row from GET /api/inventory/stock — one per serialized unit
+ * (rowKind 'unit', onHand 1) or per quantity stock-location (rowKind 'stock').
+ */
+export interface StockRow {
+  rowKind: 'unit' | 'stock';
+  rowId: string;
+  itemId: string | null;
+  productId: number;
+  sku: string;
+  upc: string | null;
+  name: string;
+  trackingType: TrackingType;
+  storeId: number;
+  onHand: number;
+  locationId: number;
+  locationName: string;
+  locationKind: LocationKind;
+  serial: string | null;
+  expirationDate: string | null;
+  createdAt: string;
+}
+
 /** A serialized unit row from GET /api/inventory/items (by expiration). */
 export interface ExpiringItem {
   id: string;

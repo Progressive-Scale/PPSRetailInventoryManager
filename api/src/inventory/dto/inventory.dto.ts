@@ -3,6 +3,7 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsBooleanString,
+  IsIn,
   IsInt,
   IsISO8601,
   IsOptional,
@@ -103,6 +104,42 @@ export class MoveInventoryDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+// Combined flat stock listing: one row per serialized unit + one row per
+// quantity stock-location. Powers the portal's unified Stock grid.
+export class ListStockQuery extends PaginationQuery {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  storeId?: number;
+
+  // Matches product name / sku / upc / serial.
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  search?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  locationId?: number;
+
+  @IsOptional()
+  @IsIn(['SERIALIZED', 'QUANTITY'])
+  type?: 'SERIALIZED' | 'QUANTITY';
+
+  // Create-date range (inclusive), YYYY-MM-DD.
+  @IsOptional()
+  @IsISO8601()
+  createdFrom?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  createdTo?: string;
 }
 
 // Resolve a scanned barcode to a movable target. `serial` resolves an ON_HAND

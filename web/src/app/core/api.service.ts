@@ -14,6 +14,7 @@ import {
   CreateInvitation,
   CreateStore,
   ExpiringItem,
+  StockRow,
   HealthResponse,
   InventoryOpBody,
   InventoryProductDetail,
@@ -31,6 +32,7 @@ import {
   UpdateProduct,
   Store,
   StoreInventoryRow,
+  TrackingType,
   Transaction,
   TxType,
   UpdateCompany,
@@ -71,6 +73,29 @@ export class ApiService {
 
   getInventoryProduct(productId: number): Observable<InventoryProductDetail> {
     return this.http.get<InventoryProductDetail>(`/api/inventory/${productId}`);
+  }
+
+  /** Combined flat stock grid (one row per unit / per quantity stock-location). */
+  listStock(opts: {
+    storeId?: number;
+    search?: string;
+    locationId?: number;
+    type?: TrackingType;
+    createdFrom?: string;
+    createdTo?: string;
+    limit?: number;
+    offset?: number;
+  }): Observable<Paginated<StockRow>> {
+    let params = new HttpParams();
+    if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
+    if (opts.search) params = params.set('search', opts.search);
+    if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
+    if (opts.type) params = params.set('type', opts.type);
+    if (opts.createdFrom) params = params.set('createdFrom', opts.createdFrom);
+    if (opts.createdTo) params = params.set('createdTo', opts.createdTo);
+    if (opts.limit != null) params = params.set('limit', String(opts.limit));
+    if (opts.offset != null) params = params.set('offset', String(opts.offset));
+    return this.http.get<Paginated<StockRow>>('/api/inventory/stock', { params });
   }
 
   /** Serialized units with location + expiration (in-stock by expiration). */

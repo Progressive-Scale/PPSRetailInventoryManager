@@ -338,6 +338,9 @@ export const inventoryStock = pgTable(
       .notNull()
       .references(() => storeLocations.id),
     quantityOnHand: integer('quantity_on_hand').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow()
