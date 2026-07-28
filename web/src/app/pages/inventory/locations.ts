@@ -194,7 +194,10 @@ type SortField = 'name' | 'kind' | 'active';
         transform: rotate(45deg);
       }
       .table-scroll {
-        overflow-x: auto;
+        /* visible (not auto) so the system-location edit tooltip can extend past
+           the last row without being clipped; the fixed-layout table never
+           overflows horizontally, so no scroll is needed here. */
+        overflow: visible;
         transition: opacity 0.12s ease;
       }
       .table-scroll.busy {
