@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
@@ -35,6 +36,13 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   acceptInvite(@CurrentCompany() company: Company, @Body() dto: AcceptInviteDto) {
     return this.auth.acceptInvite(company, dto.token, dto.password);
+  }
+
+  /** Stores the signed-in user may access (drives a store switcher). */
+  @Get('my-stores')
+  @UseGuards(JwtAuthGuard)
+  myStores(@CurrentUser() user: AuthUser) {
+    return this.auth.myStores(user);
   }
 
   /** Choose the active store (users permitted several stores pick one at login). */

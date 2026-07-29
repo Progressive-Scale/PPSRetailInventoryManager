@@ -104,6 +104,22 @@ export class AuthService {
     });
   }
 
+  /** Stores the signed-in user may access, for a store switcher. */
+  async myStores(user: AuthUser) {
+    const companyId = user.companyId;
+    if (companyId == null) return [];
+    return this.tenantDb.withCompany(companyId, (tx) =>
+      tx
+        .select({ id: stores.id, name: stores.name })
+        .from(userStores)
+        .innerJoin(stores, eq(stores.id, userStores.storeId))
+        .where(
+          and(eq(userStores.companyId, companyId), eq(userStores.userId, user.userId)),
+        )
+        .orderBy(asc(stores.name)),
+    );
+  }
+
   /**
    * Switch the active store — a user permitted several stores picks one at login.
    * Validates membership and issues a fresh token carrying that store.
