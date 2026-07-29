@@ -256,3 +256,91 @@ raises alerts for on-floor units nearing/past expiration so staff rotate stock.
 > per-location counts but have no expiration (lot/batch expiration for quantity
 > products is a planned enhancement). The scanner's cycle-count screen is not yet
 > location-aware — counted quantities default to the Backroom (a follow-up).
+
+## Invitation emails (Resend)
+
+Company admins invite users from **Manage → Invitations**. Creating an invitation
+emails the invitee an accept link; the link is single-use, expires in 7 days, and
+can be revoked or resent.
+
+Only a **sha256 hash** of the invite token is stored. The plaintext token appears
+exactly once — in the emailed accept URL (and in the create/resend API response,
+so the admin can copy it if the email fails). It is not retrievable afterwards;
+"Copy link" on a failed row mints a **new** link (and invalidates the old one).
+
+### Setup
+
+1. Create a [Resend](https://resend.com) account and an **API key**.
+2. Set the mail variables in `api/.env` (see `api/.env.example`):
+
+   | Variable | Meaning |
+   | --- | --- |
+   | `MAIL_MODE` | `console` (default) or `live` |
+   | `RESEND_API_KEY` | Resend API key; only needed for `live` |
+   | `MAIL_FROM` | Sender, e.g. `"PPS Retail Inventory <onboarding@resend.dev>"` |
+   | `APP_BASE_URL` | Optional origin override for the accept link (localhost testing) |
+
+**`MAIL_MODE=console` is the default** whenever `MAIL_MODE` is unset *or*
+`RESEND_API_KEY` is empty. In console mode nothing is sent: the full email —
+including a working accept URL — is logged to the API console. Local development
+and automated tests therefore need no API key and never deliver mail.
+
+The accept URL is always built for the **invitee's** company subdomain
+(`https://{companySlug}.{ROOT_DOMAIN}/accept-invite?token=…`), not the host the
+admin happened to be on. Set `APP_BASE_URL` (e.g. `http://demo.localhost:4200`)
+when testing on localhost, where subdomains are awkward.
+
+### Current sender: Resend sandbox (domain not verified yet)
+
+We have **not** verified our sending domain, so live mode currently uses Resend's
+sandbox sender:
+
+```
+MAIL_FROM="PPS Retail Inventory <onboarding@resend.dev>"
+```
+
+The sandbox **only delivers to the email address on our Resend account**. Resend
+enforces this; invites to any other address come back rejected. When that happens
+the invitation is still created and is marked `email_status = FAILED` with the
+reason:
+
+> sandbox sender: recipient not allowed — verify a domain to invite external
+> addresses
+
+**Workaround until the domain is verified:** the Invitations list shows that
+reason on the failed row and offers **Copy link** — copy the fresh accept URL and
+send it to the invitee yourself (Slack, your own mail client). The invite works
+normally from there.
+
+### Switching to our own domain
+
+This is the **single production switch step** — no code changes required:
+
+1. Verify `provisionprocessingsystem.com` in Resend (add the DNS records it lists).
+2. Change the sender:
+   ```
+   MAIL_FROM="Retail Inventory <noreply@provisionprocessingsystem.com>"
+   ```
+3. Done — invitations now deliver to any recipient.
+
+### Invitation lifecycle
+
+State is evaluated in this order on every token lookup:
+
+| State | Meaning |
+| --- | --- |
+| `INVALID` | No such token (or it was replaced by a resend) |
+| `REVOKED` | An admin revoked it |
+| `ALREADY_ACCEPTED` | Already used to create the account |
+| `EXPIRED` | Past `expires_at` |
+| `VALID` | Ready to accept |
+
+The accept page resolves the state on load and the server **re-validates on
+submit**, so an invitation revoked between page load and submit fails cleanly with
+the revoked message. Both public endpoints
+(`GET /api/invitations/status`, `POST /api/auth/accept-invite`) are IP rate-limited,
+and non-`VALID` states reveal nothing beyond the state itself.
+
+Admin actions: **Revoke** (idempotent), **Resend** (new token + reset expiry;
+invalidates the old link; rejected once accepted), and **Copy link** on failed
+sends.

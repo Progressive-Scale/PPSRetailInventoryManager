@@ -37,6 +37,17 @@ export class MailService {
     return this.config.get<string>('RESEND_API_KEY') || undefined;
   }
 
+  /**
+   * Resend's send endpoint. Overridable (RESEND_API_URL) purely as a test seam so
+   * the sandbox-rejection path can be exercised against a stub; production never
+   * sets it.
+   */
+  private get endpoint(): string {
+    return (
+      this.config.get<string>('RESEND_API_URL') || 'https://api.resend.com/emails'
+    );
+  }
+
   private get from(): string {
     return (
       this.config.get<string>('MAIL_FROM') ||
@@ -81,7 +92,7 @@ export class MailService {
     }
 
     try {
-      const res = await fetch('https://api.resend.com/emails', {
+      const res = await fetch(this.endpoint, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
