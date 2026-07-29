@@ -55,6 +55,11 @@ export const locationKind = pgEnum('location_kind', [
   'CUSTOM',
 ]);
 export const notificationType = pgEnum('notification_type', ['EXPIRATION_WARNING']);
+export const invitationEmailStatus = pgEnum('invitation_email_status', [
+  'PENDING',
+  'SENT',
+  'FAILED',
+]);
 export const itemAuditSource = pgEnum('item_audit_source', [
   'BULK_EDIT',
   'SINGLE_EDIT',
@@ -193,16 +198,27 @@ export const invitations = pgTable(
     email: text('email').notNull(),
     role: userRole('role').notNull(),
     storeId: integer('store_id').references(() => stores.id),
-    token: text('token').notNull(),
+    // Only the sha256 of the invite token is stored; the plaintext appears
+    // exactly once, in the emailed accept URL.
+    tokenHash: text('token_hash').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    // Revocation kills a link before it is used (idempotent).
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedByUserId: integer('revoked_by_user_id').references(() => users.id),
+    // Delivery outcome of the invitation email. A send failure never blocks
+    // creation — the row is marked FAILED with the reason so the admin can
+    // resend or copy the link.
+    emailStatus: invitationEmailStatus('email_status').notNull().default('PENDING'),
+    emailSentAt: timestamp('email_sent_at', { withTimezone: true }),
+    emailError: text('email_error'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => [
     index('invitations_company_idx').on(t.companyId),
-    uniqueIndex('invitations_token_uniq').on(t.token),
+    uniqueIndex('invitations_token_hash_uniq').on(t.tokenHash),
   ],
 );
 

@@ -7,6 +7,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { IsInt, IsPositive } from 'class-validator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -34,6 +35,7 @@ export class AuthController {
 
   @Post('accept-invite')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   acceptInvite(@CurrentCompany() company: Company, @Body() dto: AcceptInviteDto) {
     return this.auth.acceptInvite(company, dto.token, dto.password);
   }

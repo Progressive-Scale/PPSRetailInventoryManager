@@ -64,6 +64,13 @@
       "when": 1785335083709,
       "tag": "0008_familiar_stature",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785342336028,
+      "tag": "0009_invitation_lifecycle",
+      "breakpoints": true
     }
   ]
 }

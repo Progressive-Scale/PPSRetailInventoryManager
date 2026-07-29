@@ -10,6 +10,11 @@ import { and, asc, eq, isNull } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import { Company, invitations, stores, User, users, userStores } from '../db/schema';
 import { HostContext } from '../tenancy/tenant-context';
+import {
+  hashInviteToken,
+  invitationState,
+  invitationStateMessage,
+} from '../company/invitation.util';
 import { AuthUser, JwtPayload } from './auth.types';
 
 @Injectable()
@@ -58,13 +63,16 @@ export class AuthService {
       const [inv] = await tx
         .select()
         .from(invitations)
-        .where(eq(invitations.token, token))
+        .where(eq(invitations.tokenHash, hashInviteToken(token)))
         .limit(1);
 
-      if (!inv) throw new NotFoundException('Invalid invitation.');
-      if (inv.acceptedAt) throw new BadRequestException('Invitation already used.');
-      if (inv.expiresAt.getTime() < Date.now()) {
-        throw new BadRequestException('Invitation has expired.');
+      // Re-validated at SUBMIT time: an invitation revoked (or expired) between
+      // page load and submit must fail here with the same message the page shows.
+      const state = invitationState(inv);
+      if (state !== 'VALID') {
+        const message = invitationStateMessage(state);
+        if (state === 'INVALID') throw new NotFoundException(message);
+        throw new BadRequestException(message);
       }
 
       let created: User | undefined;

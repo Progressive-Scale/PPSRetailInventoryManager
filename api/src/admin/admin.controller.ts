@@ -18,7 +18,15 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PlatformAdminGuard } from './platform-admin.guard';
 import { TenantDbService } from '../db/tenant-db.service';
 import { apiKeys, companies, invitations } from '../db/schema';
-import { generateApiKey, generateToken, hashApiKey } from '../common/crypto.util';
+import { generateApiKey, hashApiKey } from '../common/crypto.util';
+import { ConfigService } from '@nestjs/config';
+import { MailService } from '../mail/mail.service';
+import {
+  buildAcceptUrl,
+  generateInviteToken,
+  hashInviteToken,
+  inviteExpiry,
+} from '../company/invitation.util';
 import {
   AdminInviteDto,
   CreateApiKeyDto,
@@ -38,7 +46,11 @@ const apiKeyPublic = {
 @UseGuards(JwtAuthGuard, PlatformAdminGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly mail: MailService,
+    private readonly config: ConfigService,
+  ) {}
 
   // ---- companies ---------------------------------------------------------
 
@@ -166,8 +178,8 @@ export class AdminController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AdminInviteDto,
   ) {
-    const token = generateToken();
-    const expiresAt = new Date(Date.now() + 7 * 86400_000);
+    const token = generateInviteToken();
+    const expiresAt = inviteExpiry();
     return this.tenantDb.withBypass(async (tx) => {
       const [company] = await tx
         .select()
@@ -181,11 +193,44 @@ export class AdminController {
           companyId: id,
           email: dto.email.trim().toLowerCase(),
           role: 'COMPANY_ADMIN',
-          token,
+          tokenHash: hashInviteToken(token),
           expiresAt,
         })
         .returning();
-      return { ...row, acceptPath: `/accept-invite?token=${token}` };
+
+      // Email the accept link on the company's own subdomain. A send failure
+      // never fails creation — the row records it so the link can be copied.
+      const acceptUrl = buildAcceptUrl({
+        slug: company.slug,
+        rootDomain: this.config.get<string>('ROOT_DOMAIN') ?? 'yourapp.local',
+        token,
+        baseUrlOverride: this.config.get<string>('APP_BASE_URL') || undefined,
+      });
+      const result = await this.mail.sendInvitationEmail(row.email, {
+        companyName: company.name,
+        inviterName: 'Platform admin',
+        role: row.role,
+        acceptUrl,
+        expiresAt,
+      });
+      const [updated] = await tx
+        .update(invitations)
+        .set(
+          result.ok
+            ? { emailStatus: 'SENT', emailSentAt: new Date(), emailError: null }
+            : { emailStatus: 'FAILED', emailError: result.error ?? 'send failed' },
+        )
+        .where(eq(invitations.id, row.id))
+        .returning();
+
+      return {
+        ...updated,
+        acceptUrl,
+        acceptPath: `/accept-invite?token=${encodeURIComponent(token)}`,
+        emailWarning: result.ok
+          ? null
+          : 'Invitation created but the email failed to send — resend or copy the link.',
+      };
     });
   }
 
