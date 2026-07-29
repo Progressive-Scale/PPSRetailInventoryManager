@@ -282,17 +282,42 @@ export interface User {
   createdAt: string;
 }
 
+export type InvitationState =
+  | 'VALID'
+  | 'INVALID'
+  | 'REVOKED'
+  | 'ALREADY_ACCEPTED'
+  | 'EXPIRED';
+
+export type InvitationEmailStatus = 'PENDING' | 'SENT' | 'FAILED';
+
 export interface Invitation {
   id: number;
   companyId: number;
   email: string;
   role: Role;
   storeId: number | null;
-  token: string;
   expiresAt: string;
   acceptedAt: string | null;
+  revokedAt: string | null;
+  revokedByUserId: number | null;
+  emailStatus: InvitationEmailStatus;
+  emailSentAt: string | null;
+  emailError: string | null;
   createdAt: string;
+  /** Returned ONLY by create/resend — the plaintext link, shown once. */
+  acceptUrl?: string;
   acceptPath?: string;
+  emailWarning?: string | null;
+}
+
+/** GET /api/invitations/status — public accept-page state. */
+export interface InvitationStatus {
+  state: InvitationState;
+  message: string;
+  email?: string;
+  companyName?: string;
+  role?: Role;
 }
 
 export interface Product {

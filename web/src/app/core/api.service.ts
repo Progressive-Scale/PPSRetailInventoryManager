@@ -25,6 +25,7 @@ import {
   InventoryOpBody,
   InventoryProductDetail,
   Invitation,
+  InvitationStatus,
   MoveInventoryBody,
   MoveResult,
   NotificationSettingsResponse,
@@ -347,6 +348,22 @@ export class ApiService {
 
   deleteInvitation(id: number): Observable<unknown> {
     return this.http.delete(`/api/invitations/${id}`);
+  }
+
+  /** Kill an unused invite link. Idempotent. */
+  revokeInvitation(id: number): Observable<unknown> {
+    return this.http.post(`/api/invitations/${id}/revoke`, {});
+  }
+
+  /** New token + fresh expiry + new email; returns the new accept URL. */
+  resendInvitation(id: number): Observable<Invitation> {
+    return this.http.post<Invitation>(`/api/invitations/${id}/resend`, {});
+  }
+
+  /** Public accept-page state for a token (no auth). */
+  invitationStatus(token: string): Observable<InvitationStatus> {
+    const params = new HttpParams().set('token', token);
+    return this.http.get<InvitationStatus>('/api/invitations/status', { params });
   }
 
   // ---- platform admin: companies ----

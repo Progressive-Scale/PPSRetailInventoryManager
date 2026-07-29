@@ -3,6 +3,8 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../../core/auth.service';
+import { ApiService } from '../../core/api.service';
+import { InvitationState, Role } from '../../core/models';
 import { homePathForRole } from '../../core/tenant';
 
 @Component({
@@ -12,10 +14,19 @@ import { homePathForRole } from '../../core/tenant';
     <div class="wrap">
       <form class="card" (ngSubmit)="submit()">
         <h1>Accept invitation</h1>
-        @if (!token()) {
-          <p class="error">Missing or invalid invitation token.</p>
+        @if (checking()) {
+          <p class="sub">Checking your invitation…</p>
+        } @else if (state() !== 'VALID') {
+          <p class="error">{{ stateMessage() }}</p>
+          @if (state() === 'ALREADY_ACCEPTED') {
+            <a class="link" href="/login">Go to sign in</a>
+          }
         } @else {
-          <p class="sub">Choose a password to activate your account.</p>
+          <p class="sub">
+            You've been invited to <strong>{{ companyName() }}</strong> as
+            {{ roleLabel() }}. Choose a password to activate
+            <strong>{{ email() }}</strong>.
+          </p>
 
           <label>
             New password
@@ -93,6 +104,10 @@ import { homePathForRole } from '../../core/tenant';
         border-radius: 8px;
         font-size: 0.95rem;
       }
+      .link {
+        font-size: 0.9rem;
+        color: var(--brand, var(--accent));
+      }
       .error {
         color: #b42318;
         font-size: 0.85rem;
@@ -103,6 +118,7 @@ import { homePathForRole } from '../../core/tenant';
 })
 export class AcceptInviteComponent implements OnInit {
   private readonly auth = inject(AuthService);
+  private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
 
@@ -112,9 +128,42 @@ export class AcceptInviteComponent implements OnInit {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
 
+  // Invitation lifecycle state, resolved on load and re-checked on submit.
+  readonly checking = signal(true);
+  readonly state = signal<InvitationState>('INVALID');
+  readonly stateMessage = signal('This invitation link is not valid.');
+  readonly email = signal<string | null>(null);
+  readonly companyName = signal<string | null>(null);
+  readonly role = signal<Role | null>(null);
+
   ngOnInit(): void {
     const t = this.route.snapshot.queryParamMap.get('token');
     this.token.set(t);
+    if (!t) {
+      this.checking.set(false);
+      this.state.set('INVALID');
+      this.stateMessage.set('This invitation link is not valid.');
+      return;
+    }
+    this.api.invitationStatus(t).subscribe({
+      next: (res) => {
+        this.checking.set(false);
+        this.state.set(res.state);
+        this.stateMessage.set(res.message);
+        this.email.set(res.email ?? null);
+        this.companyName.set(res.companyName ?? null);
+        this.role.set(res.role ?? null);
+      },
+      error: () => {
+        this.checking.set(false);
+        this.state.set('INVALID');
+        this.stateMessage.set('This invitation link is not valid.');
+      },
+    });
+  }
+
+  roleLabel(): string {
+    return this.role() === 'COMPANY_ADMIN' ? 'a company admin' : 'a store user';
   }
 
   submit(): void {
@@ -137,15 +186,28 @@ export class AcceptInviteComponent implements OnInit {
       },
       error: (err: HttpErrorResponse) => {
         this.loading.set(false);
-        const msg = (err.error as { message?: string | string[] } | null)?.message;
-        this.error.set(
-          Array.isArray(msg)
-            ? msg.join(', ')
-            : typeof msg === 'string'
-              ? msg
-              : 'Could not accept the invitation. It may have expired.',
-        );
+        const raw = (err.error as { message?: string | string[] } | null)?.message;
+        const msg = Array.isArray(raw) ? raw.join(', ') : typeof raw === 'string' ? raw : '';
+        // The server re-validates at submit time; surface the same lifecycle
+        // message (e.g. revoked between page load and submit).
+        const matched = this.stateFromMessage(msg);
+        if (matched) {
+          this.state.set(matched);
+          this.stateMessage.set(msg);
+          return;
+        }
+        this.error.set(msg || 'Could not accept the invitation. It may have expired.');
       },
     });
+  }
+
+  /** Recognise a lifecycle rejection returned by the accept endpoint. */
+  private stateFromMessage(msg: string): InvitationState | null {
+    const m = msg.toLowerCase();
+    if (m.includes('revoked')) return 'REVOKED';
+    if (m.includes('expired')) return 'EXPIRED';
+    if (m.includes('already used')) return 'ALREADY_ACCEPTED';
+    if (m.includes('not valid')) return 'INVALID';
+    return null;
   }
 }

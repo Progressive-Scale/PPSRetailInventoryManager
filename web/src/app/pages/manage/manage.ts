@@ -3,7 +3,6 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { localAcceptUrl } from '../../core/tenant';
 import {
   CreateInvitation,
   CreateStore,
@@ -280,7 +279,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                         <td class="ctext" [title]="u.email">{{ u.email }}</td>
                         <td>{{ roleLabel(u.role) }}</td>
                         <td>
-                          @if ((u.storeIds ?? []).length === 0) {
+                          @if (u.storeIds.length === 0) {
                             <span class="muted">—</span>
                           } @else {
                             <div class="store-tags">
@@ -345,9 +344,8 @@ type Tab = 'stores' | 'users' | 'invitations';
                   <tr>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Status</th>
                     <th>Expires</th>
-                    <th>Accepted</th>
-                    <th>Link</th>
                     <th class="actions"></th>
                   </tr>
                 </thead>
@@ -355,16 +353,32 @@ type Tab = 'stores' | 'users' | 'invitations';
                   @for (inv of invitations(); track inv.id) {
                     <tr>
                       <td>{{ inv.email }}</td>
-                      <td>{{ inv.role }}</td>
-                      <td class="muted">{{ inv.expiresAt | date: 'short' }}</td>
-                      <td class="muted">{{ inv.acceptedAt ? 'Yes' : 'No' }}</td>
+                      <td>{{ roleLabel(inv.role) }}</td>
                       <td>
-                        <button class="sm ghost" (click)="copy(inviteUrl(inv))">Copy link</button>
+                        <span class="inv-badge" [class]="'inv-' + inviteStatus(inv)">
+                          {{ inviteStatus(inv) }}
+                        </span>
+                        @if (inv.emailStatus === 'FAILED' && inv.emailError) {
+                          <div class="muted small" [title]="inv.emailError">
+                            {{ inv.emailError }}
+                          </div>
+                        }
                       </td>
+                      <td class="muted">{{ inv.expiresAt | date: 'short' }}</td>
                       <td class="actions">
-                        <button class="sm danger" (click)="revoke(inv)" [disabled]="saving()">
-                          Revoke
-                        </button>
+                        @if (!isTerminal(inv)) {
+                          <button class="sm ghost" (click)="resend(inv)" [disabled]="saving()">
+                            Resend
+                          </button>
+                          <button class="sm danger" (click)="askRevoke(inv)" [disabled]="saving()">
+                            Revoke
+                          </button>
+                        }
+                        @if (inv.emailStatus === 'FAILED') {
+                          <button class="sm ghost" (click)="copyFreshLink(inv)" [disabled]="saving()">
+                            Copy link
+                          </button>
+                        }
                       </td>
                     </tr>
                   }
@@ -372,7 +386,38 @@ type Tab = 'stores' | 'users' | 'invitations';
               </table>
             </div>
           }
+          @if (freshLink()) {
+            <div class="link-box">
+              <span class="muted">New accept link (this replaces the old one):</span>
+              <code>{{ freshLink() }}</code>
+              <button class="sm ghost" (click)="copy(freshLink()!)">Copy</button>
+              <button class="sm ghost" (click)="freshLink.set(null)">Dismiss</button>
+            </div>
+          }
         </section>
+
+        @if (pendingRevoke(); as inv) {
+          <div class="overlay" (click)="pendingRevoke.set(null)">
+            <div class="modal" (click)="$event.stopPropagation()">
+              <h2>Revoke invitation</h2>
+              <p>
+                Revoke the invitation for <strong>{{ inv.email }}</strong>? Their link stops
+                working immediately.
+              </p>
+              @if (error()) {
+                <p class="error">{{ error() }}</p>
+              }
+              <div class="modal-actions">
+                <button class="danger-btn" (click)="confirmRevoke()" [disabled]="saving()">
+                  {{ saving() ? 'Revoking…' : 'Revoke' }}
+                </button>
+                <button class="ghost" (click)="pendingRevoke.set(null)" [disabled]="saving()">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        }
       }
     </main>
   `,
@@ -612,6 +657,44 @@ type Tab = 'stores' | 'users' | 'invitations';
         gap: 0.5rem;
         margin-top: 0.5rem;
       }
+      .inv-badge {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .inv-Sent {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .inv-Accepted {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
+      }
+      .inv-Pending {
+        background: #fffaeb;
+        color: #b54708;
+        border-color: #fedf89;
+      }
+      .inv-Failed {
+        background: #fef3f2;
+        color: #b42318;
+        border-color: #fecdca;
+      }
+      .inv-Revoked,
+      .inv-Expired {
+        background: #f4f4f5;
+        color: #52525b;
+        border-color: #e4e4e7;
+      }
+      .small {
+        font-size: 0.72rem;
+        max-width: 260px;
+      }
       .note {
         font-size: 0.82rem;
         margin: 0.25rem 0 0.5rem;
@@ -832,6 +915,10 @@ export class ManageComponent implements OnInit {
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
   inviteStoreId: number | null = null;
   readonly lastInviteUrl = signal<string | null>(null);
+
+  // Invitations tab: revoke confirmation + a freshly minted link to copy.
+  readonly pendingRevoke = signal<Invitation | null>(null);
+  readonly freshLink = signal<string | null>(null);
 
   ngOnInit(): void {
     // Stores are needed by every tab (user/invite store pickers) and are the
@@ -1104,7 +1191,14 @@ export class ManageComponent implements OnInit {
         this.saving.set(false);
         this.inviteDraft = { email: '', role: 'STORE_USER' };
         this.inviteStoreId = null;
-        this.lastInviteUrl.set(this.inviteUrl(inv));
+        // The email is normally delivered; only surface the link when it failed
+        // (or in console mode, where the admin may still want it).
+        if (inv.emailWarning) {
+          this.error.set(inv.emailWarning);
+          this.freshLink.set(inv.acceptUrl ?? this.inviteUrl(inv));
+        } else {
+          this.lastInviteUrl.set(inv.acceptUrl ?? this.inviteUrl(inv));
+        }
         this.loadInvitations();
       },
       error: (err) => {
@@ -1114,13 +1208,35 @@ export class ManageComponent implements OnInit {
     });
   }
 
-  revoke(inv: Invitation): void {
-    if (!confirm(`Revoke invitation for ${inv.email}?`)) return;
+  /** Lifecycle label for the status column. */
+  inviteStatus(inv: Invitation): string {
+    if (inv.acceptedAt) return 'Accepted';
+    if (inv.revokedAt) return 'Revoked';
+    if (new Date(inv.expiresAt).getTime() <= Date.now()) return 'Expired';
+    if (inv.emailStatus === 'FAILED') return 'Failed';
+    if (inv.emailStatus === 'SENT') return 'Sent';
+    return 'Pending';
+  }
+
+  /** Accepted invitations are done; revoke/resend no longer apply. */
+  isTerminal(inv: Invitation): boolean {
+    return !!inv.acceptedAt;
+  }
+
+  askRevoke(inv: Invitation): void {
+    this.error.set(null);
+    this.pendingRevoke.set(inv);
+  }
+
+  confirmRevoke(): void {
+    const inv = this.pendingRevoke();
+    if (!inv) return;
     this.saving.set(true);
     this.error.set(null);
-    this.api.deleteInvitation(inv.id).subscribe({
+    this.api.revokeInvitation(inv.id).subscribe({
       next: () => {
         this.saving.set(false);
+        this.pendingRevoke.set(null);
         this.loadInvitations();
       },
       error: (err) => {
@@ -1130,9 +1246,56 @@ export class ManageComponent implements OnInit {
     });
   }
 
-  inviteUrl(inv: Invitation): string {
+  /** New token + fresh email. The previous link stops working. */
+  resend(inv: Invitation): void {
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.resendInvitation(inv.id).subscribe({
+      next: (res) => {
+        this.saving.set(false);
+        if (res.emailWarning) {
+          this.error.set(res.emailWarning);
+          this.freshLink.set(res.acceptUrl ?? null);
+        }
+        this.loadInvitations();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  /**
+   * Plaintext tokens are never retrievable after creation, so recovering a link
+   * means minting a new one: resend (which also re-tries the email) and show the
+   * fresh URL to copy.
+   */
+  copyFreshLink(inv: Invitation): void {
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.resendInvitation(inv.id).subscribe({
+      next: (res) => {
+        this.saving.set(false);
+        this.freshLink.set(res.acceptUrl ?? null);
+        if (res.acceptUrl) this.copy(res.acceptUrl);
+        this.loadInvitations();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  /**
+   * The accept URL is only available on the create/resend response (the plaintext
+   * token is never stored). acceptUrl is preferred; acceptPath is the fallback.
+   */
+  inviteUrl(inv: Invitation): string | null {
+    if (inv.acceptUrl) return inv.acceptUrl;
     if (inv.acceptPath) return `${window.location.origin}${inv.acceptPath}`;
-    return localAcceptUrl(inv.token);
+    return null;
   }
 
   copy(text: string): void {
