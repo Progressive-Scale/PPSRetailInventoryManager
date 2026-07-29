@@ -317,12 +317,10 @@ type Tab = 'stores' | 'users' | 'invitations';
               <button (click)="openInvite()">Invite</button>
             </div>
           </div>
-          @if (lastInviteUrl()) {
+          @if (inviteSent()) {
             <div class="link-box">
-              <span class="muted">Accept link:</span>
-              <code>{{ lastInviteUrl() }}</code>
-              <button class="sm ghost" (click)="copy(lastInviteUrl()!)">Copy</button>
-              <button class="sm ghost" (click)="lastInviteUrl.set(null)">Dismiss</button>
+              <span class="muted">Invitation emailed to {{ inviteSent() }}.</span>
+              <button class="sm ghost" (click)="inviteSent.set(null)">Dismiss</button>
             </div>
           }
           @if (!loading() && invitations().length > 0) {
@@ -1085,7 +1083,13 @@ export class ManageComponent implements OnInit {
   /** Bound to the "Add store…" select; reset to null after each pick. */
 
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
-  readonly lastInviteUrl = signal<string | null>(null);
+  /**
+   * Recipient of the last successful invite, for a plain confirmation. The accept
+   * link is deliberately NOT shown on success — it is single-use credentials and
+   * the invitee already has it by email. It only appears when the send FAILED,
+   * where copying it is the only way to recover.
+   */
+  readonly inviteSent = signal<string | null>(null);
 
   // Invite modal: several stores may be granted at once (mirrors user editing).
   readonly showInvite = signal(false);
@@ -1100,7 +1104,7 @@ export class ManageComponent implements OnInit {
     this.inviteDraft = { email: '', role: 'STORE_USER' };
     this.inviteStoreIds.set([]);
     this.modalError.set(null);
-    this.lastInviteUrl.set(null);
+    this.inviteSent.set(null);
     this.showInvite.set(true);
   }
 
@@ -1447,13 +1451,13 @@ export class ManageComponent implements OnInit {
         this.showInvite.set(false);
         this.inviteDraft = { email: '', role: 'STORE_USER' };
         this.inviteStoreIds.set([]);
-        // The email is normally delivered; only surface the link when it failed
-        // (or in console mode, where the admin may still want it).
+        // On success just confirm the send — the link stays private. Only a FAILED
+        // send exposes it, because copying it is then the only recovery.
         if (inv.emailWarning) {
           this.error.set(inv.emailWarning);
           this.freshLink.set(inv.acceptUrl ?? this.inviteUrl(inv));
         } else {
-          this.lastInviteUrl.set(inv.acceptUrl ?? this.inviteUrl(inv));
+          this.inviteSent.set(inv.email);
         }
         this.loadInvitations();
       },
