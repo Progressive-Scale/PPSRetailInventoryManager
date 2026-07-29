@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -24,7 +24,14 @@ import { Ctx } from '../auth/current-user.decorator';
 import { CurrentCompany } from '../tenancy/current-tenant.decorator';
 import { DataContext } from '../auth/auth.types';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
-import { Company, companies, invitations, users } from '../db/schema';
+import {
+  Company,
+  companies,
+  invitationStores,
+  invitations,
+  stores,
+  users,
+} from '../db/schema';
 import { MailService } from '../mail/mail.service';
 import { CreateInvitationDto } from './company.dto';
 import {
@@ -93,10 +100,11 @@ export class InvitationsController {
     private readonly config: ConfigService,
   ) {}
 
+  /** Invitations with the set of stores each grants on accept (storeIds). */
   @Get()
   list(@Ctx() ctx: DataContext) {
-    return this.tenantDb.withCompany(ctx.companyId, (tx) =>
-      tx
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const rows = await tx
         .select({
           id: invitations.id,
           companyId: invitations.companyId,
@@ -114,8 +122,23 @@ export class InvitationsController {
         })
         .from(invitations)
         .where(eq(invitations.companyId, ctx.companyId))
-        .orderBy(desc(invitations.id)),
-    );
+        .orderBy(desc(invitations.id));
+
+      const links = await tx
+        .select({
+          invitationId: invitationStores.invitationId,
+          storeId: invitationStores.storeId,
+        })
+        .from(invitationStores)
+        .where(eq(invitationStores.companyId, ctx.companyId));
+      const byInvitation = new Map<number, number[]>();
+      for (const l of links) {
+        const list = byInvitation.get(l.invitationId) ?? [];
+        list.push(l.storeId);
+        byInvitation.set(l.invitationId, list);
+      }
+      return rows.map((r) => ({ ...r, storeIds: byInvitation.get(r.id) ?? [] }));
+    });
   }
 
   /** Create an invitation and email the accept link. */
@@ -126,6 +149,19 @@ export class InvitationsController {
     @Body() dto: CreateInvitationDto,
   ) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      // storeIds is the modern form; a lone storeId is folded in for compatibility.
+      const requested = dto.storeIds ?? (dto.storeId != null ? [dto.storeId] : []);
+      const permitted = [...new Set(requested)];
+      if (permitted.length > 0) {
+        const owned = await tx
+          .select({ id: stores.id })
+          .from(stores)
+          .where(and(eq(stores.companyId, ctx.companyId), inArray(stores.id, permitted)));
+        if (owned.length !== permitted.length) {
+          throw new BadRequestException('One or more stores are not in your company.');
+        }
+      }
+
       const token = generateInviteToken();
       const [row] = await tx
         .insert(invitations)
@@ -133,12 +169,33 @@ export class InvitationsController {
           companyId: ctx.companyId,
           email: dto.email.trim().toLowerCase(),
           role: dto.role,
-          storeId: dto.storeId ?? null,
+          // Mirrors the single-store case so older readers keep working.
+          storeId: permitted.length === 1 ? permitted[0] : null,
           tokenHash: hashInviteToken(token),
           expiresAt: inviteExpiry(),
         })
         .returning();
-      return this.deliver(tx, ctx, row.id, row.email, row.role, row.expiresAt, token);
+
+      if (permitted.length > 0) {
+        await tx.insert(invitationStores).values(
+          permitted.map((storeId) => ({
+            companyId: ctx.companyId,
+            invitationId: row.id,
+            storeId,
+          })),
+        );
+      }
+
+      const res = await this.deliver(
+        tx,
+        ctx,
+        row.id,
+        row.email,
+        row.role,
+        row.expiresAt,
+        token,
+      );
+      return { ...res, storeIds: permitted };
     });
   }
 

@@ -222,6 +222,41 @@ export const invitations = pgTable(
   ],
 );
 
+// Stores an invitee will be granted on accept — the pending equivalent of
+// user_stores, so an invitation can cover several stores. On accept every row
+// here becomes a user_stores row; users.store_id (the active store) is set only
+// when there is exactly one, otherwise the user picks at login.
+// invitations.store_id is retained for backwards compatibility and mirrors the
+// single-store case; this table is the source of truth.
+export const invitationStores = pgTable(
+  'invitation_stores',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    invitationId: integer('invitation_id')
+      .notNull()
+      .references(() => invitations.id, { onDelete: 'cascade' }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('invitation_stores_invitation_store_uniq').on(
+      t.invitationId,
+      t.storeId,
+    ),
+    index('invitation_stores_company_invitation_idx').on(
+      t.companyId,
+      t.invitationId,
+    ),
+  ],
+);
+
 export const apiKeys = pgTable(
   'api_keys',
   {
@@ -812,4 +847,5 @@ export const TENANT_TABLES = [
   'notifications',
   'item_audit',
   'user_stores',
+  'invitation_stores',
 ] as const;

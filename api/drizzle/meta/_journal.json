@@ -71,6 +71,13 @@
       "when": 1785342336028,
       "tag": "0009_invitation_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785351268188,
+      "tag": "0010_invitation_stores",
+      "breakpoints": true
     }
   ]
 }

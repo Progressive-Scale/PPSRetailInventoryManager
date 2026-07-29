@@ -8,7 +8,15 @@ import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
-import { Company, invitations, stores, User, users, userStores } from '../db/schema';
+import {
+  Company,
+  invitationStores,
+  invitations,
+  stores,
+  User,
+  users,
+  userStores,
+} from '../db/schema';
 import { HostContext } from '../tenancy/tenant-context';
 import {
   hashInviteToken,
@@ -75,13 +83,24 @@ export class AuthService {
         throw new BadRequestException(message);
       }
 
+      // Stores the invitation grants. invitation_stores is the source of truth;
+      // fall back to the legacy single store_id for rows predating it.
+      const granted = await tx
+        .select({ storeId: invitationStores.storeId })
+        .from(invitationStores)
+        .where(eq(invitationStores.invitationId, inv.id));
+      let storeIds = [...new Set(granted.map((g) => g.storeId))];
+      if (storeIds.length === 0 && inv.storeId != null) storeIds = [inv.storeId];
+
       let created: User | undefined;
       try {
         [created] = await tx
           .insert(users)
           .values({
             companyId: company.id,
-            storeId: inv.storeId,
+            // The active store is only implied when a single store was granted;
+            // multi-store users choose theirs at login.
+            storeId: storeIds.length === 1 ? storeIds[0] : null,
             email: inv.email.trim().toLowerCase(),
             passwordHash: await hash(password, 10),
             role: inv.role,
@@ -95,11 +114,17 @@ export class AuthService {
         throw err;
       }
 
-      // An invite that names a store grants access to it.
-      if (inv.storeId != null) {
+      // Every granted store becomes a permitted store for the new user.
+      if (storeIds.length > 0) {
         await tx
           .insert(userStores)
-          .values({ companyId: company.id, userId: created!.id, storeId: inv.storeId })
+          .values(
+            storeIds.map((storeId) => ({
+              companyId: company.id,
+              userId: created!.id,
+              storeId,
+            })),
+          )
           .onConflictDoNothing();
       }
 

@@ -60,5 +60,13 @@ export class CreateInvitationDto {
   @IsEnum(COMPANY_ROLES as unknown as string[])
   role!: (typeof COMPANY_ROLES)[number];
 
+  /** Single-store form, retained for compatibility; prefer storeIds. */
   @IsOptional() @IsInt() @IsPositive() storeId?: number;
+
+  /** Stores the invitee is granted on accept. */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  storeIds?: number[];
 }
