@@ -82,25 +82,25 @@ type Tab = 'stores' | 'users' | 'invitations';
                           <button class="sm danger" (click)="askDeleteStore(s)" [disabled]="saving()">Delete</button>
                         </td>
                       } @else {
-                        <td class="tipcell">
+                        <td class="tipcell" (mouseenter)="onCellEnter($event)">
                           <span class="ctext">{{ s.name }}</span>
                           @if (s.name) {
                             <span class="cell-tip">{{ s.name }}</span>
                           }
                         </td>
-                        <td class="muted tipcell">
+                        <td class="muted tipcell" (mouseenter)="onCellEnter($event)">
                           <span class="ctext">{{ s.address1 }}</span>
                           @if (s.address1) {
                             <span class="cell-tip">{{ s.address1 }}</span>
                           }
                         </td>
-                        <td class="muted tipcell">
+                        <td class="muted tipcell" (mouseenter)="onCellEnter($event)">
                           <span class="ctext">{{ s.address2 }}</span>
                           @if (s.address2) {
                             <span class="cell-tip">{{ s.address2 }}</span>
                           }
                         </td>
-                        <td class="muted tipcell">
+                        <td class="muted tipcell" (mouseenter)="onCellEnter($event)">
                           <span class="ctext">{{ s.city }}</span>
                           @if (s.city) {
                             <span class="cell-tip">{{ s.city }}</span>
@@ -108,7 +108,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                         </td>
                         <td class="muted"><span class="ctext">{{ s.state }}</span></td>
                         <td class="muted"><span class="ctext">{{ s.zip }}</span></td>
-                        <td class="muted tipcell">
+                        <td class="muted tipcell" (mouseenter)="onCellEnter($event)">
                           <span class="ctext">{{ s.notes }}</span>
                           @if (s.notes) {
                             <span class="cell-tip">{{ s.notes }}</span>
@@ -611,7 +611,8 @@ type Tab = 'stores' | 'users' | 'invitations';
         transition: opacity 0.08s ease;
         pointer-events: none;
       }
-      td.tipcell:hover .cell-tip {
+      /* Only when the text is actually clipped (set on hover by onCellEnter). */
+      td.tipcell.clipped:hover .cell-tip {
         opacity: 1;
         visibility: visible;
       }
@@ -835,6 +836,17 @@ export class ManageComponent implements OnInit {
           this.error.set(messageFor(err));
         },
       });
+  }
+
+  /**
+   * Show the cell tooltip only when the value is actually truncated. CSS can't
+   * detect an ellipsis, so measure the text span on hover and mark the cell.
+   */
+  onCellEnter(ev: Event): void {
+    const cell = ev.currentTarget as HTMLElement | null;
+    const text = cell?.querySelector<HTMLElement>('.ctext');
+    const clipped = !!text && text.scrollWidth > text.clientWidth + 1;
+    cell?.classList.toggle('clipped', clipped);
   }
 
   askDeleteStore(s: Store): void {
