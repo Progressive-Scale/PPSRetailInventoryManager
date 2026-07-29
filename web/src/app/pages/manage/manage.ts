@@ -44,8 +44,8 @@ type Tab = 'stores' | 'users' | 'invitations';
           } @else if (stores().length === 0) {
             <p class="muted">No stores yet.</p>
           } @else {
-            <div class="table-scroll">
-              <table class="fixed">
+            <div class="table-scroll stores-scroll">
+              <table class="fixed stores">
                 <thead>
                   <tr>
                     <th class="sc-name">Name</th>
@@ -82,13 +82,38 @@ type Tab = 'stores' | 'users' | 'invitations';
                           <button class="sm danger" (click)="askDeleteStore(s)" [disabled]="saving()">Delete</button>
                         </td>
                       } @else {
-                        <td [title]="s.name">{{ s.name }}</td>
-                        <td class="muted" [title]="s.address1">{{ s.address1 }}</td>
-                        <td class="muted" [title]="s.address2">{{ s.address2 }}</td>
-                        <td class="muted" [title]="s.city">{{ s.city }}</td>
-                        <td class="muted" [title]="s.state">{{ s.state }}</td>
-                        <td class="muted" [title]="s.zip">{{ s.zip }}</td>
-                        <td class="muted" [title]="s.notes">{{ s.notes }}</td>
+                        <td class="tipcell">
+                          <span class="ctext">{{ s.name }}</span>
+                          @if (s.name) {
+                            <span class="cell-tip">{{ s.name }}</span>
+                          }
+                        </td>
+                        <td class="muted tipcell">
+                          <span class="ctext">{{ s.address1 }}</span>
+                          @if (s.address1) {
+                            <span class="cell-tip">{{ s.address1 }}</span>
+                          }
+                        </td>
+                        <td class="muted tipcell">
+                          <span class="ctext">{{ s.address2 }}</span>
+                          @if (s.address2) {
+                            <span class="cell-tip">{{ s.address2 }}</span>
+                          }
+                        </td>
+                        <td class="muted tipcell">
+                          <span class="ctext">{{ s.city }}</span>
+                          @if (s.city) {
+                            <span class="cell-tip">{{ s.city }}</span>
+                          }
+                        </td>
+                        <td class="muted"><span class="ctext">{{ s.state }}</span></td>
+                        <td class="muted"><span class="ctext">{{ s.zip }}</span></td>
+                        <td class="muted tipcell">
+                          <span class="ctext">{{ s.notes }}</span>
+                          @if (s.notes) {
+                            <span class="cell-tip">{{ s.notes }}</span>
+                          }
+                        </td>
                         <td>{{ s.isActive ? 'Active' : 'Inactive' }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditStore(s)">Edit</button>
@@ -546,6 +571,49 @@ type Tab = 'stores' | 'users' | 'invitations';
       .danger-btn:hover:not(:disabled) {
         background: #99200f;
         border-color: #99200f;
+      }
+      /* Stores table: truncation lives on the inner span so cells can overflow
+         visibly and show a themed tooltip bubble for clipped values. */
+      .stores-scroll {
+        overflow: visible;
+      }
+      table.stores td {
+        overflow: visible;
+        white-space: normal;
+      }
+      table.stores td .ctext {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      td.tipcell {
+        position: relative;
+      }
+      .cell-tip {
+        position: absolute;
+        left: 0.4rem;
+        top: calc(100% - 4px);
+        z-index: 40;
+        width: max-content;
+        max-width: 280px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+        padding: 0.4rem 0.55rem;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        color: var(--text, #111827);
+        white-space: normal;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.08s ease;
+        pointer-events: none;
+      }
+      td.tipcell:hover .cell-tip {
+        opacity: 1;
+        visibility: visible;
       }
       /* Stores table: fixed column widths so entering edit mode never reflows. */
       .sc-name {
