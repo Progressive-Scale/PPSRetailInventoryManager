@@ -1142,7 +1142,8 @@ export class ManageComponent implements OnInit {
     'Expired',
   ] as const;
   readonly inviteSearch = signal('');
-  readonly inviteStatusFilter = signal<string | null>(null);
+  /** Defaults to Sent — the live invitations an admin usually cares about. */
+  readonly inviteStatusFilter = signal<string | null>('Sent');
   readonly inviteRoleFilter = signal<Role | null>(null);
 
   readonly inviteFiltersActive = computed(
