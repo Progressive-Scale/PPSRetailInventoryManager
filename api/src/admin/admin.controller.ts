@@ -22,10 +22,13 @@ import { generateApiKey, hashApiKey } from '../common/crypto.util';
 import { ConfigService } from '@nestjs/config';
 import { MailService } from '../mail/mail.service';
 import {
+  assertEmailNotTaken,
   buildAcceptUrl,
   generateInviteToken,
   hashInviteToken,
   inviteExpiry,
+  normaliseEmail,
+  supersedeLiveInvitations,
 } from '../company/invitation.util';
 import {
   AdminInviteDto,
@@ -187,11 +190,15 @@ export class AdminController {
         .where(eq(companies.id, id))
         .limit(1);
       if (!company) throw new NotFoundException('Company not found.');
+      // Same rules as a company-admin invite: never invite an existing user, and
+      // keep at most one live invitation per address.
+      await assertEmailNotTaken(tx, id, dto.email);
+      await supersedeLiveInvitations(tx, id, dto.email, null);
       const [row] = await tx
         .insert(invitations)
         .values({
           companyId: id,
-          email: dto.email.trim().toLowerCase(),
+          email: normaliseEmail(dto.email),
           role: 'COMPANY_ADMIN',
           tokenHash: hashInviteToken(token),
           expiresAt,

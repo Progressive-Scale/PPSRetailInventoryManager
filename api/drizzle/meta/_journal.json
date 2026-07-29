@@ -78,6 +78,13 @@
       "when": 1785351268188,
       "tag": "0010_invitation_stores",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785354091925,
+      "tag": "0011_one_live_invite_per_email",
+      "breakpoints": true
     }
   ]
 }

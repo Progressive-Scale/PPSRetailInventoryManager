@@ -219,6 +219,13 @@ export const invitations = pgTable(
   (t) => [
     index('invitations_company_idx').on(t.companyId),
     uniqueIndex('invitations_token_hash_uniq').on(t.tokenHash),
+    // At most ONE live (neither accepted nor revoked) invitation per address, so a
+    // person can never hold two redeemable links. Re-inviting revokes the old one
+    // first. Note an expired-but-unrevoked row still occupies the slot; the
+    // service revokes it as part of re-inviting.
+    uniqueIndex('invitations_one_live_per_email_uniq')
+      .on(t.companyId, sql`lower(${t.email})`)
+      .where(sql`${t.acceptedAt} is null and ${t.revokedAt} is null`),
   ],
 );
 

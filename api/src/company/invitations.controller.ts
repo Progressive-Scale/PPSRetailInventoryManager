@@ -35,11 +35,13 @@ import {
 import { MailService } from '../mail/mail.service';
 import { CreateInvitationDto } from './company.dto';
 import {
+  assertEmailNotTaken,
   buildAcceptUrl,
   generateInviteToken,
   hashInviteToken,
   invitationState,
   invitationStateMessage,
+  supersedeLiveInvitations,
   inviteExpiry,
 } from './invitation.util';
 
@@ -149,6 +151,11 @@ export class InvitationsController {
     @Body() dto: CreateInvitationDto,
   ) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      // Never invite an address that is already a user, and keep only one live
+      // invitation per address (this one supersedes any earlier link).
+      await assertEmailNotTaken(tx, ctx.companyId, dto.email);
+      await supersedeLiveInvitations(tx, ctx.companyId, dto.email, ctx.userId);
+
       // storeIds is the modern form; a lone storeId is folded in for compatibility.
       const requested = dto.storeIds ?? (dto.storeId != null ? [dto.storeId] : []);
       const permitted = [...new Set(requested)];
@@ -211,6 +218,11 @@ export class InvitationsController {
       if (inv.acceptedAt) {
         throw new BadRequestException('This invitation was already accepted.');
       }
+      // Resend revives this row, so any OTHER live invitation for the same address
+      // has to give way — otherwise two links for one person would be redeemable.
+      await assertEmailNotTaken(tx, ctx.companyId, inv.email);
+      await supersedeLiveInvitations(tx, ctx.companyId, inv.email, ctx.userId, id);
+
       const token = generateInviteToken();
       const expiresAt = inviteExpiry();
       const [row] = await tx

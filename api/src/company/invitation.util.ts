@@ -1,5 +1,65 @@
+import { ConflictException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { Invitation } from '../db/schema';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { Invitation, invitations, users } from '../db/schema';
+import { Tx } from '../db/tenant-db.service';
+
+/** Normalised form used for storage and for every uniqueness comparison. */
+export function normaliseEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/**
+ * An address that already belongs to a user must not be invited: accept always
+ * creates a NEW account, so such an invitation could never be redeemed.
+ */
+export async function assertEmailNotTaken(
+  tx: Tx,
+  companyId: number,
+  email: string,
+): Promise<void> {
+  const [existing] = await tx
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.companyId, companyId), eq(users.email, normaliseEmail(email))))
+    .limit(1);
+  if (existing) {
+    throw new ConflictException(
+      'That email already belongs to a user — edit the existing user instead of inviting them again.',
+    );
+  }
+}
+
+/**
+ * Keeps at most ONE live invitation per address: revokes any earlier
+ * not-yet-accepted invitation before a new one is issued, so re-inviting REPLACES
+ * rather than adding a second working link. Without this an older link would
+ * still be redeemable and would apply its own (stale) role and stores.
+ * Returns how many invitations were superseded.
+ */
+export async function supersedeLiveInvitations(
+  tx: Tx,
+  companyId: number,
+  email: string,
+  revokedByUserId: number | null,
+  /** Invitation to leave alone — used by resend, which revives its own row. */
+  exceptId?: number,
+): Promise<number> {
+  const superseded = await tx
+    .update(invitations)
+    .set({ revokedAt: new Date(), revokedByUserId })
+    .where(
+      and(
+        eq(invitations.companyId, companyId),
+        sql`lower(${invitations.email}) = ${normaliseEmail(email)}`,
+        isNull(invitations.acceptedAt),
+        isNull(invitations.revokedAt),
+        ...(exceptId != null ? [ne(invitations.id, exceptId)] : []),
+      ),
+    )
+    .returning({ id: invitations.id });
+  return superseded.length;
+}
 
 /** Lifecycle state of an invitation token, evaluated in a fixed order. */
 export type InvitationState =
