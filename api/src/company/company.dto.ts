@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
   IsEnum,
@@ -8,6 +9,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateStoreDto {
@@ -42,7 +44,14 @@ export class UpdateUserDto {
   @IsOptional() @IsEnum(USER_STATUSES as unknown as string[])
   status?: (typeof USER_STATUSES)[number];
 
-  @IsOptional() @IsInt() @IsPositive() storeId?: number;
+  /** The user's active store. Must be one of storeIds (or null to clear). */
+  @IsOptional() @ValidateIf((o: UpdateUserDto) => o.storeId !== null)
+  @IsInt() @IsPositive()
+  storeId?: number | null;
+
+  /** Full replacement of the stores this user may access. */
+  @IsOptional() @IsArray() @IsInt({ each: true })
+  storeIds?: number[];
 }
 
 export class CreateInvitationDto {

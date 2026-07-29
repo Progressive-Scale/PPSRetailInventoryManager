@@ -30,6 +30,7 @@ const {
   cycleCountLines,
   storeLocations,
   notificationSettings,
+  userStores,
 } = schema;
 
 /** YYYY-MM-DD, `n` days from `base` (negative = past). */
@@ -178,6 +179,21 @@ async function ensureUser(
       status: 'ACTIVE',
     })
     .onConflictDoNothing({ target: [users.companyId, users.email] });
+
+  // Grant access to the pinned store via the permitted-stores junction.
+  if (companyId != null && storeId != null) {
+    const [row] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.companyId, companyId), eq(users.email, email)))
+      .limit(1);
+    if (row) {
+      await db
+        .insert(userStores)
+        .values({ companyId, userId: row.id, storeId })
+        .onConflictDoNothing({ target: [userStores.userId, userStores.storeId] });
+    }
+  }
 }
 
 async function ensureProducts(db: Db, companyId: number, list: ProductSeed[]) {

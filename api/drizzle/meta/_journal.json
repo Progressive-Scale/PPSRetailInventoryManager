@@ -57,6 +57,13 @@
       "when": 1785267918949,
       "tag": "0007_new_apocalypse",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785335083709,
+      "tag": "0008_familiar_stature",
+      "breakpoints": true
     }
   ]
 }

@@ -156,6 +156,33 @@ export const users = pgTable(
   ],
 );
 
+// Which stores a user MAY access. A store user can be permitted several stores
+// but works in ONE at a time: users.store_id is the *active* store the JWT
+// carries (chosen at login when more than one is permitted), while this table is
+// the permitted set. Single-store users have exactly one row here.
+export const userStores = pgTable(
+  'user_stores',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('user_stores_user_store_uniq').on(t.userId, t.storeId),
+    index('user_stores_company_user_idx').on(t.companyId, t.userId),
+  ],
+);
+
 export const invitations = pgTable(
   'invitations',
   {
@@ -740,6 +767,7 @@ export type StoreInventoryRow = typeof storeInventory.$inferSelect;
 export type StoreLocation = typeof storeLocations.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type NotificationSetting = typeof notificationSettings.$inferSelect;
+export type UserStore = typeof userStores.$inferSelect;
 export type ItemAudit = typeof itemAudit.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
@@ -767,4 +795,5 @@ export const TENANT_TABLES = [
   'notification_settings',
   'notifications',
   'item_audit',
+  'user_stores',
 ] as const;

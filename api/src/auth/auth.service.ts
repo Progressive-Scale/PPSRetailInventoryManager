@@ -6,11 +6,11 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
-import { Company, invitations, User, users } from '../db/schema';
+import { Company, invitations, stores, User, users, userStores } from '../db/schema';
 import { HostContext } from '../tenancy/tenant-context';
-import { JwtPayload } from './auth.types';
+import { AuthUser, JwtPayload } from './auth.types';
 
 @Injectable()
 export class AuthService {
@@ -46,7 +46,7 @@ export class AuthService {
           .from(users)
           .where(eq(users.email, normalized))
           .limit(1);
-        return this.finishLogin(u, password);
+        return this.finishLogin(u, password, tx);
       });
     }
 
@@ -87,6 +87,14 @@ export class AuthService {
         throw err;
       }
 
+      // An invite that names a store grants access to it.
+      if (inv.storeId != null) {
+        await tx
+          .insert(userStores)
+          .values({ companyId: company.id, userId: created!.id, storeId: inv.storeId })
+          .onConflictDoNothing();
+      }
+
       await tx
         .update(invitations)
         .set({ acceptedAt: new Date() })
@@ -96,7 +104,36 @@ export class AuthService {
     });
   }
 
-  private async finishLogin(user: User | undefined, password: string) {
+  /**
+   * Switch the active store — a user permitted several stores picks one at login.
+   * Validates membership and issues a fresh token carrying that store.
+   */
+  async selectStore(user: AuthUser, storeId: number) {
+    const companyId = user.companyId;
+    if (companyId == null) throw new BadRequestException('Not a company user.');
+    return this.tenantDb.withCompany(companyId, async (tx) => {
+      const [allowed] = await tx
+        .select({ id: userStores.id })
+        .from(userStores)
+        .where(
+          and(
+            eq(userStores.companyId, companyId),
+            eq(userStores.userId, user.userId),
+            eq(userStores.storeId, storeId),
+          ),
+        )
+        .limit(1);
+      if (!allowed) throw new BadRequestException('That store is not assigned to you.');
+      const [updated] = await tx
+        .update(users)
+        .set({ storeId })
+        .where(eq(users.id, user.userId))
+        .returning();
+      return this.buildResponse(updated, tx);
+    });
+  }
+
+  private async finishLogin(user: User | undefined, password: string, tx?: Tx) {
     if (
       !user ||
       user.status !== 'ACTIVE' ||
@@ -104,14 +141,36 @@ export class AuthService {
     ) {
       throw new UnauthorizedException('Invalid credentials');
     }
-    return this.buildResponse(user);
+    return this.buildResponse(user, tx);
   }
 
-  private async buildResponse(user: User, _tx?: Tx) {
+  private async buildResponse(user: User, tx?: Tx) {
+    // Stores this user may access. When several are permitted and none is active
+    // yet, the client must call POST /auth/select-store before working.
+    let availableStores: Array<{ id: number; name: string }> = [];
+    if (tx && user.companyId != null) {
+      availableStores = await tx
+        .select({ id: stores.id, name: stores.name })
+        .from(userStores)
+        .innerJoin(stores, eq(stores.id, userStores.storeId))
+        .where(
+          and(
+            eq(userStores.companyId, user.companyId),
+            eq(userStores.userId, user.id),
+          ),
+        )
+        .orderBy(asc(stores.name));
+    }
+    // Single permitted store: activate it implicitly so nothing needs to prompt.
+    let activeStoreId = user.storeId;
+    if (activeStoreId == null && availableStores.length === 1 && tx) {
+      activeStoreId = availableStores[0].id;
+      await tx.update(users).set({ storeId: activeStoreId }).where(eq(users.id, user.id));
+    }
     const payload: JwtPayload = {
       sub: user.id,
       companyId: user.companyId,
-      storeId: user.storeId,
+      storeId: activeStoreId,
       role: user.role,
     };
     return {
@@ -120,9 +179,13 @@ export class AuthService {
         id: user.id,
         email: user.email,
         companyId: user.companyId,
-        storeId: user.storeId,
+        storeId: activeStoreId,
         role: user.role,
       },
+      availableStores,
+      // True when the user must choose before the app can scope their work.
+      storeSelectionRequired:
+        user.role === 'STORE_USER' && activeStoreId == null && availableStores.length > 1,
     };
   }
 
