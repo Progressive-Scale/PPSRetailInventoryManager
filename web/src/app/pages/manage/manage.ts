@@ -366,17 +366,17 @@ type Tab = 'stores' | 'users' | 'invitations';
                       </td>
                       <td class="muted">{{ inv.expiresAt | date: 'short' }}</td>
                       <td class="actions">
+                        @if (inv.emailStatus === 'FAILED') {
+                          <button class="sm ghost" (click)="copyFreshLink(inv)" [disabled]="saving()">
+                            Copy link
+                          </button>
+                        }
                         @if (!isTerminal(inv)) {
                           <button class="sm ghost" (click)="resend(inv)" [disabled]="saving()">
                             Resend
                           </button>
                           <button class="sm danger" (click)="askRevoke(inv)" [disabled]="saving()">
                             Revoke
-                          </button>
-                        }
-                        @if (inv.emailStatus === 'FAILED') {
-                          <button class="sm ghost" (click)="copyFreshLink(inv)" [disabled]="saving()">
-                            Copy link
                           </button>
                         }
                       </td>
