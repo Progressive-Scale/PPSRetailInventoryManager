@@ -5,6 +5,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { homePathForRole, isAdminHost } from '../../core/tenant';
+import { Role } from '../../core/models';
 
 @Component({
   selector: 'app-login',
@@ -20,29 +21,43 @@ import { homePathForRole, isAdminHost } from '../../core/tenant';
           {{ adminHost ? 'Sign in to the platform console.' : 'Sign in to manage inventory.' }}
         </p>
 
-        <label>
-          Email
-          <input type="email" name="email" [(ngModel)]="email" autocomplete="username" required />
-        </label>
+        @if (storeChoices().length === 0) {
+          <label>
+            Email
+            <input type="email" name="email" [(ngModel)]="email" autocomplete="username" required />
+          </label>
 
-        <label>
-          Password
-          <input
-            type="password"
-            name="password"
-            [(ngModel)]="password"
-            autocomplete="current-password"
-            required
-          />
-        </label>
+          <label>
+            Password
+            <input
+              type="password"
+              name="password"
+              [(ngModel)]="password"
+              autocomplete="current-password"
+              required
+            />
+          </label>
 
-        @if (error()) {
-          <p class="error">{{ error() }}</p>
+          @if (error()) {
+            <p class="error">{{ error() }}</p>
+          }
+
+          <button type="submit" [disabled]="loading()">
+            {{ loading() ? 'Signing in…' : 'Sign in' }}
+          </button>
+        } @else {
+          <p class="sub">Choose the store you're working in:</p>
+          @if (error()) {
+            <p class="error">{{ error() }}</p>
+          }
+          <div class="store-list">
+            @for (s of storeChoices(); track s.id) {
+              <button type="button" class="store-btn" [disabled]="loading()" (click)="chooseStore(s.id)">
+                {{ s.name }}
+              </button>
+            }
+          </div>
         }
-
-        <button type="submit" [disabled]="loading()">
-          {{ loading() ? 'Signing in…' : 'Sign in' }}
-        </button>
       </form>
     </div>
   `,
@@ -99,6 +114,16 @@ import { homePathForRole, isAdminHost } from '../../core/tenant';
         background: var(--brand, var(--accent));
         border-color: var(--brand, var(--accent));
       }
+      .store-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .store-btn {
+        width: 100%;
+        text-align: left;
+        padding: 0.65rem 0.75rem;
+      }
       .error {
         color: #b42318;
         font-size: 0.85rem;
@@ -121,6 +146,10 @@ export class LoginComponent implements OnInit {
   readonly title = signal(this.adminHost ? 'Platform Admin' : 'PPS Retail Inventory');
   readonly brandColor = signal<string | null>(null);
   readonly logoUrl = signal<string | null>(null);
+
+  // Store-choice step: set after login when several stores are permitted.
+  readonly storeChoices = signal<{ id: number; name: string }[]>([]);
+  readonly pendingRole = signal<Role | null>(null);
 
   ngOnInit(): void {
     if (this.adminHost) return;
@@ -146,6 +175,12 @@ export class LoginComponent implements OnInit {
     this.auth.login(this.email, this.password).subscribe({
       next: (res) => {
         this.loading.set(false);
+        // A user permitted several stores picks one before entering the app.
+        if (res.storeSelectionRequired && (res.availableStores?.length ?? 0) > 1) {
+          this.storeChoices.set(res.availableStores ?? []);
+          this.pendingRole.set(res.user.role);
+          return;
+        }
         void this.router.navigate([homePathForRole(res.user.role)]);
       },
       error: (err: HttpErrorResponse) => {
@@ -155,6 +190,22 @@ export class LoginComponent implements OnInit {
             ? 'Invalid email or password.'
             : 'Something went wrong. Please try again.',
         );
+      },
+    });
+  }
+
+  /** Activate the chosen store, then enter the app. */
+  chooseStore(storeId: number): void {
+    this.loading.set(true);
+    this.error.set(null);
+    this.auth.selectStore(storeId).subscribe({
+      next: (res) => {
+        this.loading.set(false);
+        void this.router.navigate([homePathForRole(res.user.role)]);
+      },
+      error: () => {
+        this.loading.set(false);
+        this.error.set('Could not select that store. Please try again.');
       },
     });
   }

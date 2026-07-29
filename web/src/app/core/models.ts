@@ -11,6 +11,10 @@ export interface AuthUser {
 export interface LoginResponse {
   access_token: string;
   user: AuthUser;
+  /** Stores the user may access (for the login store picker). */
+  availableStores?: { id: number; name: string }[];
+  /** True when a multi-store user must choose before working. */
+  storeSelectionRequired?: boolean;
 }
 
 export interface Branding {
@@ -268,7 +272,10 @@ export interface Store {
 export interface User {
   id: number;
   companyId: number | null;
+  /** The user's ACTIVE store (what their session scopes to). */
   storeId: number | null;
+  /** Every store this user may access. */
+  storeIds: number[];
   email: string;
   role: Role;
   status: 'ACTIVE' | 'SUSPENDED';
@@ -435,6 +442,8 @@ export interface UpdateUser {
   role?: Role;
   status?: 'ACTIVE' | 'SUSPENDED';
   storeId?: number | null;
+  /** Full replacement of the stores this user may access. */
+  storeIds?: number[];
 }
 
 export interface CreateInvitation {

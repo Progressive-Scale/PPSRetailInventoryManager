@@ -206,43 +206,73 @@ type Tab = 'stores' | 'users' | 'invitations';
             <p class="muted">No users yet.</p>
           } @else {
             <div class="table-scroll">
-              <table>
+              <table class="fixed">
                 <thead>
                   <tr>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Store</th>
-                    <th>Status</th>
-                    <th class="actions"></th>
+                    <th class="uc-email">Email</th>
+                    <th class="uc-role">Role</th>
+                    <th class="uc-stores">Stores</th>
+                    <th class="uc-active">Active store</th>
+                    <th class="uc-status">Status</th>
+                    <th class="actions uc-actions"></th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (u of users(); track u.id) {
                     <tr>
-                      <td>{{ u.email }}</td>
-                      <td>
-                        <select [(ngModel)]="u.role" name="u-role-{{ u.id }}">
-                          <option value="COMPANY_ADMIN">Company Admin</option>
-                          <option value="STORE_USER">Store User</option>
-                        </select>
-                      </td>
-                      <td>
-                        <select [(ngModel)]="u.storeId" name="u-store-{{ u.id }}">
-                          <option [ngValue]="null">—</option>
-                          @for (s of stores(); track s.id) {
-                            <option [ngValue]="s.id">{{ s.name }}</option>
-                          }
-                        </select>
-                      </td>
-                      <td>
-                        <select [(ngModel)]="u.status" name="u-status-{{ u.id }}">
-                          <option value="ACTIVE">Active</option>
-                          <option value="SUSPENDED">Suspended</option>
-                        </select>
-                      </td>
-                      <td class="actions">
-                        <button class="sm" (click)="saveUser(u)" [disabled]="saving()">Save</button>
-                      </td>
+                      @if (editUserId() === u.id) {
+                        <td class="ctext">{{ u.email }}</td>
+                        <td>
+                          <select class="cell-input" [(ngModel)]="userEdit.role" name="u-role-{{ u.id }}">
+                            <option value="COMPANY_ADMIN">Company Admin</option>
+                            <option value="STORE_USER">Store User</option>
+                          </select>
+                        </td>
+                        <td>
+                          <div class="store-picks">
+                            @for (s of stores(); track s.id) {
+                              <label class="chk">
+                                <input
+                                  type="checkbox"
+                                  [checked]="userEdit.storeIds.includes(s.id)"
+                                  (change)="toggleUserStore(s.id)"
+                                  name="u-st-{{ u.id }}-{{ s.id }}"
+                                />
+                                {{ s.name }}
+                              </label>
+                            }
+                          </div>
+                        </td>
+                        <td>
+                          <select class="cell-input" [(ngModel)]="userEdit.storeId" name="u-active-{{ u.id }}">
+                            <option [ngValue]="null">— choose at login —</option>
+                            @for (sid of userEdit.storeIds; track sid) {
+                              <option [ngValue]="sid">{{ storeName(sid) }}</option>
+                            }
+                          </select>
+                        </td>
+                        <td>
+                          <select class="cell-input" [(ngModel)]="userEdit.status" name="u-status-{{ u.id }}">
+                            <option value="ACTIVE">Active</option>
+                            <option value="SUSPENDED">Suspended</option>
+                          </select>
+                        </td>
+                        <td class="actions">
+                          <button class="sm" (click)="saveUser(u)" [disabled]="saving()">Save</button>
+                          <button class="sm ghost" (click)="editUserId.set(null)">Cancel</button>
+                        </td>
+                      } @else {
+                        <td class="ctext" [title]="u.email">{{ u.email }}</td>
+                        <td>{{ roleLabel(u.role) }}</td>
+                        <td class="muted ctext" [title]="storeNames(u.storeIds)">
+                          {{ storeNames(u.storeIds) || '—' }}
+                        </td>
+                        <td class="muted">{{ u.storeId ? storeName(u.storeId) : '—' }}</td>
+                        <td>{{ u.status === 'ACTIVE' ? 'Active' : 'Suspended' }}</td>
+                        <td class="actions">
+                          <button class="sm ghost" (click)="startEditUser(u)">Edit</button>
+                        </td>
+                      }
                     </tr>
                   }
                 </tbody>
@@ -572,6 +602,36 @@ type Tab = 'stores' | 'users' | 'invitations';
         background: #99200f;
         border-color: #99200f;
       }
+      /* Users table: fixed widths so Edit mode doesn't reflow the row. */
+      .uc-email {
+        width: 24%;
+      }
+      .uc-role {
+        width: 15%;
+      }
+      .uc-stores {
+        width: 22%;
+      }
+      .uc-active {
+        width: 16%;
+      }
+      .uc-status {
+        width: 11%;
+      }
+      .uc-actions {
+        width: 12%;
+      }
+      .store-picks {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        max-height: 7rem;
+        overflow-y: auto;
+      }
+      .store-picks .chk {
+        font-size: 0.82rem;
+        white-space: nowrap;
+      }
       /* Stores table: truncation lives on the inner span so cells can overflow
          visibly and show a themed tooltip bubble for clipped values. */
       .stores-scroll {
@@ -686,6 +746,15 @@ export class ManageComponent implements OnInit {
     zip: '',
     notes: '',
   };
+
+  // Users tab inline edit (view-only until Edit is clicked).
+  readonly editUserId = signal<number | null>(null);
+  userEdit: {
+    role: Role;
+    status: 'ACTIVE' | 'SUSPENDED';
+    storeId: number | null;
+    storeIds: number[];
+  } = { role: 'STORE_USER', status: 'ACTIVE', storeId: null, storeIds: [] };
 
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
   inviteStoreId: number | null = null;
@@ -874,14 +943,57 @@ export class ManageComponent implements OnInit {
   }
 
   // ---- users ----
+  startEditUser(u: User): void {
+    this.error.set(null);
+    this.userEdit = {
+      role: u.role,
+      status: u.status,
+      storeId: u.storeId,
+      storeIds: [...(u.storeIds ?? [])],
+    };
+    this.editUserId.set(u.id);
+  }
+
+  /** Add/remove a store from the permitted set; keep the active store valid. */
+  toggleUserStore(storeId: number): void {
+    const ids = this.userEdit.storeIds;
+    const idx = ids.indexOf(storeId);
+    if (idx >= 0) ids.splice(idx, 1);
+    else ids.push(storeId);
+    if (this.userEdit.storeId != null && !ids.includes(this.userEdit.storeId)) {
+      this.userEdit.storeId = null;
+    }
+    if (this.userEdit.storeId == null && ids.length === 1) {
+      this.userEdit.storeId = ids[0];
+    }
+  }
+
+  storeName(id: number): string {
+    return this.stores().find((s) => s.id === id)?.name ?? `#${id}`;
+  }
+
+  storeNames(ids: number[] | undefined): string {
+    return (ids ?? []).map((id) => this.storeName(id)).join(', ');
+  }
+
+  roleLabel(role: Role): string {
+    return role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User';
+  }
+
   saveUser(u: User): void {
     this.saving.set(true);
     this.error.set(null);
     this.api
-      .updateUser(u.id, { role: u.role, status: u.status, storeId: u.storeId })
+      .updateUser(u.id, {
+        role: this.userEdit.role,
+        status: this.userEdit.status,
+        storeId: this.userEdit.storeId,
+        storeIds: this.userEdit.storeIds,
+      })
       .subscribe({
         next: () => {
           this.saving.set(false);
+          this.editUserId.set(null);
           this.loadUsers();
         },
         error: (err) => {

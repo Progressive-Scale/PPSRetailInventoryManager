@@ -26,6 +26,16 @@ export class AuthService {
       .pipe(tap((res) => this.persist(res)));
   }
 
+  /**
+   * Choose the active store (a user permitted several stores picks one at login).
+   * Replaces the stored token with one scoped to that store.
+   */
+  selectStore(storeId: number): Observable<LoginResponse> {
+    return this.http
+      .post<LoginResponse>('/api/auth/select-store', { storeId })
+      .pipe(tap((res) => this.persist(res)));
+  }
+
   logout(): void {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);

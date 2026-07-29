@@ -11,6 +11,7 @@ import {
   CreateCompany,
   CreateLocation,
   ItemAudit,
+  LoginResponse,
   CycleCount,
   CycleCountDetail,
   CreateInvitation,
@@ -324,6 +325,11 @@ export class ApiService {
   // ---- users (company admin) ----
   listUsers(): Observable<User[]> {
     return this.http.get<User[]>('/api/users');
+  }
+
+  /** Choose the active store (multi-store users). Returns a fresh token. */
+  selectStore(storeId: number): Observable<LoginResponse> {
+    return this.http.post<LoginResponse>('/api/auth/select-store', { storeId });
   }
 
   updateUser(id: number, dto: UpdateUser): Observable<User> {
