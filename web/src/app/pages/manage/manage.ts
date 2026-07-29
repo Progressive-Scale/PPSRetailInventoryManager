@@ -279,8 +279,16 @@ type Tab = 'stores' | 'users' | 'invitations';
                       } @else {
                         <td class="ctext" [title]="u.email">{{ u.email }}</td>
                         <td>{{ roleLabel(u.role) }}</td>
-                        <td class="muted ctext" [title]="storeNames(u.storeIds)">
-                          {{ storeNames(u.storeIds) || '—' }}
+                        <td>
+                          @if ((u.storeIds ?? []).length === 0) {
+                            <span class="muted">—</span>
+                          } @else {
+                            <div class="store-tags">
+                              @for (sid of u.storeIds; track sid) {
+                                <span class="store-tag">{{ storeName(sid) }}</span>
+                              }
+                            </div>
+                          }
                         </td>
                         <td class="muted">{{ u.storeId ? storeName(u.storeId) : '—' }}</td>
                         <td>{{ u.status === 'ACTIVE' ? 'Active' : 'Suspended' }}</td>
@@ -635,6 +643,30 @@ type Tab = 'stores' | 'users' | 'invitations';
       }
       .uc-actions {
         width: 12%;
+      }
+      /* View mode: one badge per store, stacked vertically (same visual language
+         as the inventory type/location badges). */
+      .store-tags {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2rem;
+        max-height: 6rem;
+        overflow-y: auto;
+      }
+      .store-tag {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        background: #eff4ff;
+        color: #1d4ed8;
+        border: 1px solid #c7d7fe;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .store-picks {
         display: flex;
