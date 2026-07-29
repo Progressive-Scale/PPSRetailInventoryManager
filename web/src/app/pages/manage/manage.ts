@@ -230,15 +230,10 @@ type Tab = 'stores' | 'users' | 'invitations';
                         <td>
                           <div class="store-picks">
                             @if (availableToAdd().length > 0) {
-                              <select
-                                class="cell-input"
-                                [(ngModel)]="addStorePick"
-                                (ngModelChange)="addUserStore($event)"
-                                name="u-add-{{ u.id }}"
-                              >
-                                <option [ngValue]="null">Add store…</option>
+                              <select class="cell-input" (change)="addUserStore($event)">
+                                <option value="">Add store…</option>
                                 @for (s of availableToAdd(); track s.id) {
-                                  <option [ngValue]="s.id">{{ s.name }}</option>
+                                  <option [value]="s.id">{{ s.name }}</option>
                                 }
                               </select>
                             }
@@ -311,39 +306,25 @@ type Tab = 'stores' | 'users' | 'invitations';
       <!-- INVITATIONS -->
       @if (tab() === 'invitations') {
         <section class="card">
-          <h2>Invite a user</h2>
-          <form class="inline-form" (ngSubmit)="createInvite()">
-            <input placeholder="Email" name="i-email" type="email" [(ngModel)]="inviteDraft.email" required />
-            <select name="i-role" [(ngModel)]="inviteDraft.role">
-              <option value="STORE_USER">Store User</option>
-              <option value="COMPANY_ADMIN">Company Admin</option>
-            </select>
-            <select name="i-store" [(ngModel)]="inviteStoreId">
-              <option [ngValue]="null">No store</option>
-              @for (s of stores(); track s.id) {
-                <option [ngValue]="s.id">{{ s.name }}</option>
+          <div class="section-head">
+            <h2>Pending invitations</h2>
+            <div class="head-right">
+              @if (!loading() && invitations().length > 0) {
+                <span class="muted small">
+                  {{ filteredInvitations().length }} of {{ invitations().length }}
+                </span>
               }
-            </select>
-            <button type="submit" [disabled]="saving()">Send invite</button>
-          </form>
+              <button (click)="openInvite()">Invite</button>
+            </div>
+          </div>
           @if (lastInviteUrl()) {
             <div class="link-box">
               <span class="muted">Accept link:</span>
               <code>{{ lastInviteUrl() }}</code>
               <button class="sm ghost" (click)="copy(lastInviteUrl()!)">Copy</button>
+              <button class="sm ghost" (click)="lastInviteUrl.set(null)">Dismiss</button>
             </div>
           }
-        </section>
-
-        <section class="card">
-          <div class="section-head">
-            <h2>Pending invitations</h2>
-            @if (!loading() && invitations().length > 0) {
-              <span class="muted small">
-                {{ filteredInvitations().length }} of {{ invitations().length }}
-              </span>
-            }
-          </div>
           @if (!loading() && invitations().length > 0) {
             <div class="filters">
               <label class="f">
@@ -402,6 +383,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                   <tr>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Stores</th>
                     <th>Status</th>
                     <th>Expires</th>
                     <th class="actions"></th>
@@ -412,6 +394,17 @@ type Tab = 'stores' | 'users' | 'invitations';
                     <tr>
                       <td>{{ inv.email }}</td>
                       <td>{{ roleLabel(inv.role) }}</td>
+                      <td>
+                        @if (inv.storeIds.length === 0) {
+                          <span class="muted">—</span>
+                        } @else {
+                          <div class="store-tags">
+                            @for (sid of inv.storeIds; track sid) {
+                              <span class="store-tag">{{ storeName(sid) }}</span>
+                            }
+                          </div>
+                        }
+                      </td>
                       <td>
                         <span class="inv-badge" [class]="'inv-' + inviteStatus(inv)">
                           {{ inviteStatus(inv) }}
@@ -455,6 +448,82 @@ type Tab = 'stores' | 'users' | 'invitations';
             </div>
           }
         </section>
+
+        @if (showInvite()) {
+          <div class="overlay" (click)="closeInvite()">
+            <div class="modal" (click)="$event.stopPropagation()">
+              <h2>Invite a user</h2>
+              @if (modalError()) {
+                <p class="error">{{ modalError() }}</p>
+              }
+              <form class="stacked-form" (ngSubmit)="createInvite()">
+                <label>
+                  Email <span class="req">*</span>
+                  <input
+                    name="mi-email"
+                    type="email"
+                    [(ngModel)]="inviteDraft.email"
+                    placeholder="person@example.com"
+                    required
+                  />
+                </label>
+                <label>
+                  Role
+                  <select name="mi-role" [(ngModel)]="inviteDraft.role">
+                    <option value="STORE_USER">Store User</option>
+                    <option value="COMPANY_ADMIN">Company Admin</option>
+                  </select>
+                </label>
+                <label>
+                  Stores
+                  <div class="store-picks">
+                    @if (invitableStores().length > 0) {
+                      <select (change)="addInviteStore($event)">
+                        <option value="">Add store…</option>
+                        @for (s of invitableStores(); track s.id) {
+                          <option [value]="s.id">{{ s.name }}</option>
+                        }
+                      </select>
+                    }
+                    @if (inviteStoreIds().length > 0) {
+                      <div class="store-chips">
+                        @for (sid of inviteStoreIds(); track sid) {
+                          <span class="chip">
+                            <span class="chip-label">{{ storeName(sid) }}</span>
+                            <button
+                              type="button"
+                              class="chip-x"
+                              (click)="removeInviteStore(sid)"
+                              title="Remove store"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        }
+                      </div>
+                    }
+                  </div>
+                </label>
+                <p class="muted note">
+                  @if (inviteStoreIds().length === 0) {
+                    No store — the invitee gets no store access until one is assigned.
+                  } @else if (inviteStoreIds().length === 1) {
+                    They will start in this store.
+                  } @else {
+                    They pick which of these {{ inviteStoreIds().length }} stores to work in
+                    when they log in.
+                  }
+                </p>
+                <div class="modal-actions">
+                  <button type="submit" [disabled]="saving() || !inviteDraft.email.trim()">
+                    {{ saving() ? 'Sending…' : 'Send invite' }}
+                  </button>
+                  <button type="button" class="ghost" (click)="closeInvite()">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        }
 
         @if (pendingRevoke(); as inv) {
           <div class="overlay" (click)="pendingRevoke.set(null)">
@@ -645,6 +714,11 @@ type Tab = 'stores' | 'users' | 'invitations';
       }
       .section-head h2 {
         margin: 0;
+      }
+      .head-right {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
       }
       /* Fixed-layout table so column widths + row height stay stable
          between view and edit mode. */
@@ -1009,11 +1083,45 @@ export class ManageComponent implements OnInit {
     storeIds: number[];
   } = { role: 'STORE_USER', status: 'ACTIVE', storeId: null, storeIds: [] };
   /** Bound to the "Add store…" select; reset to null after each pick. */
-  addStorePick: number | null = null;
 
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
-  inviteStoreId: number | null = null;
   readonly lastInviteUrl = signal<string | null>(null);
+
+  // Invite modal: several stores may be granted at once (mirrors user editing).
+  readonly showInvite = signal(false);
+  readonly inviteStoreIds = signal<number[]>([]);
+
+  /** Active stores not already picked, for the "Add store…" select. */
+  readonly invitableStores = computed(() =>
+    this.stores().filter((s) => !this.inviteStoreIds().includes(s.id)),
+  );
+
+  openInvite(): void {
+    this.inviteDraft = { email: '', role: 'STORE_USER' };
+    this.inviteStoreIds.set([]);
+    this.modalError.set(null);
+    this.lastInviteUrl.set(null);
+    this.showInvite.set(true);
+  }
+
+  closeInvite(): void {
+    this.showInvite.set(false);
+    this.modalError.set(null);
+  }
+
+  /** Add a store, then snap the select back to "Add store…" (see addUserStore). */
+  addInviteStore(ev: Event): void {
+    const el = ev.target as HTMLSelectElement;
+    const storeId = Number(el.value);
+    el.value = '';
+    if (storeId && !this.inviteStoreIds().includes(storeId)) {
+      this.inviteStoreIds.update((ids) => [...ids, storeId]);
+    }
+  }
+
+  removeInviteStore(storeId: number): void {
+    this.inviteStoreIds.update((ids) => ids.filter((id) => id !== storeId));
+  }
 
   // Invitations tab: revoke confirmation + a freshly minted link to copy.
   readonly pendingRevoke = signal<Invitation | null>(null);
@@ -1243,7 +1351,6 @@ export class ManageComponent implements OnInit {
   // ---- users ----
   startEditUser(u: User): void {
     this.error.set(null);
-    this.addStorePick = null;
     this.userEdit = {
       role: u.role,
       status: u.status,
@@ -1258,16 +1365,23 @@ export class ManageComponent implements OnInit {
     return this.stores().filter((s) => !this.userEdit.storeIds.includes(s.id));
   }
 
-  /** Assign a store from the dropdown, then reset the picker. */
-  addUserStore(storeId: number | null): void {
-    if (storeId == null) return;
+  /**
+   * Assign a store from the dropdown, then snap the select back to its
+   * placeholder. Driven by the native change event rather than ngModel: resetting
+   * a two-way-bound value from inside its own change handler doesn't propagate
+   * back to the view, which left the select showing a stale (or blank) option.
+   */
+  addUserStore(ev: Event): void {
+    const el = ev.target as HTMLSelectElement;
+    const storeId = Number(el.value);
+    el.value = '';
+    if (!storeId) return;
     if (!this.userEdit.storeIds.includes(storeId)) {
       this.userEdit.storeIds = [...this.userEdit.storeIds, storeId];
     }
     if (this.userEdit.storeId == null && this.userEdit.storeIds.length === 1) {
       this.userEdit.storeId = storeId;
     }
-    this.addStorePick = null;
   }
 
   /** Drop a store chip; keep the active store valid. */
@@ -1316,19 +1430,23 @@ export class ManageComponent implements OnInit {
 
   // ---- invitations ----
   createInvite(): void {
-    if (!this.inviteDraft.email) {
-      this.error.set('Email is required.');
+    const email = this.inviteDraft.email.trim();
+    if (!email) {
+      this.modalError.set('Email is required.');
       return;
     }
-    const dto: CreateInvitation = { email: this.inviteDraft.email, role: this.inviteDraft.role };
-    if (this.inviteStoreId != null) dto.storeId = this.inviteStoreId;
+    const dto: CreateInvitation = { email, role: this.inviteDraft.role };
+    const storeIds = this.inviteStoreIds();
+    if (storeIds.length > 0) dto.storeIds = storeIds;
     this.saving.set(true);
+    this.modalError.set(null);
     this.error.set(null);
     this.api.createInvitation(dto).subscribe({
       next: (inv) => {
         this.saving.set(false);
+        this.showInvite.set(false);
         this.inviteDraft = { email: '', role: 'STORE_USER' };
-        this.inviteStoreId = null;
+        this.inviteStoreIds.set([]);
         // The email is normally delivered; only surface the link when it failed
         // (or in console mode, where the admin may still want it).
         if (inv.emailWarning) {
@@ -1341,7 +1459,8 @@ export class ManageComponent implements OnInit {
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(messageFor(err));
+        // Keep the modal open so the admin can correct the input.
+        this.modalError.set(messageFor(err));
       },
     });
   }

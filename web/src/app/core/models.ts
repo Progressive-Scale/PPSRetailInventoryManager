@@ -296,7 +296,10 @@ export interface Invitation {
   companyId: number;
   email: string;
   role: Role;
+  /** Mirrors storeIds when exactly one store is granted, else null. */
   storeId: number | null;
+  /** Stores the invitee is granted on accept. */
+  storeIds: number[];
   expiresAt: string;
   acceptedAt: string | null;
   revokedAt: string | null;
@@ -474,7 +477,8 @@ export interface UpdateUser {
 export interface CreateInvitation {
   email: string;
   role: Role;
-  storeId?: number;
+  /** Stores granted on accept; omit or empty for no store. */
+  storeIds?: number[];
 }
 
 export interface CreateProduct {
