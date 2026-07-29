@@ -366,7 +366,7 @@ interface Column {
   styles: [
     `
       .container {
-        max-width: 1180px;
+        max-width: 1320px;
         margin: 1.5rem auto;
         padding: 0 1rem;
         display: flex;

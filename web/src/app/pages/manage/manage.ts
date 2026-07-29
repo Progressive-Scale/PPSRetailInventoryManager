@@ -301,7 +301,7 @@ type Tab = 'stores' | 'users' | 'invitations';
   styles: [
     `
       .container {
-        max-width: 1000px;
+        max-width: 1320px;
         margin: 1.5rem auto;
         padding: 0 1rem;
         display: flex;
