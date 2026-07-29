@@ -218,7 +218,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                 </thead>
                 <tbody>
                   @for (u of users(); track u.id) {
-                    <tr>
+                    <tr [class.row-edit]="editUserId() === u.id">
                       @if (editUserId() === u.id) {
                         <td class="ctext">{{ u.email }}</td>
                         <td>
@@ -229,19 +229,6 @@ type Tab = 'stores' | 'users' | 'invitations';
                         </td>
                         <td>
                           <div class="store-picks">
-                            @for (sid of userEdit.storeIds; track sid) {
-                              <span class="chip">
-                                {{ storeName(sid) }}
-                                <button
-                                  type="button"
-                                  class="chip-x"
-                                  (click)="removeUserStore(sid)"
-                                  title="Remove store"
-                                >
-                                  ✕
-                                </button>
-                              </span>
-                            }
                             @if (availableToAdd().length > 0) {
                               <select
                                 class="cell-input"
@@ -254,6 +241,23 @@ type Tab = 'stores' | 'users' | 'invitations';
                                   <option [ngValue]="s.id">{{ s.name }}</option>
                                 }
                               </select>
+                            }
+                            @if (userEdit.storeIds.length > 0) {
+                              <div class="store-chips">
+                                @for (sid of userEdit.storeIds; track sid) {
+                                  <span class="chip">
+                                    <span class="chip-label">{{ storeName(sid) }}</span>
+                                    <button
+                                      type="button"
+                                      class="chip-x"
+                                      (click)="removeUserStore(sid)"
+                                      title="Remove store"
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                }
+                              </div>
                             }
                           </div>
                         </td>
@@ -751,11 +755,26 @@ type Tab = 'stores' | 'users' | 'invitations';
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      /* Edit mode: the "Add store…" select sits on the first line so it lines up
+         with the other cell dropdowns; assigned stores stack beneath it. */
       .store-picks {
         display: flex;
-        flex-wrap: wrap;
-        align-items: center;
+        flex-direction: column;
+        align-items: stretch;
         gap: 0.25rem;
+      }
+      .store-chips {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2rem;
+        max-height: 6rem;
+        overflow-y: auto;
+      }
+      /* Keep every dropdown in the edit row on the same baseline even though the
+         stores cell is taller than the rest. */
+      tr.row-edit > td {
+        vertical-align: top;
       }
       /* Assigned stores show as removable chips; the select adds another. */
       .chip {
@@ -769,6 +788,11 @@ type Tab = 'stores' | 'users' | 'invitations';
         color: var(--brand, var(--accent));
         border: 1px solid transparent;
         max-width: 100%;
+      }
+      .chip-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .chip-x {
         background: transparent;
