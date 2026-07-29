@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
@@ -336,11 +336,65 @@ type Tab = 'stores' | 'users' | 'invitations';
         </section>
 
         <section class="card">
-          <h2>Pending invitations</h2>
+          <div class="section-head">
+            <h2>Pending invitations</h2>
+            @if (!loading() && invitations().length > 0) {
+              <span class="muted small">
+                {{ filteredInvitations().length }} of {{ invitations().length }}
+              </span>
+            }
+          </div>
+          @if (!loading() && invitations().length > 0) {
+            <div class="filters">
+              <label class="f">
+                Email
+                <input
+                  name="fi-email"
+                  placeholder="Search email"
+                  [ngModel]="inviteSearch()"
+                  (ngModelChange)="inviteSearch.set($event)"
+                />
+              </label>
+              <label class="f">
+                Status
+                <select
+                  name="fi-status"
+                  [ngModel]="inviteStatusFilter()"
+                  (ngModelChange)="inviteStatusFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  @for (s of inviteStatuses; track s) {
+                    <option [ngValue]="s">{{ s }}</option>
+                  }
+                </select>
+              </label>
+              <label class="f">
+                Role
+                <select
+                  name="fi-role"
+                  [ngModel]="inviteRoleFilter()"
+                  (ngModelChange)="inviteRoleFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  <option [ngValue]="'COMPANY_ADMIN'">Company Admin</option>
+                  <option [ngValue]="'STORE_USER'">Store User</option>
+                </select>
+              </label>
+              @if (inviteFiltersActive()) {
+                <div class="f-actions">
+                  <button type="button" class="sm ghost" (click)="clearInviteFilters()">
+                    Clear
+                  </button>
+                </div>
+              }
+            </div>
+          }
           @if (loading()) {
             <p class="muted">Loading…</p>
           } @else if (invitations().length === 0) {
             <p class="muted">No invitations.</p>
+          } @else if (filteredInvitations().length === 0) {
+            <p class="muted">No invitations match these filters.</p>
           } @else {
             <div class="table-scroll">
               <table>
@@ -354,7 +408,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                   </tr>
                 </thead>
                 <tbody>
-                  @for (inv of invitations(); track inv.id) {
+                  @for (inv of filteredInvitations(); track inv.id) {
                     <tr>
                       <td>{{ inv.email }}</td>
                       <td>{{ roleLabel(inv.role) }}</td>
@@ -550,6 +604,25 @@ type Tab = 'stores' | 'users' | 'invitations';
       }
       .filter-row select {
         margin-left: 0.4rem;
+      }
+      /* Same filter bar as the inventory page. */
+      .filters {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin: 0.85rem 0 1rem;
+      }
+      .f {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .f-actions {
+        display: flex;
+        gap: 0.4rem;
       }
       tr.inactive-row td {
         color: var(--muted);
@@ -945,6 +1018,45 @@ export class ManageComponent implements OnInit {
   // Invitations tab: revoke confirmation + a freshly minted link to copy.
   readonly pendingRevoke = signal<Invitation | null>(null);
   readonly freshLink = signal<string | null>(null);
+
+  // Invitations filters. Purely client-side over the already-loaded list, so
+  // results update as you type with no request per keystroke.
+  readonly inviteStatuses = [
+    'Sent',
+    'Pending',
+    'Failed',
+    'Accepted',
+    'Revoked',
+    'Expired',
+  ] as const;
+  readonly inviteSearch = signal('');
+  readonly inviteStatusFilter = signal<string | null>(null);
+  readonly inviteRoleFilter = signal<Role | null>(null);
+
+  readonly inviteFiltersActive = computed(
+    () =>
+      this.inviteSearch().trim().length > 0 ||
+      this.inviteStatusFilter() !== null ||
+      this.inviteRoleFilter() !== null,
+  );
+
+  readonly filteredInvitations = computed(() => {
+    const term = this.inviteSearch().trim().toLowerCase();
+    const status = this.inviteStatusFilter();
+    const role = this.inviteRoleFilter();
+    return this.invitations().filter(
+      (inv) =>
+        (!term || inv.email.toLowerCase().includes(term)) &&
+        (!status || this.inviteStatus(inv) === status) &&
+        (!role || inv.role === role),
+    );
+  });
+
+  clearInviteFilters(): void {
+    this.inviteSearch.set('');
+    this.inviteStatusFilter.set(null);
+    this.inviteRoleFilter.set(null);
+  }
 
   ngOnInit(): void {
     // Stores are needed by every tab (user/invite store pickers) and are the
