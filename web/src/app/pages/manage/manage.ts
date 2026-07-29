@@ -82,13 +82,13 @@ type Tab = 'stores' | 'users' | 'invitations';
                           <button class="sm danger" (click)="askDeleteStore(s)" [disabled]="saving()">Delete</button>
                         </td>
                       } @else {
-                        <td>{{ s.name }}</td>
-                        <td class="muted">{{ s.address1 }}</td>
-                        <td class="muted">{{ s.address2 }}</td>
-                        <td class="muted">{{ s.city }}</td>
-                        <td class="muted">{{ s.state }}</td>
-                        <td class="muted">{{ s.zip }}</td>
-                        <td class="muted">{{ s.notes }}</td>
+                        <td [title]="s.name">{{ s.name }}</td>
+                        <td class="muted" [title]="s.address1">{{ s.address1 }}</td>
+                        <td class="muted" [title]="s.address2">{{ s.address2 }}</td>
+                        <td class="muted" [title]="s.city">{{ s.city }}</td>
+                        <td class="muted" [title]="s.state">{{ s.state }}</td>
+                        <td class="muted" [title]="s.zip">{{ s.zip }}</td>
+                        <td class="muted" [title]="s.notes">{{ s.notes }}</td>
                         <td>{{ s.isActive ? 'Active' : 'Inactive' }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditStore(s)">Edit</button>
