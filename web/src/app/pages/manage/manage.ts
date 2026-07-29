@@ -230,16 +230,31 @@ type Tab = 'stores' | 'users' | 'invitations';
                         </td>
                         <td>
                           <div class="store-picks">
-                            @for (s of stores(); track s.id) {
-                              <label class="chk">
-                                <input
-                                  type="checkbox"
-                                  [checked]="userEdit.storeIds.includes(s.id)"
-                                  (change)="toggleUserStore(s.id)"
-                                  name="u-st-{{ u.id }}-{{ s.id }}"
-                                />
-                                {{ s.name }}
-                              </label>
+                            @for (sid of userEdit.storeIds; track sid) {
+                              <span class="chip">
+                                {{ storeName(sid) }}
+                                <button
+                                  type="button"
+                                  class="chip-x"
+                                  (click)="removeUserStore(sid)"
+                                  title="Remove store"
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            }
+                            @if (availableToAdd().length > 0) {
+                              <select
+                                class="cell-input"
+                                [(ngModel)]="addStorePick"
+                                (ngModelChange)="addUserStore($event)"
+                                name="u-add-{{ u.id }}"
+                              >
+                                <option [ngValue]="null">Add store…</option>
+                                @for (s of availableToAdd(); track s.id) {
+                                  <option [ngValue]="s.id">{{ s.name }}</option>
+                                }
+                              </select>
                             }
                           </div>
                         </td>
@@ -623,14 +638,38 @@ type Tab = 'stores' | 'users' | 'invitations';
       }
       .store-picks {
         display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-        max-height: 7rem;
-        overflow-y: auto;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.25rem;
       }
-      .store-picks .chk {
-        font-size: 0.82rem;
-        white-space: nowrap;
+      /* Assigned stores show as removable chips; the select adds another. */
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.78rem;
+        padding: 0.1rem 0.2rem 0.1rem 0.45rem;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--brand, var(--accent));
+        border: 1px solid transparent;
+        max-width: 100%;
+      }
+      .chip-x {
+        background: transparent;
+        border: none;
+        color: inherit;
+        cursor: pointer;
+        padding: 0 0.2rem;
+        font-size: 0.72rem;
+        line-height: 1;
+      }
+      .chip-x:hover {
+        color: #b42318;
+      }
+      .store-picks select {
+        font-size: 0.8rem;
+        padding: 0.2rem 0.3rem;
       }
       /* Stores table: truncation lives on the inner span so cells can overflow
          visibly and show a themed tooltip bubble for clipped values. */
@@ -755,6 +794,8 @@ export class ManageComponent implements OnInit {
     storeId: number | null;
     storeIds: number[];
   } = { role: 'STORE_USER', status: 'ACTIVE', storeId: null, storeIds: [] };
+  /** Bound to the "Add store…" select; reset to null after each pick. */
+  addStorePick: number | null = null;
 
   inviteDraft: { email: string; role: Role } = { email: '', role: 'STORE_USER' };
   inviteStoreId: number | null = null;
@@ -945,6 +986,7 @@ export class ManageComponent implements OnInit {
   // ---- users ----
   startEditUser(u: User): void {
     this.error.set(null);
+    this.addStorePick = null;
     this.userEdit = {
       role: u.role,
       status: u.status,
@@ -954,17 +996,29 @@ export class ManageComponent implements OnInit {
     this.editUserId.set(u.id);
   }
 
-  /** Add/remove a store from the permitted set; keep the active store valid. */
-  toggleUserStore(storeId: number): void {
-    const ids = this.userEdit.storeIds;
-    const idx = ids.indexOf(storeId);
-    if (idx >= 0) ids.splice(idx, 1);
-    else ids.push(storeId);
-    if (this.userEdit.storeId != null && !ids.includes(this.userEdit.storeId)) {
-      this.userEdit.storeId = null;
+  /** Stores not yet assigned — the options offered by the "Add store…" picker. */
+  availableToAdd(): Store[] {
+    return this.stores().filter((s) => !this.userEdit.storeIds.includes(s.id));
+  }
+
+  /** Assign a store from the dropdown, then reset the picker. */
+  addUserStore(storeId: number | null): void {
+    if (storeId == null) return;
+    if (!this.userEdit.storeIds.includes(storeId)) {
+      this.userEdit.storeIds = [...this.userEdit.storeIds, storeId];
     }
-    if (this.userEdit.storeId == null && ids.length === 1) {
-      this.userEdit.storeId = ids[0];
+    if (this.userEdit.storeId == null && this.userEdit.storeIds.length === 1) {
+      this.userEdit.storeId = storeId;
+    }
+    this.addStorePick = null;
+  }
+
+  /** Drop a store chip; keep the active store valid. */
+  removeUserStore(storeId: number): void {
+    this.userEdit.storeIds = this.userEdit.storeIds.filter((id) => id !== storeId);
+    if (this.userEdit.storeId === storeId) {
+      this.userEdit.storeId =
+        this.userEdit.storeIds.length === 1 ? this.userEdit.storeIds[0] : null;
     }
   }
 
