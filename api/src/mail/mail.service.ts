@@ -116,17 +116,22 @@ export class MailService {
   }
 
   /**
-   * Resend rejects sandbox sends to anyone but the account owner with a 403
-   * ("You can only send testing emails to your own email address"). Match
-   * loosely so wording changes don't break detection.
+   * The sandbox sender can only reach the Resend account's own address. Resend
+   * expresses that rejection a few different ways (observed live):
+   *   403 "You can only send testing emails to your own email address (…)"
+   *   422 "Invalid `to` field. Please use our testing email address instead of
+   *        domains like `example.com`. …"
+   * plus the unverified-domain wording. Match loosely on the distinctive phrases
+   * so a copy tweak on their side doesn't silently degrade to a generic error.
    */
   private isSandboxRecipientRejection(status: number, body: string): boolean {
     if (status !== 403 && status !== 422) return false;
     const b = body.toLowerCase();
     return (
       b.includes('own email address') ||
-      b.includes('testing emails') ||
-      (b.includes('verify a domain') && b.includes('resend.dev')) ||
+      b.includes('testing email') || // covers "testing email address" + "testing emails"
+      b.includes('invalid `to` field') ||
+      b.includes('verify a domain') ||
       b.includes('domain is not verified')
     );
   }
