@@ -257,7 +257,7 @@ raises alerts for on-floor units nearing/past expiration so staff rotate stock.
 > products is a planned enhancement). The scanner's cycle-count screen is not yet
 > location-aware — counted quantities default to the Backroom (a follow-up).
 
-## Invitation emails (Resend)
+## Invitation emails
 
 Company admins invite users from **Manage → Invitations**. Creating an invitation
 emails the invitee an accept link; the link is single-use, expires in 7 days, and
@@ -268,60 +268,105 @@ exactly once — in the emailed accept URL (and in the create/resend API respons
 so the admin can copy it if the email fails). It is not retrievable afterwards;
 "Copy link" on a failed row mints a **new** link (and invalidates the old one).
 
-### Setup
+**Postmark is the current production provider.** Resend is retained as a working
+alternative, and `console` is the default for development.
 
-1. Create a [Resend](https://resend.com) account and an **API key**.
-2. Set the mail variables in `api/.env` (see `api/.env.example`):
+### Choosing a provider
 
-   | Variable | Meaning |
-   | --- | --- |
-   | `MAIL_MODE` | `console` (default) or `live` |
-   | `RESEND_API_KEY` | Resend API key; only needed for `live` |
-   | `MAIL_FROM` | Sender, e.g. `"PPS Retail Inventory <onboarding@resend.dev>"` |
-   | `APP_BASE_URL` | Optional origin override for the accept link (localhost testing) |
+The provider is chosen in exactly one place — `api/src/mail/mail.module.ts` — from
+the environment. All providers send the identical template, so switching cannot
+change what the invitee receives.
 
-**`MAIL_MODE=console` is the default** whenever `MAIL_MODE` is unset *or*
-`RESEND_API_KEY` is empty. In console mode nothing is sent: the full email —
-including a working accept URL — is logged to the API console. Local development
-and automated tests therefore need no API key and never deliver mail.
+| Variable | Meaning |
+| --- | --- |
+| `MAIL_PROVIDER` | `postmark` \| `resend` \| `console` |
+| `MAIL_FROM` | Sender; must be verified in the active provider |
+| `POSTMARK_SERVER_TOKEN` | Postmark **Server** API token |
+| `POSTMARK_MESSAGE_STREAM` | Stream name; defaults to `outbound` |
+| `RESEND_API_KEY` | Resend API key |
+| `MAIL_MODE` | Legacy: `console` forces console; `live` means Resend |
+| `APP_BASE_URL` | Optional origin override for the accept link (localhost testing) |
+
+Precedence, highest first:
+
+1. `MAIL_MODE=console` → **console**, regardless of `MAIL_PROVIDER` (a kill switch
+   for turning off outbound mail without unsetting credentials).
+2. `MAIL_PROVIDER` set → that provider. If its token is missing it **falls back to
+   console** and logs a warning rather than failing to boot.
+3. `MAIL_MODE=live` with no `MAIL_PROVIDER` → **Resend** (the original contract, so
+   existing deployments keep working untouched).
+4. Nothing set → **console**.
+
+**Console mode is the default** and sends nothing: the full email, including a
+working accept URL, is logged to the API console. Local development and automated
+tests need no credentials. The chosen provider is logged once at boot.
 
 The accept URL is always built for the **invitee's** company subdomain
 (`https://{companySlug}.{ROOT_DOMAIN}/accept-invite?token=…`), not the host the
 admin happened to be on. Set `APP_BASE_URL` (e.g. `http://demo.localhost:4200`)
 when testing on localhost, where subdomains are awkward.
 
-### Current sender: Resend sandbox (domain not verified yet)
+### Postmark setup (production)
 
-We have **not** verified our sending domain, so live mode currently uses Resend's
-sandbox sender:
+1. **Get the Server API Token:** in Postmark open your **Server** → **API Tokens**.
+   This is a *per-server* token — not the Account token, which cannot send mail.
+2. **Verify the sender:** `MAIL_FROM` must exactly match a confirmed **Sender
+   Signature**, or be an address on a **verified domain**, in that Postmark
+   account. Postmark rejects anything else outright (see the failure table below).
+3. **Message stream:** invitations are **transactional**, so leave
+   `POSTMARK_MESSAGE_STREAM` on the default transactional stream `outbound`.
+   **Do not point it at a broadcast stream** — those are for bulk/marketing mail
+   and carry different throttling and unsubscribe handling.
+4. Set in `api/.env`:
+
+   ```
+   MAIL_PROVIDER=postmark
+   MAIL_FROM="PPS Retail Inventory <noreply@provisionprocessingsystem.com>"
+   POSTMARK_SERVER_TOKEN=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   POSTMARK_MESSAGE_STREAM=outbound
+   ```
+
+Unlike the Resend sandbox, a verified Postmark sender delivers to **any**
+recipient — no allow-listing.
+
+Sends are verifiable in Postmark under **Activity**.
+
+#### Postmark failure reasons
+
+A failed send never fails invitation creation. The invitation is still stored,
+marked `email_status = FAILED` with one of these reasons, and the admin list shows
+the reason plus **Copy link** to recover the flow manually:
+
+| Postmark response | Recorded reason |
+| --- | --- |
+| `401` | `Postmark token invalid` |
+| `422` ErrorCode `400`/`401` | `sender address not verified in Postmark — verify {MAIL_FROM} or use a verified sender signature` |
+| `422` ErrorCode `300` | `recipient address invalid` |
+| `406` or ErrorCode `406` | `recipient previously bounced — reactivate in Postmark or correct the address` |
+| anything else | `Postmark responded {status} (ErrorCode n): {Postmark's Message}` |
+
+A `2xx` carrying a non-zero `ErrorCode` is treated as a failure too — Postmark
+reports per-message problems in the body, so the status alone is not proof of
+acceptance.
+
+### Resend (alternative provider, retained)
 
 ```
+MAIL_PROVIDER=resend
+RESEND_API_KEY=re_…
 MAIL_FROM="PPS Retail Inventory <onboarding@resend.dev>"
 ```
 
-The sandbox **only delivers to the email address on our Resend account**. Resend
-enforces this; invites to any other address come back rejected. When that happens
-the invitation is still created and is marked `email_status = FAILED` with the
-reason:
+Our domain is **not** verified in Resend, so this uses the `resend.dev` **sandbox
+sender**, which only delivers to the email address on the Resend account. Invites
+to any other address are recorded as `FAILED` with:
 
 > sandbox sender: recipient not allowed — verify a domain to invite external
 > addresses
 
-**Workaround until the domain is verified:** the Invitations list shows that
-reason on the failed row and offers **Copy link** — copy the fresh accept URL and
-send it to the invitee yourself (Slack, your own mail client). The invite works
-normally from there.
-
-### Switching to our own domain
-
-This is the **single production switch step** — no code changes required:
-
-1. Verify `provisionprocessingsystem.com` in Resend (add the DNS records it lists).
-2. Change the sender:
-   ```
-   MAIL_FROM="Retail Inventory <noreply@provisionprocessingsystem.com>"
-   ```
-3. Done — invitations now deliver to any recipient.
+Use **Copy link** on the failed row to send the invite yourself. Verifying a domain
+in Resend (then pointing `MAIL_FROM` at it) lifts the restriction with no code
+changes.
 
 ### Invitation lifecycle
 
