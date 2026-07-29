@@ -379,6 +379,8 @@ type Tab = 'stores' | 'users' | 'invitations';
                           <button class="sm ghost" (click)="resend(inv)" [disabled]="saving()">
                             Resend
                           </button>
+                        }
+                        @if (canRevoke(inv)) {
                           <button class="sm danger" (click)="askRevoke(inv)" [disabled]="saving()">
                             Revoke
                           </button>
@@ -1245,6 +1247,14 @@ export class ManageComponent implements OnInit {
   /** Accepted invitations are done; revoke/resend no longer apply. */
   isTerminal(inv: Invitation): boolean {
     return !!inv.acceptedAt;
+  }
+
+  /**
+   * Revoke is offered only for a delivered, still-live invitation — i.e. status
+   * "Sent". Accepted/Revoked/Expired rows have nothing left to revoke.
+   */
+  canRevoke(inv: Invitation): boolean {
+    return this.inviteStatus(inv) === 'Sent';
   }
 
   askRevoke(inv: Invitation): void {
