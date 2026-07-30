@@ -129,22 +129,11 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                       @if (editId() === loc.id) {
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
                         <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
-                        @if (!loc.hasHistory && !loc.hasStock) {
-                          <!-- Only a never-used location can be removed outright;
-                               anything with history is retired via Status. -->
-                          <span class="tip-wrap">
-                            <button
-                              class="sm danger"
-                              (click)="askDelete(loc)"
-                              [disabled]="saving() || loc.isLastOfRequiredKind"
-                            >
-                              Delete
-                            </button>
-                            @if (loc.isLastOfRequiredKind) {
-                              <span class="act-tip">{{ lastOfKindTip(loc) }}</span>
-                            }
-                          </span>
-                        }
+                        <!-- Always offered. Whether it can actually go, and why not,
+                             is explained in the confirmation dialog. -->
+                        <button class="sm danger" (click)="askDelete(loc)" [disabled]="saving()">
+                          Delete
+                        </button>
                       } @else {
                         <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
                       }
@@ -225,11 +214,29 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
         <div class="overlay" (click)="cancelDelete()">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Delete location</h3>
-            @if (loc.hasStock) {
+            @if (loc.isLastOfRequiredKind) {
+              <p class="confirm-text">
+                {{ lastOfKindTip(loc) }} Add another {{ kindLabel(loc.kind) }} location to
+                this store before removing <strong>{{ loc.name }}</strong>.
+              </p>
+            } @else if (loc.hasStock) {
               <p class="confirm-text">
                 <strong>{{ loc.name }}</strong> still holds
                 {{ loc.stockCount }} item{{ loc.stockCount === 1 ? '' : 's' }}. Move them
-                out first.
+                out first, then it can be removed or made inactive.
+              </p>
+            } @else if (loc.hasHistory && loc.isActive) {
+              <p class="confirm-text">
+                <strong>{{ loc.name }}</strong> is empty, but past movements still refer to
+                it, so it can't be deleted outright — its history would be lost. Make it
+                inactive instead: it disappears from dropdowns and move targets while old
+                records keep showing its name.
+              </p>
+            } @else if (loc.hasHistory) {
+              <p class="confirm-text">
+                <strong>{{ loc.name }}</strong> can't be deleted because past movements
+                still refer to it. It is already inactive, so it is hidden everywhere
+                except those historical records.
               </p>
             } @else {
               <p class="confirm-text">
@@ -241,11 +248,19 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
               <p class="error">{{ deleteError() }}</p>
             }
             <div class="modal-actions">
-              @if (loc.hasStock) {
+              @if (loc.isLastOfRequiredKind) {
+                <!-- nothing to offer but Cancel -->
+              } @else if (loc.hasStock) {
                 <button (click)="viewStockAt(loc)">View these items</button>
+              } @else if (loc.hasHistory && loc.isActive) {
+                <button class="danger-btn" (click)="deactivateFromDialog(loc)" [disabled]="saving()">
+                  {{ saving() ? 'Working…' : 'Make inactive' }}
+                </button>
+              } @else if (loc.hasHistory) {
+                <!-- already inactive: nothing to offer but Cancel -->
               } @else {
                 <button class="danger-btn" (click)="confirmDelete()" [disabled]="saving()">
-                  Delete
+                  {{ saving() ? 'Deleting…' : 'Delete' }}
                 </button>
               }
               <button class="ghost" (click)="cancelDelete()" [disabled]="saving()">Cancel</button>
@@ -621,6 +636,28 @@ export class LocationsComponent implements OnInit {
 
   lastOfKindTip(loc: StoreLocation): string {
     return `Every store needs at least one active ${this.kindLabel(loc.kind)} location.`;
+  }
+
+  /**
+   * Offered when a delete is refused because the location has history: retire it in
+   * one step rather than making the user close the dialog and use the Status
+   * dropdown. The server runs the same guards.
+   */
+  deactivateFromDialog(loc: StoreLocation): void {
+    this.saving.set(true);
+    this.deleteError.set(null);
+    this.api.deactivateLocation(loc.id).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.pendingDelete.set(null);
+        this.editId.set(null);
+        this.reload();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.deleteError.set(messageFor(err));
+      },
+    });
   }
 
   /** Jump to the stock grid filtered to this location so the items can be moved. */
