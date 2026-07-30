@@ -30,6 +30,13 @@ function isRequiredKind(kind: LocationKind): kind is RequiredKind {
   return (REQUIRED_KINDS as readonly string[]).includes(kind);
 }
 
+/**
+ * Human label for a KIND, used in guard messages. Deliberately NOT
+ * DEFAULT_LOCATION_NAMES: that constant is the initial *name* of a location and a
+ * store may rename it, whereas this label describes the kind itself. A store that
+ * renamed its backroom to "Stock Room West" should still be told "every store
+ * needs at least one active Backroom location".
+ */
 export function kindLabel(kind: LocationKind): string {
   if (kind === 'BACKROOM') return 'Backroom';
   if (kind === 'ONFLOOR') return 'On Floor';

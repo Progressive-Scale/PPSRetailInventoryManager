@@ -328,6 +328,22 @@ export const products = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// store_locations — RULE: NAMES ARE DISPLAY ONLY.
+//
+//   `name` is user-editable at any time. NOTHING in business logic may depend on
+//   it: no query filter, guard, default-selection, sort or comparison. The
+//   `kind` column (BACKROOM | ONFLOOR | CUSTOM) is the ONLY key logic may use,
+//   and it is immutable once a location is created — there is deliberately no
+//   `kind` on the update DTO.
+//
+//   Combine `kind` with `is_active` for every rule: the required-kind invariant
+//   counts active rows by kind; handoff landing picks the oldest ACTIVE row of
+//   kind BACKROOM; expiration alerts scan every ACTIVE row of kind ONFLOOR.
+//
+//   The initial display names live in locations/location-names.ts and must be
+//   imported only by the creation path and the seed script.
+// ---------------------------------------------------------------------------
 // Named areas within a store. Every store has exactly one BACKROOM and one
 // ONFLOOR system location (auto-created; renamable, not deletable) plus any
 // CUSTOM locations. System rows are identified by `kind`, not by name.

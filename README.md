@@ -267,6 +267,16 @@ hard-deleted, because the ledger references it.
 Names are unique among *active* locations in a store, so a deactivated
 location's name can be reused.
 
+> **Convention — location logic keys on `kind`, never on `name`.** A location's
+> name is a user-editable label; its `kind` (`BACKROOM` / `ONFLOOR` / `CUSTOM`)
+> is immutable and is the only field business logic may depend on. Renaming
+> "Backroom" to "Stock Room West" must change nothing but the display. When
+> reviewing a change, reject any query filter, guard, default or comparison that
+> matches a location by name. The initial names live in
+> `api/src/locations/location-names.ts` and belong only to the creation and seed
+> paths. Same rule of thumb applies generally: **if a user can edit the field,
+> logic must not depend on it.**
+
 When a store has several active locations of a required kind, the **default** one
 (handoff landing, cycle-count fallback) is the oldest active by `sort_order`, then
 `created_at`, then `id`. Expiration alerts watch **all** active On Floor

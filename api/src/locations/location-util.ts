@@ -1,6 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { Tx } from '../db/tenant-db.service';
 import { LocationKind, StoreLocation, storeLocations } from '../db/schema';
+import { DEFAULT_LOCATION_NAMES } from './location-names';
 
 /**
  * Resolve the DEFAULT location of a required kind for a store.
@@ -70,7 +71,19 @@ export async function createSystemLocations(
   storeId: number,
 ): Promise<void> {
   await tx.insert(storeLocations).values([
-    { companyId, storeId, name: 'Backroom', kind: 'BACKROOM', sortOrder: 0 },
-    { companyId, storeId, name: 'On Floor', kind: 'ONFLOOR', sortOrder: 1 },
+    {
+      companyId,
+      storeId,
+      name: DEFAULT_LOCATION_NAMES.BACKROOM,
+      kind: 'BACKROOM',
+      sortOrder: 0,
+    },
+    {
+      companyId,
+      storeId,
+      name: DEFAULT_LOCATION_NAMES.ONFLOOR,
+      kind: 'ONFLOOR',
+      sortOrder: 1,
+    },
   ]);
 }

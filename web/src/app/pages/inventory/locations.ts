@@ -822,6 +822,10 @@ export class LocationsComponent implements OnInit {
     });
   }
 
+  /**
+   * Label for a KIND (badge + guard text). Not the location's name — a renamed
+   * backroom still shows the Backroom type.
+   */
   kindLabel(kind: string): string {
     switch (kind) {
       case 'BACKROOM':

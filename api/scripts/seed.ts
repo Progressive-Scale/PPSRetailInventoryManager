@@ -14,6 +14,7 @@ import { hash } from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import { DEFAULT_LOCATION_NAMES } from '../src/locations/location-names';
 import { Pool } from 'pg';
 import * as schema from '../src/db/schema';
 
@@ -137,9 +138,10 @@ async function ensureSystemLocations(
   companyId: number,
   storeId: number,
 ): Promise<{ backroom: number; onfloor: number }> {
+  // Initial display names only — every lookup below keys on `kind`.
   const defaults: Array<{ name: string; kind: 'BACKROOM' | 'ONFLOOR'; sortOrder: number }> = [
-    { name: 'Backroom', kind: 'BACKROOM', sortOrder: 0 },
-    { name: 'On Floor', kind: 'ONFLOOR', sortOrder: 1 },
+    { name: DEFAULT_LOCATION_NAMES.BACKROOM, kind: 'BACKROOM', sortOrder: 0 },
+    { name: DEFAULT_LOCATION_NAMES.ONFLOOR, kind: 'ONFLOOR', sortOrder: 1 },
   ];
   const existing = await db
     .select()
@@ -164,7 +166,7 @@ async function ensureSystemLocations(
   const backroom = rows.find((r) => r.kind === 'BACKROOM' && r.isActive);
   const onfloor = rows.find((r) => r.kind === 'ONFLOOR' && r.isActive);
   if (!backroom || !onfloor)
-    throw new Error(`Store ${storeId} has no active Backroom / On Floor location.`);
+    throw new Error(`Store ${storeId} has no active BACKROOM / ONFLOOR location.`);
   return { backroom: backroom.id, onfloor: onfloor.id };
 }
 
