@@ -1,7 +1,16 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, HostListener, inject, OnInit, signal } from '@angular/core';
+import {
+  Component,
+  computed,
+  DestroyRef,
+  HostListener,
+  inject,
+  OnInit,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { firstValueFrom } from 'rxjs';
+import { catchError, EMPTY, firstValueFrom, Subject, switchMap, timer } from 'rxjs';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
@@ -17,6 +26,9 @@ import { LocationsComponent } from './locations';
 import { ItemDetailComponent } from './item-detail';
 
 type SubTab = 'stock' | 'locations';
+
+/** Long enough to swallow a burst of typing, short enough to feel instant. */
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface Column {
   label: string;
@@ -56,11 +68,21 @@ interface Column {
             }
             <label class="f">
               Product name / ID
-              <input name="f-search" [(ngModel)]="searchTerm" placeholder="Name, SKU, barcode or serial" />
+              <input
+                name="f-search"
+                [ngModel]="searchTerm"
+                (ngModelChange)="onSearchChange($event)"
+                placeholder="Name, SKU, barcode or serial"
+              />
             </label>
             <label class="f">
               Location
-              <select [(ngModel)]="locationFilter" name="f-loc" [disabled]="filterLocations().length === 0">
+              <select
+                [ngModel]="locationFilter"
+                (ngModelChange)="locationFilter = $event; onFilterChange()"
+                name="f-loc"
+                [disabled]="filterLocations().length === 0"
+              >
                 <option [ngValue]="null">All</option>
                 @for (l of filterLocations(); track l.id) {
                   <option [ngValue]="l.id">{{ l.name }}</option>
@@ -69,7 +91,11 @@ interface Column {
             </label>
             <label class="f">
               Type
-              <select [(ngModel)]="typeFilter" name="f-type">
+              <select
+                [ngModel]="typeFilter"
+                (ngModelChange)="typeFilter = $event; onFilterChange()"
+                name="f-type"
+              >
                 <option [ngValue]="null">All</option>
                 <option [ngValue]="'SERIALIZED'">Serialized</option>
                 <option [ngValue]="'QUANTITY'">UPC</option>
@@ -77,7 +103,11 @@ interface Column {
             </label>
             <label class="f">
               Status
-              <select [(ngModel)]="statusFilter" name="f-status">
+              <select
+                [ngModel]="statusFilter"
+                (ngModelChange)="statusFilter = $event; onFilterChange()"
+                name="f-status"
+              >
                 <option [ngValue]="'ON_HAND'">On hand</option>
                 <option [ngValue]="'SOLD'">Sold</option>
                 <option [ngValue]="'ALL'">All</option>
@@ -85,15 +115,34 @@ interface Column {
             </label>
             <label class="f">
               Created from
-              <input type="date" name="f-from" [(ngModel)]="createdFrom" />
+              <input
+                type="date"
+                name="f-from"
+                [ngModel]="createdFrom"
+                (ngModelChange)="createdFrom = $event; onFilterChange()"
+              />
             </label>
             <label class="f">
               Created to
-              <input type="date" name="f-to" [(ngModel)]="createdTo" />
+              <input
+                type="date"
+                name="f-to"
+                [ngModel]="createdTo"
+                (ngModelChange)="createdTo = $event; onFilterChange()"
+              />
             </label>
             <div class="f-actions">
-              <button type="submit" [disabled]="loading()">Apply</button>
-              <button type="button" class="ghost" (click)="clearFilters()" [disabled]="loading()">Clear</button>
+              <button
+                type="button"
+                class="ghost"
+                (click)="clearFilters()"
+                [disabled]="loading() || !filtersActive()"
+              >
+                Clear
+              </button>
+              <button type="button" class="ghost" (click)="refresh()" [disabled]="loading()">
+                Refresh
+              </button>
             </div>
           </form>
 
@@ -430,6 +479,20 @@ interface Column {
         display: flex;
         gap: 0.4rem;
       }
+      /* One height for every control in the bar, so Clear/Refresh line up with
+         the inputs (dates and selects otherwise render slightly different). */
+      .filters input,
+      .filters select,
+      .filters .f-actions button {
+        height: 2.25rem;
+        box-sizing: border-box;
+      }
+      .filters .f-actions button {
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        font-family: inherit;
+        border-radius: 8px;
+      }
       input,
       select {
         padding: 0.45rem 0.55rem;
@@ -765,6 +828,7 @@ interface Column {
 export class InventoryComponent implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
 
@@ -884,6 +948,7 @@ export class InventoryComponent implements OnInit {
   });
 
   ngOnInit(): void {
+    this.startReloadPipeline();
     if (this.isCompanyAdmin) {
       this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
     } else {
@@ -903,35 +968,91 @@ export class InventoryComponent implements OnInit {
     });
   }
 
-  reload(): void {
-    this.loading.set(true);
-    this.listError.set(null);
-    this.api
-      .listStock({
-        storeId: this.storeFilter() ?? undefined,
-        search: this.searchTerm.trim() || undefined,
-        locationId: this.locationFilter ?? undefined,
-        type: this.typeFilter ?? undefined,
-        status: this.statusFilter,
-        createdFrom: this.createdFrom || undefined,
-        createdTo: this.createdTo || undefined,
-        sortBy: this.sortBy(),
-        sortDir: this.sortDir(),
-        limit: this.limit(),
-        offset: this.offset(),
-      })
-      .subscribe({
-        next: (res) => {
-          this.rows.set(res.data);
-          this.total.set(res.total);
-          this.loading.set(false);
-          this.loaded.set(true);
-        },
-        error: (err) => {
-          this.loading.set(false);
-          this.listError.set(messageFor(err));
-        },
+  /**
+   * Filters apply as you interact — there is no Apply button. Every request goes
+   * through one switchMap pipeline, so a newer change CANCELS the pending debounce
+   * and any in-flight HTTP request. Typing therefore costs one request per settled
+   * input, not one per keystroke.
+   */
+  private readonly reloadTrigger = new Subject<number>();
+
+  private startReloadPipeline(): void {
+    this.reloadTrigger
+      .pipe(
+        switchMap((debounceMs) =>
+          timer(debounceMs).pipe(
+            switchMap(() => {
+              this.loading.set(true);
+              this.listError.set(null);
+              return this.api
+                .listStock({
+                  storeId: this.storeFilter() ?? undefined,
+                  search: this.searchTerm.trim() || undefined,
+                  locationId: this.locationFilter ?? undefined,
+                  type: this.typeFilter ?? undefined,
+                  status: this.statusFilter,
+                  createdFrom: this.createdFrom || undefined,
+                  createdTo: this.createdTo || undefined,
+                  sortBy: this.sortBy(),
+                  sortDir: this.sortDir(),
+                  limit: this.limit(),
+                  offset: this.offset(),
+                })
+                .pipe(
+                  catchError((err) => {
+                    this.loading.set(false);
+                    this.listError.set(messageFor(err));
+                    return EMPTY;
+                  }),
+                );
+            }),
+          ),
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((res) => {
+        this.rows.set(res.data);
+        this.total.set(res.total);
+        this.loading.set(false);
+        this.loaded.set(true);
       });
+  }
+
+  reload(): void {
+    this.reloadTrigger.next(0);
+  }
+
+  /** Re-run the current query without touching the filters. */
+  refresh(): void {
+    this.clearSelection();
+    this.reload();
+  }
+
+  /** Selects and dates apply immediately. */
+  onFilterChange(): void {
+    this.clearSelection();
+    this.offset.set(0);
+    this.reload();
+  }
+
+  /** Text search waits for typing to settle. */
+  onSearchChange(value: string): void {
+    this.searchTerm = value;
+    this.clearSelection();
+    this.offset.set(0);
+    this.reloadTrigger.next(SEARCH_DEBOUNCE_MS);
+  }
+
+  /** True when anything differs from the default view. */
+  filtersActive(): boolean {
+    return (
+      this.searchTerm.trim().length > 0 ||
+      this.locationFilter !== null ||
+      this.typeFilter !== null ||
+      this.statusFilter !== 'ON_HAND' ||
+      this.createdFrom !== '' ||
+      this.createdTo !== ''
+    );
   }
 
   applyFilters(): void {
