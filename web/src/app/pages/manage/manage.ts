@@ -38,10 +38,50 @@ type Tab = 'stores' | 'users' | 'invitations';
             <h2>Stores</h2>
             <button (click)="openAddStore()">Add</button>
           </div>
+          @if (!loading() && stores().length > 0) {
+            <div class="filters">
+              <label class="f">
+                Search
+                <input
+                  name="fs-search"
+                  placeholder="Name, address, city, notes"
+                  [ngModel]="storeSearch()"
+                  (ngModelChange)="storeSearch.set($event)"
+                />
+              </label>
+              <label class="f">
+                Active
+                <select
+                  name="fs-active"
+                  [ngModel]="storeActiveFilter()"
+                  (ngModelChange)="storeActiveFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  <option [ngValue]="'active'">Active</option>
+                  <option [ngValue]="'inactive'">Inactive</option>
+                </select>
+              </label>
+              <div class="f-actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  (click)="clearStoreFilters()"
+                  [disabled]="!storeFiltersActive()"
+                >
+                  Clear
+                </button>
+                <button type="button" class="ghost" (click)="refresh()" [disabled]="loading()">
+                  Refresh
+                </button>
+              </div>
+            </div>
+          }
           @if (loading()) {
             <p class="muted">Loading…</p>
           } @else if (stores().length === 0) {
             <p class="muted">No stores yet.</p>
+          } @else if (filteredStores().length === 0) {
+            <p class="muted">No stores match these filters.</p>
           } @else {
             <div class="table-scroll stores-scroll">
               <table class="fixed stores">
@@ -59,7 +99,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                   </tr>
                 </thead>
                 <tbody>
-                  @for (s of stores(); track s.id) {
+                  @for (s of filteredStores(); track s.id) {
                     <tr [class.inactive-row]="!s.isActive">
                       @if (editStoreId() === s.id) {
                         <td><input class="cell-input" name="es-name" [(ngModel)]="storeEdit.name" /></td>
@@ -244,6 +284,20 @@ type Tab = 'stores' | 'users' | 'invitations';
                 </select>
               </label>
               <label class="f">
+                Stores
+                <select
+                  name="fu-assigned"
+                  [ngModel]="userAssignedStoreFilter()"
+                  (ngModelChange)="userAssignedStoreFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  <option [ngValue]="'none'">— none —</option>
+                  @for (s of stores(); track s.id) {
+                    <option [ngValue]="s.id">{{ s.name }}</option>
+                  }
+                </select>
+              </label>
+              <label class="f">
                 Status
                 <select
                   name="fu-status"
@@ -255,13 +309,19 @@ type Tab = 'stores' | 'users' | 'invitations';
                   <option [ngValue]="'SUSPENDED'">Suspended</option>
                 </select>
               </label>
-              @if (userFiltersActive()) {
-                <div class="f-actions">
-                  <button type="button" class="sm ghost" (click)="clearUserFilters()">
-                    Clear
-                  </button>
-                </div>
-              }
+              <div class="f-actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  (click)="clearUserFilters()"
+                  [disabled]="!userFiltersActive()"
+                >
+                  Clear
+                </button>
+                <button type="button" class="ghost" (click)="refresh()" [disabled]="loading()">
+                  Refresh
+                </button>
+              </div>
             </div>
           }
           @if (loading()) {
@@ -375,14 +435,7 @@ type Tab = 'stores' | 'users' | 'invitations';
         <section class="card">
           <div class="section-head">
             <h2>Pending invitations</h2>
-            <div class="head-right">
-              @if (!loading() && invitations().length > 0) {
-                <span class="muted small">
-                  {{ filteredInvitations().length }} of {{ invitations().length }}
-                </span>
-              }
-              <button (click)="openInvite()">Invite</button>
-            </div>
+            <button (click)="openInvite()">Invite</button>
           </div>
           @if (inviteSent()) {
             <div class="link-box">
@@ -426,13 +479,19 @@ type Tab = 'stores' | 'users' | 'invitations';
                   <option [ngValue]="'STORE_USER'">Store User</option>
                 </select>
               </label>
-              @if (inviteFiltersActive()) {
-                <div class="f-actions">
-                  <button type="button" class="sm ghost" (click)="clearInviteFilters()">
-                    Clear
-                  </button>
-                </div>
-              }
+              <div class="f-actions">
+                <button
+                  type="button"
+                  class="ghost"
+                  (click)="clearInviteFilters()"
+                  [disabled]="!inviteFiltersActive()"
+                >
+                  Clear
+                </button>
+                <button type="button" class="ghost" (click)="refresh()" [disabled]="loading()">
+                  Refresh
+                </button>
+              </div>
             </div>
           }
           @if (loading()) {
@@ -757,6 +816,21 @@ type Tab = 'stores' | 'users' | 'invitations';
       .f-actions {
         display: flex;
         gap: 0.4rem;
+      }
+      /* Every control in a filter bar shares one height so Clear/Refresh line up
+         with the inputs rather than sitting short. */
+      .filters input,
+      .filters select,
+      .filters .f-actions button {
+        height: 2.25rem;
+        box-sizing: border-box;
+      }
+      .filters .f-actions button {
+        margin-left: 0;
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        font-family: inherit;
+        border-radius: 8px;
       }
       tr.inactive-row td {
         color: var(--muted);
@@ -1250,6 +1324,7 @@ export class ManageComponent implements OnInit {
       this.userSearch().trim().length > 0 ||
       this.userRoleFilter() !== null ||
       this.userStoreFilter() !== null ||
+      this.userAssignedStoreFilter() !== null ||
       this.userStatusFilter() !== null,
   );
 
@@ -1263,6 +1338,10 @@ export class ManageComponent implements OnInit {
       if (status && u.status !== status) return false;
       if (store === 'none' && u.storeId != null) return false;
       if (typeof store === 'number' && u.storeId !== store) return false;
+      const assigned = this.userAssignedStoreFilter();
+      const ids = u.storeIds ?? [];
+      if (assigned === 'none' && ids.length > 0) return false;
+      if (typeof assigned === 'number' && !ids.includes(assigned)) return false;
       if (!term) return true;
       // Search spans every column shown in the table, matching labels not raw enums.
       const haystack = [
@@ -1282,7 +1361,44 @@ export class ManageComponent implements OnInit {
     this.userSearch.set('');
     this.userRoleFilter.set(null);
     this.userStoreFilter.set(null);
+    this.userAssignedStoreFilter.set(null);
     this.userStatusFilter.set(null);
+  }
+
+  /** Assigned-store filter: a store the user MAY access (not just the active one). */
+  readonly userAssignedStoreFilter = signal<number | 'none' | null>(null);
+
+  // Stores tab filters.
+  readonly storeSearch = signal('');
+  readonly storeActiveFilter = signal<string | null>(null);
+
+  readonly storeFiltersActive = computed(
+    () => this.storeSearch().trim().length > 0 || this.storeActiveFilter() !== null,
+  );
+
+  readonly filteredStores = computed(() => {
+    const term = this.storeSearch().trim().toLowerCase();
+    const active = this.storeActiveFilter();
+    return this.stores().filter((st) => {
+      if (active === 'active' && !st.isActive) return false;
+      if (active === 'inactive' && st.isActive) return false;
+      if (!term) return true;
+      return [st.name, st.address1, st.address2, st.city, st.state, st.zip, st.notes]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(term);
+    });
+  });
+
+  clearStoreFilters(): void {
+    this.storeSearch.set('');
+    this.storeActiveFilter.set(null);
+  }
+
+  /** Reload whichever tab is showing. */
+  refresh(): void {
+    this.select(this.tab());
   }
 
   ngOnInit(): void {
