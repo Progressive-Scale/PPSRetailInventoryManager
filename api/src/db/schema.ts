@@ -349,15 +349,16 @@ export const storeLocations = pgTable(
   },
   (t) => [
     index('store_locations_company_store_idx').on(t.companyId, t.storeId),
-    uniqueIndex('store_locations_company_store_name_uniq').on(
-      t.companyId,
-      t.storeId,
-      t.name,
-    ),
-    // Exactly one BACKROOM + one ONFLOOR per store (CUSTOM rows unconstrained).
-    uniqueIndex('store_locations_store_systemkind_uniq')
-      .on(t.storeId, t.kind)
-      .where(sql`${t.kind} <> 'CUSTOM'`),
+    // Unique among ACTIVE locations only, so a deactivated location's name can be
+    // reused. Two inactive rows may share a name; reactivating a clashing name is
+    // rejected by this index.
+    uniqueIndex('store_locations_company_store_name_uniq')
+      .on(t.companyId, t.storeId, t.name)
+      .where(sql`${t.isActive}`),
+    // NOTE: there is deliberately NO one-per-kind constraint. A store may have
+    // several BACKROOM and several ONFLOOR locations. The invariant enforced in
+    // the service layer instead is: every store must always keep at least one
+    // ACTIVE location of each required kind (BACKROOM, ONFLOOR).
   ],
 );
 

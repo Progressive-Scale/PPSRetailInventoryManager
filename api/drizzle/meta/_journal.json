@@ -85,6 +85,13 @@
       "when": 1785354091925,
       "tag": "0011_one_live_invite_per_email",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785428855577,
+      "tag": "0012_location_lifecycle",
+      "breakpoints": true
     }
   ]
 }
