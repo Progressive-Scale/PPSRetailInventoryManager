@@ -283,20 +283,42 @@ type Tab = 'stores' | 'users' | 'invitations';
                   }
                 </select>
               </label>
-              <label class="f">
-                Stores
-                <select
-                  name="fu-assigned"
-                  [ngModel]="userAssignedStoreFilter()"
-                  (ngModelChange)="userAssignedStoreFilter.set($event)"
-                >
-                  <option [ngValue]="null">All</option>
-                  <option [ngValue]="'none'">— none —</option>
-                  @for (s of stores(); track s.id) {
-                    <option [ngValue]="s.id">{{ s.name }}</option>
+              <div class="f">
+                <span>Stores</span>
+                <div class="multi">
+                  <button
+                    type="button"
+                    class="multi-toggle"
+                    (click)="storeMenuOpen.set(!storeMenuOpen())"
+                  >
+                    <span class="multi-label">{{ assignedStoresLabel() }}</span>
+                    <span class="caret">▾</span>
+                  </button>
+                  @if (storeMenuOpen()) {
+                    <div class="multi-backdrop" (click)="storeMenuOpen.set(false)"></div>
+                    <div class="multi-panel">
+                      <label class="multi-row">
+                        <input
+                          type="checkbox"
+                          [checked]="isAssignedPicked('none')"
+                          (change)="toggleAssignedStore('none')"
+                        />
+                        — none —
+                      </label>
+                      @for (s of stores(); track s.id) {
+                        <label class="multi-row">
+                          <input
+                            type="checkbox"
+                            [checked]="isAssignedPicked(s.id)"
+                            (change)="toggleAssignedStore(s.id)"
+                          />
+                          {{ s.name }}
+                        </label>
+                      }
+                    </div>
                   }
-                </select>
-              </label>
+                </div>
+              </div>
               <label class="f">
                 Status
                 <select
@@ -821,9 +843,77 @@ type Tab = 'stores' | 'users' | 'invitations';
          with the inputs rather than sitting short. */
       .filters input,
       .filters select,
-      .filters .f-actions button {
+      .filters .f-actions button,
+      .filters .multi-toggle {
         height: 2.25rem;
         box-sizing: border-box;
+      }
+      /* Multi-select filter: a 36px trigger plus a checkbox panel, so picking
+         several stores never changes the height of the filter bar. */
+      .multi {
+        position: relative;
+      }
+      .multi-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        min-width: 11rem;
+        padding: 0 0.55rem;
+        background: var(--surface, #fff);
+        color: inherit;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .multi-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .caret {
+        font-size: 0.7rem;
+        color: var(--muted);
+      }
+      /* Transparent catcher so clicking anywhere closes the panel. */
+      .multi-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+      }
+      .multi-panel {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 21;
+        min-width: 100%;
+        max-height: 14rem;
+        overflow-y: auto;
+        background: var(--surface, #fff);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 8px 20px rgba(16, 24, 40, 0.12);
+        padding: 0.3rem;
+      }
+      .multi-row {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.3rem 0.4rem;
+        font-size: 0.85rem;
+        color: var(--text, inherit);
+        white-space: nowrap;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .multi-row:hover {
+        background: var(--accent-soft, #eff4ff);
+      }
+      .multi-row input {
+        height: auto;
+        margin: 0;
       }
       .filters .f-actions button {
         margin-left: 0;
@@ -1324,7 +1414,7 @@ export class ManageComponent implements OnInit {
       this.userSearch().trim().length > 0 ||
       this.userRoleFilter() !== null ||
       this.userStoreFilter() !== null ||
-      this.userAssignedStoreFilter() !== null ||
+      this.userAssignedStores().length > 0 ||
       this.userStatusFilter() !== null,
   );
 
@@ -1338,10 +1428,15 @@ export class ManageComponent implements OnInit {
       if (status && u.status !== status) return false;
       if (store === 'none' && u.storeId != null) return false;
       if (typeof store === 'number' && u.storeId !== store) return false;
-      const assigned = this.userAssignedStoreFilter();
-      const ids = u.storeIds ?? [];
-      if (assigned === 'none' && ids.length > 0) return false;
-      if (typeof assigned === 'number' && !ids.includes(assigned)) return false;
+      const assigned = this.userAssignedStores();
+      if (assigned.length > 0) {
+        const ids = u.storeIds ?? [];
+        const wantsNone = assigned.includes('none');
+        const wanted = assigned.filter((v): v is number => typeof v === 'number');
+        const hit =
+          (wantsNone && ids.length === 0) || wanted.some((id) => ids.includes(id));
+        if (!hit) return false;
+      }
       if (!term) return true;
       // Search spans every column shown in the table, matching labels not raw enums.
       const haystack = [
@@ -1361,12 +1456,37 @@ export class ManageComponent implements OnInit {
     this.userSearch.set('');
     this.userRoleFilter.set(null);
     this.userStoreFilter.set(null);
-    this.userAssignedStoreFilter.set(null);
+    this.userAssignedStores.set([]);
+    this.storeMenuOpen.set(false);
     this.userStatusFilter.set(null);
   }
 
-  /** Assigned-store filter: a store the user MAY access (not just the active one). */
-  readonly userAssignedStoreFilter = signal<number | 'none' | null>(null);
+  /**
+   * Assigned-store filter: stores the user MAY access (not just the active one).
+   * Multi-select — an empty list means "All", and several stores match a user with
+   * ANY of them. 'none' matches users with no assigned store at all.
+   */
+  readonly userAssignedStores = signal<Array<number | 'none'>>([]);
+  readonly storeMenuOpen = signal(false);
+
+  readonly assignedStoresLabel = computed(() => {
+    const picked = this.userAssignedStores();
+    if (picked.length === 0) return 'All';
+    if (picked.length === 1) {
+      return picked[0] === 'none' ? '— none —' : this.storeName(picked[0] as number);
+    }
+    return `${picked.length} selected`;
+  });
+
+  isAssignedPicked(value: number | 'none'): boolean {
+    return this.userAssignedStores().includes(value);
+  }
+
+  toggleAssignedStore(value: number | 'none'): void {
+    this.userAssignedStores.update((picked) =>
+      picked.includes(value) ? picked.filter((v) => v !== value) : [...picked, value],
+    );
+  }
 
   // Stores tab filters.
   readonly storeSearch = signal('');
