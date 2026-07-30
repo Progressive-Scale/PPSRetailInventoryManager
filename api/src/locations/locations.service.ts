@@ -45,11 +45,19 @@ export function kindLabel(kind: LocationKind): string {
 
 /** Per-location facts the UI needs to pick the right affordance. */
 export interface LocationFlags {
+  /** LIVE stock: on-hand units + quantity on hand. Blocks deactivate AND delete. */
   hasStock: boolean;
+  /** Anything referencing it at all (items of any status, or the ledger). */
   hasHistory: boolean;
   isLastOfRequiredKind: boolean;
   /** Units + quantity on hand, for the "move the N items out first" message. */
   stockCount: number;
+  /** EVERY item row still pointing here, whatever its status. Blocks delete. */
+  itemCount: number;
+  /** How many of itemCount are sold — they cannot be moved, so they are called out. */
+  soldCount: number;
+  /** The append-only ledger records a movement in/out of here. Blocks delete. */
+  hasLedger: boolean;
 }
 
 @Injectable()
@@ -145,6 +153,58 @@ export class LocationsService {
    * inventory row of ANY status (a SOLD unit is history but is still a foreign
    * key, so a hard delete would fail at the database).
    */
+  /** Item rows still pointing at the location, by status. */
+  private async itemCounts(
+    tx: Tx,
+    companyId: number,
+    locationId: number,
+  ): Promise<{ total: number; sold: number }> {
+    const [units] = await tx
+      .select({
+        total: sql<number>`count(*)::int`,
+        sold: sql<number>`count(*) filter (where ${inventoryItems.status} = 'SOLD')::int`,
+      })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, companyId),
+          eq(inventoryItems.locationId, locationId),
+        ),
+      );
+    const [stock] = await tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(inventoryStock)
+      .where(
+        and(
+          eq(inventoryStock.companyId, companyId),
+          eq(inventoryStock.locationId, locationId),
+        ),
+      );
+    return { total: (units?.total ?? 0) + (stock?.total ?? 0), sold: units?.sold ?? 0 };
+  }
+
+  /** The append-only ledger records a movement into or out of this location. */
+  private async referencedByLedger(
+    tx: Tx,
+    companyId: number,
+    locationId: number,
+  ): Promise<boolean> {
+    const [ledger] = await tx
+      .select({ id: inventoryTransactions.id })
+      .from(inventoryTransactions)
+      .where(
+        and(
+          eq(inventoryTransactions.companyId, companyId),
+          or(
+            eq(inventoryTransactions.locationFromId, locationId),
+            eq(inventoryTransactions.locationToId, locationId),
+          ),
+        ),
+      )
+      .limit(1);
+    return !!ledger;
+  }
+
   private async hasHistory(
     tx: Tx,
     companyId: number,
@@ -289,6 +349,7 @@ export class LocationsService {
       .select({
         locationId: inventoryItems.locationId,
         onHand: sql<number>`count(*) filter (where ${inventoryItems.status} = 'ON_HAND')::int`,
+        sold: sql<number>`count(*) filter (where ${inventoryItems.status} = 'SOLD')::int`,
         any: sql<number>`count(*)::int`,
       })
       .from(inventoryItems)
@@ -356,11 +417,15 @@ export class LocationsService {
       const u = units.get(r.id);
       const s = stock.get(r.id);
       const stockCount = (u?.onHand ?? 0) + (s?.onHand ?? 0);
+      const itemCount = (u?.any ?? 0) + (s?.any ?? 0);
       return {
         ...r,
         stockCount,
+        itemCount,
+        soldCount: u?.sold ?? 0,
+        hasLedger: inLedger.has(r.id),
         hasStock: stockCount > 0,
-        hasHistory: inLedger.has(r.id) || (u?.any ?? 0) > 0 || (s?.any ?? 0) > 0,
+        hasHistory: inLedger.has(r.id) || itemCount > 0,
         isLastOfRequiredKind:
           r.isActive &&
           isRequiredKind(r.kind) &&
@@ -549,9 +614,20 @@ export class LocationsService {
         throw new ConflictException(this.lastOfKindMessage(loc.kind));
       }
       await this.assertNoStock(tx, ctx.companyId, id);
-      if (await this.hasHistory(tx, ctx.companyId, id)) {
+      // Every item must be gone, sold ones included — an item row is a foreign key,
+      // so the delete would fail at the database anyway.
+      const remaining = await this.itemCounts(tx, ctx.companyId, id);
+      if (remaining.total > 0) {
+        const sold = remaining.sold > 0 ? ` (${remaining.sold} of them sold)` : '';
         throw new ConflictException(
-          'This location has history and can be deactivated instead of deleted.',
+          `Remove the ${remaining.total} item${remaining.total === 1 ? '' : 's'} still ` +
+            `at this location${sold} before deleting it, or make it inactive instead.`,
+        );
+      }
+      if (await this.referencedByLedger(tx, ctx.companyId, id)) {
+        throw new ConflictException(
+          'Past movements still refer to this location, so deleting it would lose that ' +
+            'history. Make it inactive instead.',
         );
       }
       await tx

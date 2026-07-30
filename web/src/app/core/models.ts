@@ -55,6 +55,12 @@ export interface StoreLocation {
   isLastOfRequiredKind?: boolean;
   /** Item count behind hasStock, for the "move the N items out" message. */
   stockCount?: number;
+  /** EVERY item still at this location, whatever its status. Blocks delete. */
+  itemCount?: number;
+  /** How many of itemCount are sold (sold units cannot currently be moved). */
+  soldCount?: number;
+  /** The ledger records a movement in/out of here. Blocks delete. */
+  hasLedger?: boolean;
 }
 
 /** A serialized inventory unit (one row per serial). */

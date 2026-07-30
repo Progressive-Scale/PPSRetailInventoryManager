@@ -222,21 +222,31 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
             } @else if (loc.hasStock) {
               <p class="confirm-text">
                 <strong>{{ loc.name }}</strong> still holds
-                {{ loc.stockCount }} item{{ loc.stockCount === 1 ? '' : 's' }}. Move them
-                out first, then it can be removed or made inactive.
+                {{ loc.stockCount }} item{{ loc.stockCount === 1 ? '' : 's' }} on hand.
+                Move them out first, then it can be deleted or made inactive.
               </p>
-            } @else if (loc.hasHistory && loc.isActive) {
+            } @else if (loc.itemCount) {
+              <p class="confirm-text">
+                <strong>{{ loc.name }}</strong> still has
+                {{ loc.itemCount }} item{{ loc.itemCount === 1 ? '' : 's' }} recorded
+                against it@if (loc.soldCount) { — {{ loc.soldCount }} of them sold }. Every
+                item has to be moved off a location before it can be deleted.
+                @if (loc.isActive) {
+                  Make it inactive instead to take it out of use and keep the records.
+                }
+              </p>
+            } @else if (loc.hasLedger && loc.isActive) {
               <p class="confirm-text">
                 <strong>{{ loc.name }}</strong> is empty, but past movements still refer to
-                it, so it can't be deleted outright — its history would be lost. Make it
-                inactive instead: it disappears from dropdowns and move targets while old
-                records keep showing its name.
+                it, so deleting it would lose that history. Make it inactive instead: it
+                disappears from dropdowns and move targets while old records keep showing
+                its name.
               </p>
-            } @else if (loc.hasHistory) {
+            } @else if (loc.hasLedger || loc.itemCount) {
               <p class="confirm-text">
-                <strong>{{ loc.name }}</strong> can't be deleted because past movements
-                still refer to it. It is already inactive, so it is hidden everywhere
-                except those historical records.
+                <strong>{{ loc.name }}</strong> can't be deleted because records still refer
+                to it. It is already inactive, so it is hidden everywhere except those
+                historical records.
               </p>
             } @else {
               <p class="confirm-text">
@@ -251,12 +261,14 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
               @if (loc.isLastOfRequiredKind) {
                 <!-- nothing to offer but Cancel -->
               } @else if (loc.hasStock) {
+                <!-- live stock blocks BOTH actions: the items must move first -->
                 <button (click)="viewStockAt(loc)">View these items</button>
-              } @else if (loc.hasHistory && loc.isActive) {
+              } @else if ((loc.itemCount || loc.hasLedger) && loc.isActive) {
+                <button (click)="viewStockAt(loc)">View these items</button>
                 <button class="danger-btn" (click)="deactivateFromDialog(loc)" [disabled]="saving()">
                   {{ saving() ? 'Working…' : 'Make inactive' }}
                 </button>
-              } @else if (loc.hasHistory) {
+              } @else if (loc.itemCount || loc.hasLedger) {
                 <!-- already inactive: nothing to offer but Cancel -->
               } @else {
                 <button class="danger-btn" (click)="confirmDelete()" [disabled]="saving()">
