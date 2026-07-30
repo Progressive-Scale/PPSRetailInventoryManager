@@ -96,7 +96,9 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                       {{ loc.name }}
                     }
                   </td>
-                  <td class="muted">{{ storeName(loc.storeId) }}</td>
+                  <td class="muted store-cell" [title]="storeName(loc.storeId)">
+                    {{ storeName(loc.storeId) }}
+                  </td>
                   <td>
                     <span class="kind-badge" [class]="'k-' + loc.kind">{{ kindLabel(loc.kind) }}</span>
                   </td>
@@ -322,18 +324,29 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
         border-bottom: 1px solid var(--border);
         vertical-align: middle;
       }
-      /* Fixed widths so entering edit mode never reflows the columns. */
+      /* Fixed widths so entering edit mode never reflows the columns. These must
+         sum to 100% across ALL columns — an unsized column in a fixed-layout table
+         collapses to zero and its text overlaps the next one. */
       .col-name {
-        width: 42%;
+        width: 28%;
+      }
+      .col-store {
+        width: 22%;
       }
       .col-type {
-        width: 16%;
+        width: 14%;
       }
       .col-status {
-        width: 18%;
+        width: 14%;
       }
       .col-actions {
-        width: 24%;
+        width: 22%;
+      }
+      /* Long store names ellipsize rather than bleeding into Type. */
+      td.store-cell {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       td.actions,
       th.actions {
