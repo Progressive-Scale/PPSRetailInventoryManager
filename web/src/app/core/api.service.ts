@@ -210,10 +210,23 @@ export class ApiService {
   }
 
   // ---- locations ----
-  listLocations(storeId?: number): Observable<StoreLocation[]> {
+  /**
+   * Active locations only by default. The admin Locations screen passes
+   * includeInactive to manage deactivated rows and receive the lifecycle flags.
+   */
+  listLocations(storeId?: number, includeInactive = false): Observable<StoreLocation[]> {
     let params = new HttpParams();
     if (storeId != null) params = params.set('storeId', String(storeId));
+    if (includeInactive) params = params.set('includeInactive', '1');
     return this.http.get<StoreLocation[]>('/api/locations', { params });
+  }
+
+  deactivateLocation(id: number): Observable<StoreLocation> {
+    return this.http.post<StoreLocation>(`/api/locations/${id}/deactivate`, {});
+  }
+
+  reactivateLocation(id: number): Observable<StoreLocation> {
+    return this.http.post<StoreLocation>(`/api/locations/${id}/reactivate`, {});
   }
 
   createLocation(dto: CreateLocation): Observable<StoreLocation> {

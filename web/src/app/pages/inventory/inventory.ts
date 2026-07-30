@@ -48,7 +48,7 @@ interface Column {
       </div>
 
       @if (tab() === 'locations') {
-        <app-locations />
+        <app-locations (showStockAt)="showStockAt($event)" />
       } @else {
         <section class="card">
           <h2>Inventory</h2>
@@ -1025,6 +1025,26 @@ export class InventoryComponent implements OnInit {
   /** Re-run the current query without touching the filters. */
   refresh(): void {
     this.clearSelection();
+    this.reload();
+  }
+
+  /**
+   * Jump from Locations to the stock grid filtered to one location, so the items
+   * blocking a deactivate/delete can be moved out.
+   */
+  showStockAt(loc: StoreLocation): void {
+    this.tab.set('stock');
+    this.clearSelection();
+    this.searchTerm = '';
+    this.typeFilter = null;
+    this.createdFrom = '';
+    this.createdTo = '';
+    // Show everything at that location, sold units included.
+    this.statusFilter = 'ALL';
+    this.storeFilter.set(loc.storeId);
+    this.loadFilterLocations(loc.storeId);
+    this.locationFilter = loc.id;
+    this.offset.set(0);
     this.reload();
   }
 

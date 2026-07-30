@@ -32,7 +32,10 @@ export type TrackingType = 'SERIALIZED' | 'QUANTITY';
 
 export type LocationKind = 'BACKROOM' | 'ONFLOOR' | 'CUSTOM';
 
-/** A named area within a store. BACKROOM/ONFLOOR are system (not deletable). */
+/**
+ * A named area within a store. A store may have SEVERAL Backroom/On Floor
+ * locations; the invariant is that at least one of each stays ACTIVE.
+ */
 export interface StoreLocation {
   id: number;
   companyId: number;
@@ -42,6 +45,16 @@ export interface StoreLocation {
   sortOrder: number;
   isActive: boolean;
   createdAt: string;
+  // Lifecycle flags — returned ONLY when listing with includeInactive (the admin
+  // view), so the UI can offer the right action without probing.
+  /** Live stock present (ON_HAND units or quantity on hand). Blocks both actions. */
+  hasStock?: boolean;
+  /** Referenced by the ledger or any inventory row. Blocks delete, not deactivate. */
+  hasHistory?: boolean;
+  /** Last active Backroom/On Floor of its store. Blocks both actions. */
+  isLastOfRequiredKind?: boolean;
+  /** Item count behind hasStock, for the "move the N items out" message. */
+  stockCount?: number;
 }
 
 /** A serialized inventory unit (one row per serial). */
@@ -504,6 +517,8 @@ export interface UpdateProduct {
 export interface CreateLocation {
   storeId: number;
   name: string;
+  /** Defaults to CUSTOM; immutable afterwards. */
+  kind?: LocationKind;
   isActive?: boolean;
 }
 

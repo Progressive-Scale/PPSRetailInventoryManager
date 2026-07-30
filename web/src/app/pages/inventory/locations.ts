@@ -1,9 +1,17 @@
-import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import {
+  Component,
+  computed,
+  EventEmitter,
+  inject,
+  OnInit,
+  Output,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { Store, StoreLocation } from '../../core/models';
+import { LocationKind, Store, StoreLocation } from '../../core/models';
 
 type SortField = 'name' | 'store' | 'kind' | 'active';
 
@@ -82,14 +90,13 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
             </thead>
             <tbody>
               @for (loc of displayLocations(); track loc.id) {
-                <tr>
+                <tr [class.inactive-row]="!loc.isActive">
                   <td class="name-cell">
                     @if (editId() === loc.id) {
                       <input class="cell-input" name="edit-name" [(ngModel)]="editName" />
-                      @if (loc.kind !== 'CUSTOM') {
+                      @if (loc.isLastOfRequiredKind) {
                         <div class="sys-tip" role="note">
-                          This is a system location — you can rename it, but the Backroom and
-                          On Floor can't be deactivated or removed.
+                          {{ lastOfKindTip(loc) }} Add another before removing this one.
                         </div>
                       }
                     } @else {
@@ -103,22 +110,43 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                     <span class="kind-badge" [class]="'k-' + loc.kind">{{ kindLabel(loc.kind) }}</span>
                   </td>
                   <td>
-                    @if (editId() === loc.id && loc.kind === 'CUSTOM') {
-                      <select class="cell-input" name="edit-active" [(ngModel)]="editActive">
-                        <option [ngValue]="true">Active</option>
-                        <option [ngValue]="false">Inactive</option>
-                      </select>
-                    } @else {
-                      <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
-                    }
+                    <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
                   </td>
                   @if (isCompanyAdmin) {
                     <td class="actions">
                       @if (editId() === loc.id) {
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
                         <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
-                        @if (loc.kind === 'CUSTOM') {
-                          <button class="sm danger" (click)="askDelete(loc)" [disabled]="saving()">Delete</button>
+                        @if (!loc.isActive) {
+                          <button class="sm" (click)="reactivate(loc)" [disabled]="saving()">
+                            Reactivate
+                          </button>
+                        } @else if (loc.hasHistory || loc.hasStock) {
+                          <span class="tip-wrap">
+                            <button
+                              class="sm danger"
+                              (click)="askDeactivate(loc)"
+                              [disabled]="saving() || loc.isLastOfRequiredKind"
+                            >
+                              Deactivate
+                            </button>
+                            @if (loc.isLastOfRequiredKind) {
+                              <span class="act-tip">{{ lastOfKindTip(loc) }}</span>
+                            }
+                          </span>
+                        } @else {
+                          <span class="tip-wrap">
+                            <button
+                              class="sm danger"
+                              (click)="askDelete(loc)"
+                              [disabled]="saving() || loc.isLastOfRequiredKind"
+                            >
+                              Delete
+                            </button>
+                            @if (loc.isLastOfRequiredKind) {
+                              <span class="act-tip">{{ lastOfKindTip(loc) }}</span>
+                            }
+                          </span>
                         }
                       } @else {
                         <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
@@ -164,6 +192,18 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                 <input name="a-name" [(ngModel)]="newName" placeholder="e.g. Aisle 3" autofocus />
               </label>
               <label>
+                Type
+                <select name="a-kind" [(ngModel)]="newKind">
+                  <option [ngValue]="'CUSTOM'">Custom</option>
+                  <option [ngValue]="'BACKROOM'">Backroom</option>
+                  <option [ngValue]="'ONFLOOR'">On Floor</option>
+                </select>
+              </label>
+              <p class="muted note">
+                A store can have several Backroom or On Floor locations. Type is fixed
+                once the location is created.
+              </p>
+              <label>
                 Status
                 <select name="a-active" [(ngModel)]="newActive">
                   <option [ngValue]="true">Active</option>
@@ -184,18 +224,69 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
         </div>
       }
 
+      @if (pendingDeactivate(); as loc) {
+        <div class="overlay" (click)="cancelDeactivate()">
+          <div class="modal" (click)="$event.stopPropagation()">
+            <h3>Deactivate location</h3>
+            @if (loc.hasStock) {
+              <p class="confirm-text">
+                <strong>{{ loc.name }}</strong> still holds
+                {{ loc.stockCount }} item{{ loc.stockCount === 1 ? '' : 's' }}. Move them
+                out before deactivating it.
+              </p>
+              <div class="modal-actions">
+                <button (click)="viewStockAt(loc)">View these items</button>
+                <button class="ghost" (click)="cancelDeactivate()">Cancel</button>
+              </div>
+            } @else {
+              <p class="confirm-text">
+                Deactivate <strong>{{ loc.name }}</strong>? It disappears from move
+                targets and dropdowns, but its history is kept and its name still shows
+                on past movements. You can reactivate it later.
+              </p>
+              @if (deactivateError()) {
+                <p class="error">{{ deactivateError() }}</p>
+              }
+              <div class="modal-actions">
+                <button class="danger-btn" (click)="confirmDeactivate()" [disabled]="saving()">
+                  {{ saving() ? 'Deactivating…' : 'Deactivate' }}
+                </button>
+                <button class="ghost" (click)="cancelDeactivate()" [disabled]="saving()">
+                  Cancel
+                </button>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
       @if (pendingDelete(); as loc) {
         <div class="overlay" (click)="cancelDelete()">
           <div class="modal" (click)="$event.stopPropagation()">
             <h3>Delete location</h3>
-            <p class="confirm-text">
-              Delete <strong>{{ loc.name }}</strong>? This can't be undone.
-            </p>
+            @if (loc.hasStock) {
+              <p class="confirm-text">
+                <strong>{{ loc.name }}</strong> still holds
+                {{ loc.stockCount }} item{{ loc.stockCount === 1 ? '' : 's' }}. Move them
+                out first.
+              </p>
+            } @else {
+              <p class="confirm-text">
+                Delete <strong>{{ loc.name }}</strong>? It has never been used, so this
+                removes it completely and cannot be undone.
+              </p>
+            }
             @if (deleteError()) {
               <p class="error">{{ deleteError() }}</p>
             }
             <div class="modal-actions">
-              <button class="danger-btn" (click)="confirmDelete()" [disabled]="saving()">Delete</button>
+              @if (loc.hasStock) {
+                <button (click)="viewStockAt(loc)">View these items</button>
+              } @else {
+                <button class="danger-btn" (click)="confirmDelete()" [disabled]="saving()">
+                  Delete
+                </button>
+              }
               <button class="ghost" (click)="cancelDelete()" [disabled]="saving()">Cancel</button>
             </div>
           </div>
@@ -261,6 +352,39 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
       }
       .empty {
         margin: 0.75rem 0 0;
+      }
+      /* Deactivated rows read as muted but stay legible. */
+      tr.inactive-row td {
+        color: var(--muted);
+      }
+      /* Tooltip for a disabled action (a disabled button fires no events, so the
+         bubble hangs off the wrapper). */
+      .tip-wrap {
+        position: relative;
+        display: inline-block;
+      }
+      .act-tip {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 6px);
+        z-index: 5;
+        width: max-content;
+        max-width: 15rem;
+        padding: 0.4rem 0.55rem;
+        background: var(--surface);
+        color: var(--text, inherit);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 8px 20px rgba(16, 24, 40, 0.12);
+        font-size: 0.75rem;
+        text-align: left;
+        white-space: normal;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 80ms ease-in;
+      }
+      .tip-wrap:hover .act-tip {
+        opacity: 1;
       }
       .inline {
         display: flex;
@@ -477,6 +601,9 @@ export class LocationsComponent implements OnInit {
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
 
+  /** Asks the parent to show the stock grid filtered to this location. */
+  @Output() showStockAt = new EventEmitter<StoreLocation>();
+
   readonly stores = signal<Store[]>([]);
   readonly storeId = signal<number | null>(this.auth.user()?.storeId ?? null);
   readonly locations = signal<StoreLocation[]>([]);
@@ -486,7 +613,6 @@ export class LocationsComponent implements OnInit {
 
   readonly editId = signal<number | null>(null);
   editName = '';
-  editActive = true;
 
   // Filters.
   readonly search = signal('');
@@ -516,11 +642,71 @@ export class LocationsComponent implements OnInit {
   readonly addError = signal<string | null>(null);
   newStoreId: number | null = null;
   newName = '';
+  newKind: LocationKind = 'CUSTOM';
   newActive = true;
 
   // Delete-confirmation modal.
   readonly pendingDelete = signal<StoreLocation | null>(null);
   readonly deleteError = signal<string | null>(null);
+
+  // Deactivate-confirmation modal (used for anything with stock or history).
+  readonly pendingDeactivate = signal<StoreLocation | null>(null);
+  readonly deactivateError = signal<string | null>(null);
+
+  lastOfKindTip(loc: StoreLocation): string {
+    return `Every store needs at least one active ${this.kindLabel(loc.kind)} location.`;
+  }
+
+  askDeactivate(loc: StoreLocation): void {
+    this.deactivateError.set(null);
+    this.pendingDeactivate.set(loc);
+  }
+
+  cancelDeactivate(): void {
+    this.pendingDeactivate.set(null);
+  }
+
+  confirmDeactivate(): void {
+    const loc = this.pendingDeactivate();
+    if (!loc) return;
+    this.saving.set(true);
+    this.deactivateError.set(null);
+    this.api.deactivateLocation(loc.id).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.pendingDeactivate.set(null);
+        this.editId.set(null);
+        this.reload();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.deactivateError.set(messageFor(err));
+      },
+    });
+  }
+
+  reactivate(loc: StoreLocation): void {
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.reactivateLocation(loc.id).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.editId.set(null);
+        this.reload();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
+  }
+
+  /** Jump to the stock grid filtered to this location so the items can be moved. */
+  viewStockAt(loc: StoreLocation): void {
+    this.pendingDeactivate.set(null);
+    this.pendingDelete.set(null);
+    this.showStockAt.emit(loc);
+  }
 
   // Client-side sort (the list is small — no round-trip needed).
   readonly sortField = signal<SortField | null>(null);
@@ -590,7 +776,9 @@ export class LocationsComponent implements OnInit {
     if (!this.isCompanyAdmin && sid === undefined) return;
     this.loading.set(true);
     this.error.set(null);
-    this.api.listLocations(sid).subscribe({
+    // includeInactive: the admin screen manages deactivated rows and needs the
+    // hasStock / hasHistory / isLastOfRequiredKind flags to pick each row's action.
+    this.api.listLocations(sid, true).subscribe({
       next: (rows) => {
         this.locations.set(rows);
         this.loading.set(false);
@@ -618,7 +806,6 @@ export class LocationsComponent implements OnInit {
 
   startEdit(loc: StoreLocation): void {
     this.editName = loc.name;
-    this.editActive = loc.isActive;
     this.error.set(null);
     this.editId.set(loc.id);
   }
@@ -626,9 +813,9 @@ export class LocationsComponent implements OnInit {
   save(loc: StoreLocation): void {
     const name = this.editName.trim();
     if (!name) return;
-    const dto: { name: string; isActive?: boolean } = { name };
-    // Only custom locations can have their active status changed.
-    if (loc.kind === 'CUSTOM') dto.isActive = this.editActive;
+    // Rename only. Active state is changed through the dedicated
+    // Deactivate/Reactivate actions, which carry the lifecycle guards.
+    const dto: { name: string } = { name };
     this.saving.set(true);
     this.error.set(null);
     this.api.updateLocation(loc.id, dto).subscribe({
@@ -674,6 +861,7 @@ export class LocationsComponent implements OnInit {
 
   openAdd(): void {
     this.newName = '';
+    this.newKind = 'CUSTOM';
     this.newActive = true;
     // Preselect when there is only one store, or when a store filter is applied.
     const only = this.stores().length === 1 ? this.stores()[0].id : null;
@@ -692,7 +880,9 @@ export class LocationsComponent implements OnInit {
     if (sid == null || !name) return;
     this.saving.set(true);
     this.addError.set(null);
-    this.api.createLocation({ storeId: sid, name, isActive: this.newActive }).subscribe({
+    this.api
+      .createLocation({ storeId: sid, name, kind: this.newKind, isActive: this.newActive })
+      .subscribe({
       next: () => {
         this.saving.set(false);
         this.showAdd.set(false);
