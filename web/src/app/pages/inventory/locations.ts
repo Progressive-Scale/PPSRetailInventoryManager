@@ -5,7 +5,7 @@ import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { Store, StoreLocation } from '../../core/models';
 
-type SortField = 'name' | 'kind' | 'active';
+type SortField = 'name' | 'store' | 'kind' | 'active';
 
 @Component({
   selector: 'app-locations',
@@ -15,20 +15,48 @@ type SortField = 'name' | 'kind' | 'active';
       <div class="section-head">
         <h2>Locations</h2>
         <div class="head-controls">
-          @if (isCompanyAdmin && stores().length > 1) {
-            <label class="inline">
-              Store
-              <select [ngModel]="storeId()" (ngModelChange)="onStore($event)" name="loc-store">
-                @for (s of stores(); track s.id) {
-                  <option [ngValue]="s.id">{{ s.name }}</option>
-                }
-              </select>
-            </label>
-          }
           @if (isCompanyAdmin) {
-            <button (click)="openAdd()" [disabled]="storeId() == null">Add location</button>
+            <button (click)="openAdd()">Add location</button>
           }
-          <button (click)="reload()" class="ghost" [disabled]="loading()">Refresh</button>
+        </div>
+      </div>
+
+      <div class="filters">
+        <label class="f">
+          Search
+          <input
+            name="lf-search"
+            placeholder="Name, type, status, store"
+            [ngModel]="search()"
+            (ngModelChange)="search.set($event)"
+          />
+        </label>
+        <label class="f">
+          Status
+          <select name="lf-status" [ngModel]="statusFilter()" (ngModelChange)="statusFilter.set($event)">
+            <option [ngValue]="null">All</option>
+            <option [ngValue]="'active'">Active</option>
+            <option [ngValue]="'inactive'">Inactive</option>
+          </select>
+        </label>
+        @if (isCompanyAdmin) {
+          <label class="f">
+            Store
+            <select name="lf-store" [ngModel]="storeFilter()" (ngModelChange)="storeFilter.set($event)">
+              <option [ngValue]="null">All</option>
+              @for (s of stores(); track s.id) {
+                <option [ngValue]="s.id">{{ s.name }}</option>
+              }
+            </select>
+          </label>
+        }
+        <div class="f-actions">
+          <button type="button" class="ghost" (click)="clearFilters()" [disabled]="!filtersActive()">
+            Clear
+          </button>
+          <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -44,6 +72,7 @@ type SortField = 'name' | 'kind' | 'active';
             <thead>
               <tr>
                 <th class="sortable col-name" (click)="sort('name')">Name<span class="arrow">{{ icon('name') }}</span></th>
+                <th class="sortable col-store" (click)="sort('store')">Store<span class="arrow">{{ icon('store') }}</span></th>
                 <th class="sortable col-type" (click)="sort('kind')">Type<span class="arrow">{{ icon('kind') }}</span></th>
                 <th class="sortable col-status" (click)="sort('active')">Status<span class="arrow">{{ icon('active') }}</span></th>
                 @if (isCompanyAdmin) {
@@ -67,6 +96,7 @@ type SortField = 'name' | 'kind' | 'active';
                       {{ loc.name }}
                     }
                   </td>
+                  <td class="muted">{{ storeName(loc.storeId) }}</td>
                   <td>
                     <span class="kind-badge" [class]="'k-' + loc.kind">{{ kindLabel(loc.kind) }}</span>
                   </td>
@@ -97,6 +127,15 @@ type SortField = 'name' | 'kind' | 'active';
               }
             </tbody>
           </table>
+          @if (displayLocations().length === 0) {
+            <p class="muted empty">
+              @if (locations().length === 0) {
+                No locations yet.
+              } @else {
+                No locations match these filters.
+              }
+            </p>
+          }
         </div>
 
       }
@@ -110,6 +149,15 @@ type SortField = 'name' | 'kind' | 'active';
             }
             <form class="stacked" (ngSubmit)="create()">
               <label>
+                Store
+                <select name="a-store" [(ngModel)]="newStoreId">
+                  <option [ngValue]="null">Choose a store…</option>
+                  @for (s of stores(); track s.id) {
+                    <option [ngValue]="s.id">{{ s.name }}</option>
+                  }
+                </select>
+              </label>
+              <label>
                 Name
                 <input name="a-name" [(ngModel)]="newName" placeholder="e.g. Aisle 3" autofocus />
               </label>
@@ -121,7 +169,12 @@ type SortField = 'name' | 'kind' | 'active';
                 </select>
               </label>
               <div class="modal-actions">
-                <button type="submit" [disabled]="saving() || !newName.trim()">Create</button>
+                <button
+                  type="submit"
+                  [disabled]="saving() || !newName.trim() || newStoreId == null"
+                >
+                  Create
+                </button>
                 <button type="button" class="ghost" (click)="closeAdd()">Cancel</button>
               </div>
             </form>
@@ -172,6 +225,40 @@ type SortField = 'name' | 'kind' | 'active';
         display: flex;
         align-items: flex-end;
         gap: 0.6rem;
+      }
+      .filters {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin: 0.85rem 0 1rem;
+      }
+      .f {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .f-actions {
+        display: flex;
+        gap: 0.4rem;
+      }
+      /* One height for every control in the bar. */
+      .filters input,
+      .filters select,
+      .filters .f-actions button {
+        height: 2.25rem;
+        box-sizing: border-box;
+      }
+      .filters .f-actions button {
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        font-family: inherit;
+        border-radius: 8px;
+      }
+      .empty {
+        margin: 0.75rem 0 0;
       }
       .inline {
         display: flex;
@@ -388,9 +475,33 @@ export class LocationsComponent implements OnInit {
   editName = '';
   editActive = true;
 
-  // Add-location modal.
+  // Filters.
+  readonly search = signal('');
+  readonly statusFilter = signal<string | null>(null);
+  readonly storeFilter = signal<number | null>(null);
+
+  readonly filtersActive = computed(
+    () =>
+      this.search().trim().length > 0 ||
+      this.statusFilter() !== null ||
+      this.storeFilter() !== null,
+  );
+
+  clearFilters(): void {
+    this.search.set('');
+    this.statusFilter.set(null);
+    this.storeFilter.set(null);
+  }
+
+  storeName(id: number): string {
+    return this.stores().find((s) => s.id === id)?.name ?? `#${id}`;
+  }
+
+  // Add-location modal. The store is chosen here rather than page-wide, so a
+  // location is always deliberately attached to one store.
   readonly showAdd = signal(false);
   readonly addError = signal<string | null>(null);
+  newStoreId: number | null = null;
   newName = '';
   newActive = true;
 
@@ -409,13 +520,33 @@ export class LocationsComponent implements OnInit {
   };
 
   readonly displayLocations = computed(() => {
+    const term = this.search().trim().toLowerCase();
+    const status = this.statusFilter();
+    const store = this.storeFilter();
+    const list = this.locations().filter((l) => {
+      if (status === 'active' && !l.isActive) return false;
+      if (status === 'inactive' && l.isActive) return false;
+      if (store != null && l.storeId !== store) return false;
+      if (!term) return true;
+      // Search spans every column shown, using the displayed labels.
+      return [
+        l.name,
+        this.storeName(l.storeId),
+        this.kindLabel(l.kind),
+        l.isActive ? 'active' : 'inactive',
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(term);
+    });
     const field = this.sortField();
-    const list = [...this.locations()];
-    if (!field) return list; // server order (sortOrder, id)
+    if (!field) return list; // server order (storeId, sortOrder, id)
     const dir = this.sortDir() === 'asc' ? 1 : -1;
     return list.sort((a, b) => {
       let cmp = 0;
       if (field === 'name') cmp = a.name.localeCompare(b.name);
+      else if (field === 'store')
+        cmp = this.storeName(a.storeId).localeCompare(this.storeName(b.storeId));
       else if (field === 'kind')
         cmp = LocationsComponent.KIND_ORDER[a.kind] - LocationsComponent.KIND_ORDER[b.kind];
       else cmp = Number(a.isActive) - Number(b.isActive);
@@ -425,10 +556,11 @@ export class LocationsComponent implements OnInit {
 
   ngOnInit(): void {
     if (this.isCompanyAdmin) {
+      // Stores are needed for the Store column, the store filter and the Add
+      // modal; locations then load for every store at once.
       this.api.listStores().subscribe({
         next: (rows) => {
           this.stores.set(rows);
-          if (this.storeId() == null && rows.length > 0) this.storeId.set(rows[0].id);
           this.reload();
         },
         error: (err) => this.error.set(messageFor(err)),
@@ -438,15 +570,11 @@ export class LocationsComponent implements OnInit {
     }
   }
 
-  onStore(id: number): void {
-    this.storeId.set(id);
-    this.editId.set(null);
-    this.reload();
-  }
-
   reload(): void {
-    const sid = this.storeId();
-    if (sid == null) return;
+    // A company admin sees every store's locations (hence the Store column); a
+    // store user is pinned to their own store server-side.
+    const sid = this.isCompanyAdmin ? undefined : (this.storeId() ?? undefined);
+    if (!this.isCompanyAdmin && sid === undefined) return;
     this.loading.set(true);
     this.error.set(null);
     this.api.listLocations(sid).subscribe({
@@ -534,6 +662,9 @@ export class LocationsComponent implements OnInit {
   openAdd(): void {
     this.newName = '';
     this.newActive = true;
+    // Preselect when there is only one store, or when a store filter is applied.
+    const only = this.stores().length === 1 ? this.stores()[0].id : null;
+    this.newStoreId = this.storeFilter() ?? only ?? this.storeId();
     this.addError.set(null);
     this.showAdd.set(true);
   }
@@ -543,7 +674,7 @@ export class LocationsComponent implements OnInit {
   }
 
   create(): void {
-    const sid = this.storeId();
+    const sid = this.newStoreId;
     const name = this.newName.trim();
     if (sid == null || !name) return;
     this.saving.set(true);

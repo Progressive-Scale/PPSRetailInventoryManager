@@ -75,20 +75,32 @@ export class LocationsService {
 
   // ---- reads -------------------------------------------------------------
 
+  /**
+   * A STORE_USER always gets their own store. A COMPANY_ADMIN may pass storeId for
+   * one store, or omit it to list every store's locations (which the admin UI uses
+   * to show a Store column and filter across stores).
+   */
   async list(ctx: DataContext, requestedStoreId?: number) {
-    const storeId = this.storeId(ctx, requestedStoreId);
+    const allStores = ctx.role === 'COMPANY_ADMIN' && requestedStoreId === undefined;
+    const storeId = allStores ? null : this.storeId(ctx, requestedStoreId);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      await this.assertStore(tx, ctx.companyId, storeId);
+      if (storeId != null) await this.assertStore(tx, ctx.companyId, storeId);
       return tx
         .select()
         .from(storeLocations)
         .where(
-          and(
-            eq(storeLocations.companyId, ctx.companyId),
-            eq(storeLocations.storeId, storeId),
-          ),
+          storeId != null
+            ? and(
+                eq(storeLocations.companyId, ctx.companyId),
+                eq(storeLocations.storeId, storeId),
+              )
+            : eq(storeLocations.companyId, ctx.companyId),
         )
-        .orderBy(asc(storeLocations.sortOrder), asc(storeLocations.id));
+        .orderBy(
+          asc(storeLocations.storeId),
+          asc(storeLocations.sortOrder),
+          asc(storeLocations.id),
+        );
     });
   }
 
