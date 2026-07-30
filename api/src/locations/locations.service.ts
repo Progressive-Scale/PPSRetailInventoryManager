@@ -403,7 +403,7 @@ export class LocationsService {
       } catch (err) {
         if (isUniqueViolation(err)) {
           throw new ConflictException(
-            `An active location named "${dto.name}" already exists in this store.`,
+            `Another active location is already named "${dto.name}". Location names must be unique across your stores.`,
           );
         }
         throw err;
@@ -452,8 +452,8 @@ export class LocationsService {
       if (isUniqueViolation(err)) {
         throw new ConflictException(
           name
-            ? `An active location named "${name}" already exists in this store.`
-            : 'Another active location in this store already uses that name.',
+            ? `Another active location is already named "${name}". Location names must be unique across your stores.`
+            : 'Another active location already uses that name.',
         );
       }
       throw err;

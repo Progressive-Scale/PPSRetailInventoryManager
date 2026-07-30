@@ -25,3 +25,15 @@ export const DEFAULT_LOCATION_NAMES: Record<
   BACKROOM: 'Backroom',
   ONFLOOR: 'On Floor',
 };
+
+/**
+ * Location names are unique per company, so the initial names are qualified with
+ * the store: "Downtown Backroom", not "Backroom". Callers must still de-duplicate
+ * (two stores may share a name) — see uniqueLocationName in location-util.ts.
+ */
+export function defaultLocationName(
+  kind: Exclude<LocationKind, 'CUSTOM'>,
+  storeName: string,
+): string {
+  return `${storeName.trim()} ${DEFAULT_LOCATION_NAMES[kind]}`;
+}

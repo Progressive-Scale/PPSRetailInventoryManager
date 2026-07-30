@@ -367,11 +367,12 @@ export const storeLocations = pgTable(
   },
   (t) => [
     index('store_locations_company_store_idx').on(t.companyId, t.storeId),
-    // Unique among ACTIVE locations only, so a deactivated location's name can be
-    // reused. Two inactive rows may share a name; reactivating a clashing name is
-    // rejected by this index.
-    uniqueIndex('store_locations_company_store_name_uniq')
-      .on(t.companyId, t.storeId, t.name)
+    // Names are unique per COMPANY (not merely per store) among ACTIVE locations,
+    // and case-insensitively, so a cross-store list is never ambiguous: two stores
+    // cannot both hold a location called "Backroom". Deactivated rows are exempt,
+    // so a retired name can be reused; reactivating a clashing name is rejected.
+    uniqueIndex('store_locations_company_name_uniq')
+      .on(t.companyId, sql`lower(${t.name})`)
       .where(sql`${t.isActive}`),
     // NOTE: there is deliberately NO one-per-kind constraint. A store may have
     // several BACKROOM and several ONFLOOR locations. The invariant enforced in

@@ -29,6 +29,27 @@ let pass = 0, fail = 0;
 const check = (n, c, x) => { if (c) { pass++; console.log('  \u2713', n); } else { fail++; console.log('  \u2717', n, x !== undefined ? JSON.stringify(x).slice(0, 240) : ''); } };
 const msg = (b) => (b && b.message) ? String(b.message) : JSON.stringify(b).slice(0, 140);
 
+
+// The seed now gives each store SEVERAL locations of each required kind, so a test
+// that needs "this row is the last active one of its kind" must create that
+// precondition instead of assuming it. Deactivates every OTHER active row of the
+// kind (they are empty, so this always succeeds) and returns their ids so the
+// caller can restore them.
+async function soloOfKind(req, admin, storeId, kind, keepId) {
+  const rows = (await req('GET', `/locations?storeId=${storeId}&includeInactive=1`, { token: admin })).body;
+  const others = rows.filter((l) => l.kind === kind && l.isActive && l.id !== keepId);
+  const parked = [];
+  for (const o of others) {
+    const r = await req('POST', `/locations/${o.id}/deactivate`, { token: admin });
+    if (r.status === 200) parked.push(o.id);
+  }
+  return parked;
+}
+
+async function restoreParked(req, admin, ids) {
+  for (const id of ids) await req('POST', `/locations/${id}/reactivate`, { token: admin });
+}
+
 const NEW_FLOOR = 'Showroom';
 const NEW_BACK = 'Stock Room West';
 const STORE = 1, COMPANY = 1;
@@ -60,6 +81,10 @@ const STORE = 1, COMPANY = 1;
 
     // ---- 1. invariant guards still fire, by kind ----
     console.log('\n[invariant guards]');
+    // Reduce each required kind to this single active row so it genuinely IS the
+    // last of its kind — the seed creates more than one of each.
+    const parkedFloors = await soloOfKind(req, admin, STORE, 'ONFLOOR', floor.id);
+    const parkedBacks = await soloOfKind(req, admin, STORE, 'BACKROOM', back.id);
     const delFloor = await req('DELETE', `/locations/${floor.id}`, T);
     check('cannot delete the last active ONFLOOR after renaming',
       delFloor.status === 409, { status: delFloor.status, msg: msg(delFloor.body) });
@@ -73,6 +98,8 @@ const STORE = 1, COMPANY = 1;
     check('isLastOfRequiredKind still true for both renamed rows',
       flagged.find((l) => l.id === floor.id).isLastOfRequiredKind === true &&
       flagged.find((l) => l.id === back.id).isLastOfRequiredKind === true);
+
+    await restoreParked(req, admin, [...parkedFloors, ...parkedBacks]);
 
     // ---- 2. handoff / receipt landing resolves the renamed backroom ----
     console.log('\n[default landing resolves by kind]');
@@ -127,10 +154,14 @@ const STORE = 1, COMPANY = 1;
     const st = await req('POST', '/stores', { token: admin, body: { name: `Rename Probe ${Date.now()}` } });
     check('store created', st.status === 201, st.body);
     const fresh = (await req('GET', `/locations?storeId=${st.body.id}`, T)).body;
-    check('new store gets Backroom + On Floor by default name',
-      fresh.some((l) => l.kind === 'BACKROOM' && l.name === 'Backroom') &&
-      fresh.some((l) => l.kind === 'ONFLOOR' && l.name === 'On Floor'),
+    // Names are unique per company, so defaults are qualified with the store.
+    check('new store gets store-qualified default names',
+      fresh.some((l) => l.kind === 'BACKROOM' && l.name === `${st.body.name} Backroom`) &&
+      fresh.some((l) => l.kind === 'ONFLOOR' && l.name === `${st.body.name} On Floor`),
       fresh.map((l) => `${l.kind}:${l.name}`));
+    check('every default name is unique within the company',
+      new Set(fresh.map((l) => l.name.toLowerCase())).size === fresh.length,
+      fresh.map((l) => l.name));
     // clean up the probe store
     for (const l of (await req('GET', `/locations?storeId=${st.body.id}&includeInactive=1`, T)).body) {
       await req('DELETE', `/locations/${l.id}`, T);

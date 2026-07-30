@@ -92,6 +92,13 @@
       "when": 1785428855577,
       "tag": "0012_location_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785438733387,
+      "tag": "0013_unique_location_names",
+      "breakpoints": true
     }
   ]
 }

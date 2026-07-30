@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { Tx } from '../db/tenant-db.service';
-import { LocationKind, StoreLocation, storeLocations } from '../db/schema';
-import { DEFAULT_LOCATION_NAMES } from './location-names';
+import { LocationKind, StoreLocation, storeLocations, stores } from '../db/schema';
+import { defaultLocationName } from './location-names';
 
 /**
  * Resolve the DEFAULT location of a required kind for a store.
@@ -70,20 +70,57 @@ export async function createSystemLocations(
   companyId: number,
   storeId: number,
 ): Promise<void> {
+  const [store] = await tx
+    .select({ name: stores.name })
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+  const label = store?.name ?? `Store ${storeId}`;
   await tx.insert(storeLocations).values([
     {
       companyId,
       storeId,
-      name: DEFAULT_LOCATION_NAMES.BACKROOM,
+      name: await uniqueLocationName(tx, companyId, defaultLocationName('BACKROOM', label)),
       kind: 'BACKROOM',
       sortOrder: 0,
     },
     {
       companyId,
       storeId,
-      name: DEFAULT_LOCATION_NAMES.ONFLOOR,
+      name: await uniqueLocationName(tx, companyId, defaultLocationName('ONFLOOR', label)),
       kind: 'ONFLOOR',
       sortOrder: 1,
     },
   ]);
+}
+
+/**
+ * First free variant of `base` among the company's ACTIVE locations: "Downtown
+ * Backroom", then "Downtown Backroom 2", and so on. Needed because two stores may
+ * share a name, which would otherwise collide on the company-wide unique index.
+ */
+export async function uniqueLocationName(
+  tx: Tx,
+  companyId: number,
+  base: string,
+): Promise<string> {
+  const taken = new Set(
+    (
+      await tx
+        .select({ name: storeLocations.name })
+        .from(storeLocations)
+        .where(
+          and(
+            eq(storeLocations.companyId, companyId),
+            eq(storeLocations.isActive, true),
+          ),
+        )
+    ).map((r) => r.name.trim().toLowerCase()),
+  );
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${base} ${n}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  throw new Error(`Could not find a free location name based on "${base}".`);
 }
