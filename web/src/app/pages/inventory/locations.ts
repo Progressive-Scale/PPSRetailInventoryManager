@@ -69,7 +69,12 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
       </div>
 
       @if (error()) {
-        <p class="error">{{ error() }}</p>
+        <p class="error">
+          {{ error() }}
+          @if (blockedLoc(); as loc) {
+            <button class="sm ghost" (click)="viewStockAt(loc)">View these items</button>
+          }
+        </p>
       }
 
       @if (loading()) {
@@ -110,31 +115,23 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                     <span class="kind-badge" [class]="'k-' + loc.kind">{{ kindLabel(loc.kind) }}</span>
                   </td>
                   <td>
-                    <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
+                    @if (editId() === loc.id) {
+                      <select class="cell-input" name="edit-active" [(ngModel)]="editActive">
+                        <option [ngValue]="true">Active</option>
+                        <option [ngValue]="false">Inactive</option>
+                      </select>
+                    } @else {
+                      <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
+                    }
                   </td>
                   @if (isCompanyAdmin) {
                     <td class="actions">
                       @if (editId() === loc.id) {
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
                         <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
-                        @if (!loc.isActive) {
-                          <button class="sm" (click)="reactivate(loc)" [disabled]="saving()">
-                            Reactivate
-                          </button>
-                        } @else if (loc.hasHistory || loc.hasStock) {
-                          <span class="tip-wrap">
-                            <button
-                              class="sm danger"
-                              (click)="askDeactivate(loc)"
-                              [disabled]="saving() || loc.isLastOfRequiredKind"
-                            >
-                              Deactivate
-                            </button>
-                            @if (loc.isLastOfRequiredKind) {
-                              <span class="act-tip">{{ lastOfKindTip(loc) }}</span>
-                            }
-                          </span>
-                        } @else {
+                        @if (!loc.hasHistory && !loc.hasStock) {
+                          <!-- Only a never-used location can be removed outright;
+                               anything with history is retired via Status. -->
                           <span class="tip-wrap">
                             <button
                               class="sm danger"
@@ -220,42 +217,6 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                 <button type="button" class="ghost" (click)="closeAdd()">Cancel</button>
               </div>
             </form>
-          </div>
-        </div>
-      }
-
-      @if (pendingDeactivate(); as loc) {
-        <div class="overlay" (click)="cancelDeactivate()">
-          <div class="modal" (click)="$event.stopPropagation()">
-            <h3>Deactivate location</h3>
-            @if (loc.hasStock) {
-              <p class="confirm-text">
-                <strong>{{ loc.name }}</strong> still holds
-                {{ loc.stockCount }} item{{ loc.stockCount === 1 ? '' : 's' }}. Move them
-                out before deactivating it.
-              </p>
-              <div class="modal-actions">
-                <button (click)="viewStockAt(loc)">View these items</button>
-                <button class="ghost" (click)="cancelDeactivate()">Cancel</button>
-              </div>
-            } @else {
-              <p class="confirm-text">
-                Deactivate <strong>{{ loc.name }}</strong>? It disappears from move
-                targets and dropdowns, but its history is kept and its name still shows
-                on past movements. You can reactivate it later.
-              </p>
-              @if (deactivateError()) {
-                <p class="error">{{ deactivateError() }}</p>
-              }
-              <div class="modal-actions">
-                <button class="danger-btn" (click)="confirmDeactivate()" [disabled]="saving()">
-                  {{ saving() ? 'Deactivating…' : 'Deactivate' }}
-                </button>
-                <button class="ghost" (click)="cancelDeactivate()" [disabled]="saving()">
-                  Cancel
-                </button>
-              </div>
-            }
           </div>
         </div>
       }
@@ -613,6 +574,7 @@ export class LocationsComponent implements OnInit {
 
   readonly editId = signal<number | null>(null);
   editName = '';
+  editActive = true;
 
   // Filters.
   readonly search = signal('');
@@ -649,61 +611,20 @@ export class LocationsComponent implements OnInit {
   readonly pendingDelete = signal<StoreLocation | null>(null);
   readonly deleteError = signal<string | null>(null);
 
-  // Deactivate-confirmation modal (used for anything with stock or history).
-  readonly pendingDeactivate = signal<StoreLocation | null>(null);
-  readonly deactivateError = signal<string | null>(null);
+  /** Set when a save was refused because the location still holds stock. */
+  readonly blockedLoc = signal<StoreLocation | null>(null);
+
+  private clearError(): void {
+    this.error.set(null);
+    this.blockedLoc.set(null);
+  }
 
   lastOfKindTip(loc: StoreLocation): string {
     return `Every store needs at least one active ${this.kindLabel(loc.kind)} location.`;
   }
 
-  askDeactivate(loc: StoreLocation): void {
-    this.deactivateError.set(null);
-    this.pendingDeactivate.set(loc);
-  }
-
-  cancelDeactivate(): void {
-    this.pendingDeactivate.set(null);
-  }
-
-  confirmDeactivate(): void {
-    const loc = this.pendingDeactivate();
-    if (!loc) return;
-    this.saving.set(true);
-    this.deactivateError.set(null);
-    this.api.deactivateLocation(loc.id).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.pendingDeactivate.set(null);
-        this.editId.set(null);
-        this.reload();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.deactivateError.set(messageFor(err));
-      },
-    });
-  }
-
-  reactivate(loc: StoreLocation): void {
-    this.saving.set(true);
-    this.error.set(null);
-    this.api.reactivateLocation(loc.id).subscribe({
-      next: () => {
-        this.saving.set(false);
-        this.editId.set(null);
-        this.reload();
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
   /** Jump to the stock grid filtered to this location so the items can be moved. */
   viewStockAt(loc: StoreLocation): void {
-    this.pendingDeactivate.set(null);
     this.pendingDelete.set(null);
     this.showStockAt.emit(loc);
   }
@@ -806,18 +727,21 @@ export class LocationsComponent implements OnInit {
 
   startEdit(loc: StoreLocation): void {
     this.editName = loc.name;
-    this.error.set(null);
+    this.editActive = loc.isActive;
+    this.clearError();
     this.editId.set(loc.id);
   }
 
   save(loc: StoreLocation): void {
     const name = this.editName.trim();
     if (!name) return;
-    // Rename only. Active state is changed through the dedicated
-    // Deactivate/Reactivate actions, which carry the lifecycle guards.
-    const dto: { name: string } = { name };
+    // Rename and/or flip Active. The server runs the lifecycle guards on the
+    // isActive change (live stock, last-active-of-a-required-kind), so a rejected
+    // switch comes back as a message rather than being silently applied.
+    const dto: { name: string; isActive?: boolean } = { name };
+    if (this.editActive !== loc.isActive) dto.isActive = this.editActive;
     this.saving.set(true);
-    this.error.set(null);
+    this.clearError();
     this.api.updateLocation(loc.id, dto).subscribe({
       next: () => {
         this.saving.set(false);
@@ -826,7 +750,10 @@ export class LocationsComponent implements OnInit {
       },
       error: (err) => {
         this.saving.set(false);
-        this.error.set(messageFor(err));
+        const text = messageFor(err);
+        this.error.set(text);
+        // Offer the shortcut only when the blocker is stock the user must move.
+        if (/move the \d+ item/i.test(text)) this.blockedLoc.set(loc);
       },
     });
   }
