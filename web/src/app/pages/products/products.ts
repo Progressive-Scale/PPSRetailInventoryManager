@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
@@ -28,20 +28,47 @@ type SubTab = 'catalog' | 'review';
             <h2>Products</h2>
             <button (click)="openAddProduct()">Add product</button>
           </div>
-          <div class="filter-row">
-            <label>
-              Show:
-              <select [(ngModel)]="productFilter" name="p-filter" (ngModelChange)="loadProducts()">
-                <option [ngValue]="'all'">All</option>
-                <option [ngValue]="'active'">Active only</option>
-                <option [ngValue]="'inactive'">Inactive only</option>
+          <div class="filters">
+            <label class="f">
+              Search
+              <input
+                name="p-search"
+                placeholder="SKU, name, UPC"
+                [ngModel]="search()"
+                (ngModelChange)="search.set($event)"
+              />
+            </label>
+            <label class="f">
+              Type
+              <select name="p-type" [ngModel]="typeFilter()" (ngModelChange)="typeFilter.set($event)">
+                <option [ngValue]="null">All</option>
+                <option [ngValue]="'SERIALIZED'">Serialized</option>
+                <option [ngValue]="'QUANTITY'">UPC</option>
               </select>
             </label>
+            <label class="f">
+              Active
+              <select name="p-active" [ngModel]="activeFilter()" (ngModelChange)="activeFilter.set($event)">
+                <option [ngValue]="null">All</option>
+                <option [ngValue]="'active'">Active</option>
+                <option [ngValue]="'inactive'">Inactive</option>
+              </select>
+            </label>
+            <div class="f-actions">
+              <button type="button" class="ghost" (click)="clearFilters()" [disabled]="!filtersActive()">
+                Clear
+              </button>
+              <button type="button" class="ghost" (click)="loadProducts()" [disabled]="loading()">
+                Refresh
+              </button>
+            </div>
           </div>
           @if (loading()) {
             <p class="muted">Loading…</p>
           } @else if (products().length === 0) {
             <p class="muted">No products yet.</p>
+          } @else if (filteredProducts().length === 0) {
+            <p class="muted">No products match these filters.</p>
           } @else {
             <div class="table-scroll">
               <table class="fixed">
@@ -50,56 +77,48 @@ type SubTab = 'catalog' | 'review';
                     <th class="col-sku">SKU</th>
                     <th class="col-name">Name</th>
                     <th class="col-type">Type</th>
-                    <th class="col-price">Price</th>
                     <th class="col-upc">UPC</th>
                     <th class="col-active">Active</th>
                     <th class="actions col-actions"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  @for (p of products(); track p.id) {
+                  @for (p of filteredProducts(); track p.id) {
                     <tr [class.inactive-row]="!p.active">
                       @if (editProductId() === p.id) {
                         <td><input class="cell-input" name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
                         <td><input class="cell-input" name="ep-name" [(ngModel)]="productEdit.name" /></td>
                         <td>
-                          <span class="type-badge" [class]="'tt-' + p.trackingType">{{ p.trackingType }}</span>
-                        </td>
-                        <td>
-                          <input
-                            class="cell-input"
-                            name="ep-price"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            [(ngModel)]="productEdit.price"
-                          />
+                          <span class="type-badge" [class]="'tt-' + p.trackingType">
+                            {{ typeLabel(p.trackingType) }}
+                          </span>
                         </td>
                         <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
                         <td>
-                          <label class="chk">
-                            <input type="checkbox" name="ep-active" [(ngModel)]="productEdit.active" />
-                            Active
-                          </label>
+                          <select class="cell-input" name="ep-active" [(ngModel)]="productEdit.active">
+                            <option [ngValue]="true">Active</option>
+                            <option [ngValue]="false">Inactive</option>
+                          </select>
                         </td>
                         <td class="actions">
                           <button class="sm" (click)="saveProduct(p)" [disabled]="saving()">Save</button>
                           <button class="sm ghost" (click)="editProductId.set(null)">Cancel</button>
+                          <button class="sm danger" (click)="askDeleteProduct(p)" [disabled]="saving()">
+                            Delete
+                          </button>
                         </td>
                       } @else {
                         <td>{{ p.sku }}</td>
                         <td>{{ p.name }}</td>
                         <td>
-                          <span class="type-badge" [class]="'tt-' + p.trackingType">{{ p.trackingType }}</span>
+                          <span class="type-badge" [class]="'tt-' + p.trackingType">
+                            {{ typeLabel(p.trackingType) }}
+                          </span>
                         </td>
-                        <td>{{ formatPrice(p.price) }}</td>
                         <td class="muted">{{ p.upc || '—' }}</td>
-                        <td>{{ p.active ? 'Yes' : 'No' }}</td>
+                        <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
-                          <button class="sm danger" (click)="askDeleteProduct(p)" [disabled]="saving()">
-                            Delete
-                          </button>
                         </td>
                       }
                     </tr>
@@ -131,12 +150,8 @@ type SubTab = 'catalog' | 'review';
                   Tracking type <span class="req">*</span>
                   <select name="m-tracking" [(ngModel)]="productDraft.trackingType" required>
                     <option value="SERIALIZED">Serialized</option>
-                    <option value="QUANTITY">Quantity</option>
+                    <option value="QUANTITY">UPC</option>
                   </select>
-                </label>
-                <label>
-                  Price
-                  <input name="m-price" type="number" step="0.01" min="0" [(ngModel)]="productDraft.price" />
                 </label>
                 <label>
                   UPC
@@ -265,6 +280,37 @@ type SubTab = 'catalog' | 'review';
         font-size: 0.8rem;
         margin-left: 0.25rem;
       }
+      .filters {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin: 0.85rem 0 1rem;
+      }
+      .f {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .f-actions {
+        display: flex;
+        gap: 0.4rem;
+      }
+      /* One height for every control in the bar. */
+      .filters input,
+      .filters select,
+      .filters .f-actions button {
+        height: 2.25rem;
+        box-sizing: border-box;
+      }
+      .filters .f-actions button {
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        font-family: inherit;
+        border-radius: 8px;
+      }
       .filter-row {
         margin-bottom: 0.85rem;
         font-size: 0.85rem;
@@ -306,26 +352,24 @@ type SubTab = 'catalog' | 'review';
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      /* Widths must sum to 100% across every column — Price was removed. */
       .col-sku {
-        width: 14%;
+        width: 15%;
       }
       .col-name {
-        width: 24%;
+        width: 28%;
       }
       .col-type {
-        width: 13%;
-      }
-      .col-price {
-        width: 10%;
-      }
-      .col-upc {
         width: 14%;
       }
+      .col-upc {
+        width: 15%;
+      }
       .col-active {
-        width: 9%;
+        width: 10%;
       }
       .col-actions {
-        width: 16%;
+        width: 18%;
       }
       .type-badge {
         display: inline-block;
@@ -425,7 +469,46 @@ export class ProductsComponent implements OnInit {
     description: string;
     trackingType: TrackingType;
   } = { sku: '', name: '', price: null, upc: '', description: '', trackingType: 'SERIALIZED' };
-  productFilter: 'all' | 'active' | 'inactive' = 'all';
+  // Filters run client-side over the loaded catalog, so they apply as you type.
+  readonly search = signal('');
+  readonly typeFilter = signal<TrackingType | null>(null);
+  readonly activeFilter = signal<string | null>(null);
+
+  readonly filtersActive = computed(
+    () =>
+      this.search().trim().length > 0 ||
+      this.typeFilter() !== null ||
+      this.activeFilter() !== null,
+  );
+
+  readonly filteredProducts = computed(() => {
+    const term = this.search().trim().toLowerCase();
+    const type = this.typeFilter();
+    const active = this.activeFilter();
+    return this.products().filter((p) => {
+      if (type && p.trackingType !== type) return false;
+      if (active === 'active' && !p.active) return false;
+      if (active === 'inactive' && p.active) return false;
+      if (!term) return true;
+      // Search spans the columns shown, matching the displayed labels.
+      return [p.sku, p.name, p.upc ?? '', this.typeLabel(p.trackingType),
+        p.active ? 'active' : 'inactive']
+        .join(' ')
+        .toLowerCase()
+        .includes(term);
+    });
+  });
+
+  clearFilters(): void {
+    this.search.set('');
+    this.typeFilter.set(null);
+    this.activeFilter.set(null);
+  }
+
+  /** QUANTITY products are barcode-counted, shown as "UPC" as in Inventory. */
+  typeLabel(t: TrackingType): string {
+    return t === 'QUANTITY' ? 'UPC' : 'Serialized';
+  }
   readonly editProductId = signal<number | null>(null);
   productEdit: {
     sku: string;
@@ -450,10 +533,9 @@ export class ProductsComponent implements OnInit {
   }
 
   loadProducts(): void {
-    const active =
-      this.productFilter === 'active' ? true : this.productFilter === 'inactive' ? false : undefined;
+    // Always fetch the whole catalog; the Active filter is applied client-side.
     this.loading.set(true);
-    this.api.listProducts({ active }).subscribe({
+    this.api.listProducts({}).subscribe({
       next: (rows) => {
         this.products.set(rows);
         this.loading.set(false);
