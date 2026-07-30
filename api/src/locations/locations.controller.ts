@@ -34,7 +34,7 @@ export class LocationsController {
   @Get()
   @Roles(['COMPANY_ADMIN', 'STORE_USER'])
   list(@Ctx() ctx: DataContext, @Query() query: ListLocationsQuery) {
-    return this.svc.list(ctx, query.storeId);
+    return this.svc.list(ctx, query.storeId, query.includeInactive ?? false);
   }
 
   @Post()
@@ -60,6 +60,23 @@ export class LocationsController {
     return this.svc.update(ctx, id, dto);
   }
 
+  /** Turn a location off. Blocked by live stock or being the last of a kind. */
+  @Post(':id/deactivate')
+  @HttpCode(HttpStatus.OK)
+  @Roles(['COMPANY_ADMIN'])
+  deactivate(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
+    return this.svc.deactivate(ctx, id);
+  }
+
+  /** Turn it back on. Allowed anytime, subject to active-name uniqueness. */
+  @Post(':id/reactivate')
+  @HttpCode(HttpStatus.OK)
+  @Roles(['COMPANY_ADMIN'])
+  reactivate(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
+    return this.svc.reactivate(ctx, id);
+  }
+
+  /** Hard delete — only for a location that was created and never used. */
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(['COMPANY_ADMIN'])

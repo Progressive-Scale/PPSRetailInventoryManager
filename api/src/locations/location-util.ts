@@ -1,11 +1,18 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { Tx } from '../db/tenant-db.service';
 import { LocationKind, StoreLocation, storeLocations } from '../db/schema';
 
 /**
- * Resolve a store's system location by kind (BACKROOM / ONFLOOR). Every store
- * has exactly one of each (created with the store; backfilled for older stores).
- * Throws if missing — a store should never be without its system locations.
+ * Resolve the DEFAULT location of a required kind for a store.
+ *
+ * A store may now have SEVERAL active BACKROOM or ONFLOOR locations, so callers
+ * that need "the store's backroom" (handoff landing, cycle-count defaults) need a
+ * deterministic choice. The rule is the OLDEST ACTIVE one: lowest sort_order,
+ * then created_at, then id as a final tiebreak. Inactive locations are never
+ * chosen — they are excluded from landing and restock logic by design.
+ *
+ * Throws if the store has no active location of that kind; the locations service
+ * guarantees at least one exists by refusing to deactivate or delete the last.
  */
 export async function systemLocationId(
   tx: Tx,
@@ -21,12 +28,18 @@ export async function systemLocationId(
         eq(storeLocations.companyId, companyId),
         eq(storeLocations.storeId, storeId),
         eq(storeLocations.kind, kind),
+        eq(storeLocations.isActive, true),
       ),
+    )
+    .orderBy(
+      asc(storeLocations.sortOrder),
+      asc(storeLocations.createdAt),
+      asc(storeLocations.id),
     )
     .limit(1);
   if (!row) {
     throw new Error(
-      `Store ${storeId} is missing its ${kind} location. Run the locations backfill.`,
+      `Store ${storeId} has no active ${kind} location. Run the locations backfill.`,
     );
   }
   return row.id;
@@ -47,8 +60,9 @@ export async function loadLocation(
 }
 
 /**
- * Create the two SYSTEM locations for a freshly-created store. Called from store
- * creation so every store starts with a Backroom + On Floor.
+ * Create the two required locations for a freshly-created store, satisfying the
+ * "at least one active BACKROOM and ONFLOOR per store" invariant from birth. More
+ * of either kind can be added later.
  */
 export async function createSystemLocations(
   tx: Tx,

@@ -59,7 +59,11 @@ export class ExpirationAlertsJob implements OnModuleInit {
           locationId: storeLocations.id,
         })
         .from(storeLocations)
-        .where(eq(storeLocations.kind, 'ONFLOOR'));
+        // ALL active on-floor locations, not just one — a store may have several.
+        // Deactivated floors are excluded from alerting.
+        .where(
+          and(eq(storeLocations.kind, 'ONFLOOR'), eq(storeLocations.isActive, true)),
+        );
 
       const today = new Date();
       let created = 0;
