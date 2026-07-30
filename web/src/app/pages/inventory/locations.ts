@@ -129,11 +129,16 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                       @if (editId() === loc.id) {
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
                         <button class="sm ghost" (click)="editId.set(null)">Cancel</button>
-                        <!-- Always offered. Whether it can actually go, and why not,
-                             is explained in the confirmation dialog. -->
-                        <button class="sm danger" (click)="askDelete(loc)" [disabled]="saving()">
-                          Delete
-                        </button>
+                        @if (!loc.itemCount) {
+                          <!-- Shown only when NO inventory item sits here (any status —
+                               sold units cannot be moved, so they permanently rule a
+                               delete out). Remaining reasons, such as the location still
+                               being referenced by past movements or being the last of its
+                               kind, are explained in the confirmation dialog. -->
+                          <button class="sm danger" (click)="askDelete(loc)" [disabled]="saving()">
+                            Delete
+                          </button>
+                        }
                       } @else {
                         <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
                       }
