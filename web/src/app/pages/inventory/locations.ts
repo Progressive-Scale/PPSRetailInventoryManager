@@ -69,12 +69,7 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
       </div>
 
       @if (error()) {
-        <p class="error">
-          {{ error() }}
-          @if (blockedLoc(); as loc) {
-            <button class="sm ghost" (click)="viewStockAt(loc)">View these items</button>
-          }
-        </p>
+        <p class="error">{{ error() }}</p>
       }
 
       @if (loading()) {
@@ -211,6 +206,21 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                 <button type="button" class="ghost" (click)="closeAdd()">Cancel</button>
               </div>
             </form>
+          </div>
+        </div>
+      }
+
+      @if (saveBlocked(); as blocked) {
+        <div class="overlay" (click)="saveBlocked.set(null)">
+          <div class="modal" (click)="$event.stopPropagation()">
+            <h3>Can't make this location inactive</h3>
+            <p class="confirm-text">{{ blocked.message }}</p>
+            <div class="modal-actions">
+              @if (blocked.showItems) {
+                <button (click)="viewStockAt(blocked.loc)">View these items</button>
+              }
+              <button class="ghost" (click)="saveBlocked.set(null)">Close</button>
+            </div>
           </div>
         </div>
       }
@@ -643,12 +653,20 @@ export class LocationsComponent implements OnInit {
   readonly pendingDelete = signal<StoreLocation | null>(null);
   readonly deleteError = signal<string | null>(null);
 
-  /** Set when a save was refused because the location still holds stock. */
-  readonly blockedLoc = signal<StoreLocation | null>(null);
+  /**
+   * A refused save (usually switching Status to Inactive) is surfaced in its own
+   * dialog rather than as a banner at the top of the card, with a shortcut to the
+   * items that need moving when stock is the blocker.
+   */
+  readonly saveBlocked = signal<{
+    loc: StoreLocation;
+    message: string;
+    showItems: boolean;
+  } | null>(null);
 
   private clearError(): void {
     this.error.set(null);
-    this.blockedLoc.set(null);
+    this.saveBlocked.set(null);
   }
 
   lastOfKindTip(loc: StoreLocation): string {
@@ -680,6 +698,7 @@ export class LocationsComponent implements OnInit {
   /** Jump to the stock grid filtered to this location so the items can be moved. */
   viewStockAt(loc: StoreLocation): void {
     this.pendingDelete.set(null);
+    this.saveBlocked.set(null);
     this.showStockAt.emit(loc);
   }
 
@@ -804,10 +823,10 @@ export class LocationsComponent implements OnInit {
       },
       error: (err) => {
         this.saving.set(false);
-        const text = messageFor(err);
-        this.error.set(text);
-        // Offer the shortcut only when the blocker is stock the user must move.
-        if (/move the \d+ item/i.test(text)) this.blockedLoc.set(loc);
+        const message = messageFor(err);
+        // Offer the shortcut only when the blocker is items the user must move.
+        const showItems = /(move the \d+ item|item[s]? (still|recorded))/i.test(message);
+        this.saveBlocked.set({ loc, message, showItems });
       },
     });
   }
