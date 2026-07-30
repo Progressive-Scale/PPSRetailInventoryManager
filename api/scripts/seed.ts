@@ -14,7 +14,7 @@ import { hash } from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { defaultLocationName } from '../src/locations/location-names';
+import { DEFAULT_LOCATION_NAMES } from '../src/locations/location-names';
 import { Pool } from 'pg';
 import * as schema from '../src/db/schema';
 
@@ -137,33 +137,23 @@ async function ensureSystemLocations(
   db: Db,
   companyId: number,
   storeId: number,
-  storeName: string,
 ): Promise<{ backroom: number; onfloor: number }> {
-  // Initial display names only — every lookup below keys on `kind`. Names are
-  // unique per company, so they are qualified with the store: two stores cannot
-  // both own a location called "Backroom". A SECOND location of each required kind
-  // is seeded so the "last active of this kind" guard can be exercised without
-  // having to add one by hand.
+  // Initial display names only — every lookup below keys on `kind`. One of each
+  // required kind, matching a fresh real-world store; extra Backroom/On Floor
+  // locations are something an operator adds when they need them.
   const defaults: Array<{ name: string; kind: 'BACKROOM' | 'ONFLOOR'; sortOrder: number }> = [
-    { name: defaultLocationName('BACKROOM', storeName), kind: 'BACKROOM', sortOrder: 0 },
-    { name: defaultLocationName('ONFLOOR', storeName), kind: 'ONFLOOR', sortOrder: 1 },
-    { name: `${storeName} Backroom Overflow`, kind: 'BACKROOM', sortOrder: 2 },
-    { name: `${storeName} Endcap`, kind: 'ONFLOOR', sortOrder: 3 },
+    { name: DEFAULT_LOCATION_NAMES.BACKROOM, kind: 'BACKROOM', sortOrder: 0 },
+    { name: DEFAULT_LOCATION_NAMES.ONFLOOR, kind: 'ONFLOOR', sortOrder: 1 },
   ];
   const existing = await db
     .select()
     .from(storeLocations)
     .where(and(eq(storeLocations.companyId, companyId), eq(storeLocations.storeId, storeId)));
   for (const d of defaults) {
-    // Match on NAME here (not kind) so the extra rows of the same kind are seeded
-    // too; this is a creation path, which is the one place names may be compared.
-    if (existing.some((r) => r.name.trim().toLowerCase() === d.name.trim().toLowerCase())) {
-      continue;
-    }
+    if (existing.some((r) => r.kind === d.kind)) continue;
     await db
       .insert(storeLocations)
-      .values({ companyId, storeId, name: d.name, kind: d.kind, sortOrder: d.sortOrder })
-      .onConflictDoNothing();
+      .values({ companyId, storeId, name: d.name, kind: d.kind, sortOrder: d.sortOrder });
   }
   const rows = await db
     .select()
@@ -275,7 +265,7 @@ async function main(): Promise<void> {
     zip: '62701',
     notes: 'Flagship demo store.',
   });
-  const demoLoc = await ensureSystemLocations(db, demo.id, store.id, store.name);
+  const demoLoc = await ensureSystemLocations(db, demo.id, store.id);
   await ensureUser(db, demo.id, null, 'admin@demo.test', 'admin123', 'COMPANY_ADMIN');
   await ensureUser(db, demo.id, store.id, 'user@demo.test', 'store123', 'STORE_USER');
   const [storeUser] = await db
@@ -568,7 +558,7 @@ async function main(): Promise<void> {
     zip: '60504',
     notes: 'Central distribution warehouse.',
   });
-  const acmeLoc = await ensureSystemLocations(db, acme.id, acmeStore.id, acmeStore.name);
+  const acmeLoc = await ensureSystemLocations(db, acme.id, acmeStore.id);
   await ensureUser(db, acme.id, null, 'admin@acme.test', 'admin123', 'COMPANY_ADMIN');
   const acmeBySku = await ensureProducts(db, acme.id, [
     { sku: 'ACME-WIDGET', name: 'Acme Widget', price: '5.00', upc: '0009990001', trackingType: 'SERIALIZED' },

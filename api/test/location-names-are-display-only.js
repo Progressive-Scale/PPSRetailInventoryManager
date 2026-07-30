@@ -154,12 +154,12 @@ const STORE = 1, COMPANY = 1;
     const st = await req('POST', '/stores', { token: admin, body: { name: `Rename Probe ${Date.now()}` } });
     check('store created', st.status === 201, st.body);
     const fresh = (await req('GET', `/locations?storeId=${st.body.id}`, T)).body;
-    // Names are unique per company, so defaults are qualified with the store.
-    check('new store gets store-qualified default names',
-      fresh.some((l) => l.kind === 'BACKROOM' && l.name === `${st.body.name} Backroom`) &&
-      fresh.some((l) => l.kind === 'ONFLOOR' && l.name === `${st.body.name} On Floor`),
+    // Names are unique per STORE, so every store owns a plain "Backroom".
+    check('new store gets Backroom + On Floor by default name',
+      fresh.some((l) => l.kind === 'BACKROOM' && l.name === 'Backroom') &&
+      fresh.some((l) => l.kind === 'ONFLOOR' && l.name === 'On Floor'),
       fresh.map((l) => `${l.kind}:${l.name}`));
-    check('every default name is unique within the company',
+    check('names are unique within the store',
       new Set(fresh.map((l) => l.name.toLowerCase())).size === fresh.length,
       fresh.map((l) => l.name));
     // clean up the probe store

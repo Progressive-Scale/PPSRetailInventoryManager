@@ -264,15 +264,14 @@ Only **live** stock blocks deactivation (on-hand units and quantity on hand) —
 sold units are history, not stock. A location that has ever been used can never be
 hard-deleted, because the ledger references it.
 
-Names are unique among *active* locations **across the whole company**, and
-case-insensitively — two stores cannot both own a "Backroom", so any cross-store
-list is unambiguous. That is why the initial names are qualified with the store
-("Downtown Backroom"). Deactivated rows are exempt, so a retired name can be
-reused; reactivating a row whose name is taken is rejected.
+Names are unique among *active* locations **within a store**, case-insensitively.
+Every store owns its own "Backroom" and "On Floor" — the Store column
+disambiguates them in cross-store lists. Deactivated rows are exempt, so a retired
+name can be reused; reactivating a row whose name is taken is rejected.
 
-Note the required-kind invariant is **per store** and keys on `kind`, so a store
-with one active Backroom will still refuse to give it up regardless of what it is
-called — add a second Backroom to that store first.
+The required-kind invariant is **per store** and keys on `kind`, so a store with
+one active Backroom refuses to give it up whatever it is named. To retire it, add a
+second Backroom to that store first.
 
 > **Convention — location logic keys on `kind`, never on `name`.** A location's
 > name is a user-editable label; its `kind` (`BACKROOM` / `ONFLOOR` / `CUSTOM`)

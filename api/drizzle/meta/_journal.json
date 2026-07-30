@@ -99,6 +99,13 @@
       "when": 1785438733387,
       "tag": "0013_unique_location_names",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785439643226,
+      "tag": "0014_per_store_location_names",
+      "breakpoints": true
     }
   ]
 }
