@@ -198,11 +198,78 @@ type Tab = 'stores' | 'users' | 'invitations';
       <!-- USERS -->
       @if (tab() === 'users') {
         <section class="card">
-          <h2>Users</h2>
+          <div class="section-head">
+            <h2>Users</h2>
+            @if (!loading() && users().length > 0) {
+              <span class="muted small">
+                {{ filteredUsers().length }} of {{ users().length }}
+              </span>
+            }
+          </div>
+          @if (!loading() && users().length > 0) {
+            <div class="filters">
+              <label class="f">
+                Search
+                <input
+                  name="fu-search"
+                  placeholder="Email, role, store, status"
+                  [ngModel]="userSearch()"
+                  (ngModelChange)="userSearch.set($event)"
+                />
+              </label>
+              <label class="f">
+                Role
+                <select
+                  name="fu-role"
+                  [ngModel]="userRoleFilter()"
+                  (ngModelChange)="userRoleFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  <option [ngValue]="'COMPANY_ADMIN'">Company Admin</option>
+                  <option [ngValue]="'STORE_USER'">Store User</option>
+                </select>
+              </label>
+              <label class="f">
+                Active store
+                <select
+                  name="fu-store"
+                  [ngModel]="userStoreFilter()"
+                  (ngModelChange)="userStoreFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  <option [ngValue]="'none'">— none —</option>
+                  @for (s of stores(); track s.id) {
+                    <option [ngValue]="s.id">{{ s.name }}</option>
+                  }
+                </select>
+              </label>
+              <label class="f">
+                Status
+                <select
+                  name="fu-status"
+                  [ngModel]="userStatusFilter()"
+                  (ngModelChange)="userStatusFilter.set($event)"
+                >
+                  <option [ngValue]="null">All</option>
+                  <option [ngValue]="'ACTIVE'">Active</option>
+                  <option [ngValue]="'SUSPENDED'">Suspended</option>
+                </select>
+              </label>
+              @if (userFiltersActive()) {
+                <div class="f-actions">
+                  <button type="button" class="sm ghost" (click)="clearUserFilters()">
+                    Clear
+                  </button>
+                </div>
+              }
+            </div>
+          }
           @if (loading()) {
             <p class="muted">Loading…</p>
           } @else if (users().length === 0) {
             <p class="muted">No users yet.</p>
+          } @else if (filteredUsers().length === 0) {
+            <p class="muted">No users match these filters.</p>
           } @else {
             <div class="table-scroll">
               <table class="fixed">
@@ -217,7 +284,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                   </tr>
                 </thead>
                 <tbody>
-                  @for (u of users(); track u.id) {
+                  @for (u of filteredUsers(); track u.id) {
                     <tr [class.row-edit]="editUserId() === u.id">
                       @if (editUserId() === u.id) {
                         <td class="ctext">{{ u.email }}</td>
@@ -1169,6 +1236,53 @@ export class ManageComponent implements OnInit {
     this.inviteSearch.set('');
     this.inviteStatusFilter.set(null);
     this.inviteRoleFilter.set(null);
+  }
+
+  // Users filters. Client-side over the loaded list, like the invitations tab.
+  readonly userSearch = signal('');
+  readonly userRoleFilter = signal<Role | null>(null);
+  /** Store id, or 'none' for users with no active store yet. */
+  readonly userStoreFilter = signal<number | 'none' | null>(null);
+  readonly userStatusFilter = signal<string | null>(null);
+
+  readonly userFiltersActive = computed(
+    () =>
+      this.userSearch().trim().length > 0 ||
+      this.userRoleFilter() !== null ||
+      this.userStoreFilter() !== null ||
+      this.userStatusFilter() !== null,
+  );
+
+  readonly filteredUsers = computed(() => {
+    const term = this.userSearch().trim().toLowerCase();
+    const role = this.userRoleFilter();
+    const store = this.userStoreFilter();
+    const status = this.userStatusFilter();
+    return this.users().filter((u) => {
+      if (role && u.role !== role) return false;
+      if (status && u.status !== status) return false;
+      if (store === 'none' && u.storeId != null) return false;
+      if (typeof store === 'number' && u.storeId !== store) return false;
+      if (!term) return true;
+      // Search spans every column shown in the table, matching labels not raw enums.
+      const haystack = [
+        u.email,
+        this.roleLabel(u.role),
+        u.status === 'ACTIVE' ? 'active' : 'suspended',
+        u.storeId != null ? this.storeName(u.storeId) : '',
+        ...(u.storeIds ?? []).map((id) => this.storeName(id)),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  });
+
+  clearUserFilters(): void {
+    this.userSearch.set('');
+    this.userRoleFilter.set(null);
+    this.userStoreFilter.set(null);
+    this.userStatusFilter.set(null);
   }
 
   ngOnInit(): void {
