@@ -12,7 +12,7 @@
 import 'dotenv/config';
 import { hash } from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import * as schema from '../src/db/schema';
@@ -126,9 +126,11 @@ async function ensureStore(
 }
 
 /**
- * Ensure a store's two SYSTEM locations exist and return their ids. Every store
- * has exactly one BACKROOM and one ONFLOOR (renamable, not deletable). Custom
- * locations may also exist but are not created here.
+ * Ensure a store has its two REQUIRED locations and return the ids the seed uses.
+ * A store may have several BACKROOM/ONFLOOR locations; the invariant is that at
+ * least one of each stays ACTIVE. When several exist this picks the same one the
+ * API treats as the default landing location: the oldest ACTIVE by
+ * (sort_order, created_at, id). Custom locations are not created here.
  */
 async function ensureSystemLocations(
   db: Db,
@@ -152,11 +154,17 @@ async function ensureSystemLocations(
   const rows = await db
     .select()
     .from(storeLocations)
-    .where(and(eq(storeLocations.companyId, companyId), eq(storeLocations.storeId, storeId)));
-  const backroom = rows.find((r) => r.kind === 'BACKROOM');
-  const onfloor = rows.find((r) => r.kind === 'ONFLOOR');
+    .where(and(eq(storeLocations.companyId, companyId), eq(storeLocations.storeId, storeId)))
+    .orderBy(
+      asc(storeLocations.sortOrder),
+      asc(storeLocations.createdAt),
+      asc(storeLocations.id),
+    );
+  // Mirrors systemLocationId(): oldest ACTIVE row of the kind.
+  const backroom = rows.find((r) => r.kind === 'BACKROOM' && r.isActive);
+  const onfloor = rows.find((r) => r.kind === 'ONFLOOR' && r.isActive);
   if (!backroom || !onfloor)
-    throw new Error(`Failed to create system locations for store ${storeId}.`);
+    throw new Error(`Store ${storeId} has no active Backroom / On Floor location.`);
   return { backroom: backroom.id, onfloor: onfloor.id };
 }
 

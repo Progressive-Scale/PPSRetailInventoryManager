@@ -19,7 +19,9 @@ connects into the customer network.
 ## What's new in v3.1
 
 Stores now have named **locations** (areas). Every handoff — both `unit` and
-`stock` — lands in the store's **Backroom** system location; store staff then
+`stock` — lands in the store's **default Backroom** — when a store has several
+active Backroom locations this is the oldest active one by
+(`sort_order`, `created_at`, `id`); deactivated locations are never chosen. Store staff then
 move stock onto the sales floor in the app. The agent sends **no** location
 field: routing to the Backroom is automatic and this is transparent to the
 agent. `expirationDate` remains **unit-only** (serialized); quantity handoffs

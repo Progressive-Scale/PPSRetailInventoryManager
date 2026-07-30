@@ -246,8 +246,31 @@ Deploy as **one service** from the repo root, plus a managed Postgres.
 
 ## Inventory locations & expiration alerts
 
-Every store has named **locations** — two system locations (**Backroom**,
-**On Floor**; renamable, not deletable) plus any custom ones. Inventory lives at
+Every store has named **locations**. Two are created with the store
+(**Backroom**, **On Floor**) and there are two **required kinds**: a store must
+always keep at least one *active* Backroom and one *active* On Floor. Beyond that
+it may have as many locations of any kind as it likes — several backrooms, several
+floor areas, plus custom areas. A location's kind is fixed once created.
+
+**Lifecycle.** Locations are retired rather than erased:
+
+| State | When | Effect |
+| --- | --- | --- |
+| **Delete** (hard) | only if never used — no stock and nothing referencing it in history | row disappears |
+| **Deactivate** | anything with history, once its stock is moved out | hidden from dropdowns, move targets, handoff landing and expiration alerts; still named in past ledger rows; reactivatable |
+| blocked | live stock present, or it is the last active location of a required kind | the UI disables the action and explains why |
+
+Only **live** stock blocks deactivation (on-hand units and quantity on hand) —
+sold units are history, not stock. A location that has ever been used can never be
+hard-deleted, because the ledger references it.
+
+Names are unique among *active* locations in a store, so a deactivated
+location's name can be reused.
+
+When a store has several active locations of a required kind, the **default** one
+(handoff landing, cycle-count fallback) is the oldest active by `sort_order`, then
+`created_at`, then `id`. Expiration alerts watch **all** active On Floor
+locations, not just the default. Inventory lives at
 a location; staff **move** stock between locations from the portal or the
 scanner. Serialized units carry an **expiration date**, and a scheduled job
 raises alerts for on-floor units nearing/past expiration so staff rotate stock.

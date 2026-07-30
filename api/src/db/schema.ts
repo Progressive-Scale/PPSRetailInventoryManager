@@ -47,8 +47,10 @@ export const transactionType = pgEnum('transaction_type', [
   'MOVE',
 ]);
 // Areas within a store. BACKROOM (not customer-facing) and ONFLOOR
-// (customer-purchasable) are system locations auto-created per store (renamable,
-// not deletable, identified by kind); CUSTOM are user-added.
+// (customer-purchasable) are REQUIRED kinds: one of each is auto-created with the
+// store and a store must always keep at least one ACTIVE location of each, but it
+// may have several of either. CUSTOM is the default for user-added locations.
+// A location's kind is immutable after creation.
 export const locationKind = pgEnum('location_kind', [
   'BACKROOM',
   'ONFLOOR',
