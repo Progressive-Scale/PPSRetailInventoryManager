@@ -98,8 +98,14 @@ export const transactionSource = pgEnum('transaction_source', [
   'SYNC',
   'CYCLE_COUNT',
 ]);
+// OPEN -> AWAITING_REVIEW -> CLOSED is the normal path. A submitted count has
+// computed what it WOULD change and changed nothing; approval is what applies it.
+// Rejection sends it back to OPEN so the counter can rescan. Nothing is applied
+// while AWAITING_REVIEW, which is the point: a missed scan proposes a sale or a
+// zeroed shelf, and quantity stock has no per-unit rows to reinstate afterwards.
 export const cycleCountStatus = pgEnum('cycle_count_status', [
   'OPEN',
+  'AWAITING_REVIEW',
   'CLOSED',
   'CANCELLED',
 ]);
@@ -777,6 +783,10 @@ export const cycleCounts = pgTable(
     openedByUserId: integer('opened_by_user_id')
       .notNull()
       .references(() => users.id),
+    // Who handed the count in for review. Distinct from closedByUserId, which is the
+    // admin who approved it — usually a different person, which is the point.
+    submittedByUserId: integer('submitted_by_user_id').references(() => users.id),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
     closedByUserId: integer('closed_by_user_id').references(() => users.id),
     openedAt: timestamp('opened_at', { withTimezone: true })
       .notNull()
@@ -842,6 +852,17 @@ export const cycleCountLines = pgTable(
     serial: text('serial'),
     quantity: integer('quantity'),
     resolution: cycleCountResolution('resolution').notNull(),
+    // Where this line puts the unit / which stock counter it touches. Recorded on
+    // the proposal so approval applies exactly what was reviewed.
+    locationId: integer('location_id').references(() => storeLocations.id),
+    // MOVED_IN only: where the system thought the unit was.
+    locationFromId: integer('location_from_id').references(() => storeLocations.id),
+    // Null while this is a proposal; set when approval applied it. This is what makes
+    // approve idempotent — a second call finds nothing left to do.
+    appliedAt: timestamp('applied_at', { withTimezone: true }),
+    // The counter asked the PPS import agent to identify this serial. Carried on the
+    // proposal because the unit it belongs to does not exist until approval.
+    importCheckRequested: boolean('import_check_requested').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

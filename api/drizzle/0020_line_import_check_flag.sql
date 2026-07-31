@@ -1,0 +1,1 @@
+ALTER TABLE "cycle_count_lines" ADD COLUMN "import_check_requested" boolean DEFAULT false NOT NULL;
