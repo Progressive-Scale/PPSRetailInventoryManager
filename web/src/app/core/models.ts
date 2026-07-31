@@ -50,7 +50,16 @@ export interface Branding {
   };
 }
 
-export type ItemStatus = 'ON_HAND' | 'SOLD' | 'RETURNED_TO_WAREHOUSE' | 'ADJUSTED_OUT';
+/** PENDING = shipped by the ERP, not yet physically received (not stock). */
+export type ItemStatus =
+  | 'PENDING'
+  | 'ON_HAND'
+  | 'SOLD'
+  | 'RETURNED_TO_WAREHOUSE'
+  | 'ADJUSTED_OUT';
+
+/** Outcome of asking the PPS import agent about an unknown serial. */
+export type ImportCheckStatus = 'REQUESTED' | 'MATCHED' | 'NOT_FOUND' | 'DISCREPANCY';
 
 export type TrackingType = 'SERIALIZED' | 'QUANTITY';
 
@@ -221,19 +230,32 @@ export interface BulkExpirationResult {
   results: { itemId: string; ok: boolean; reason?: string }[];
 }
 
-/** A serialized unit row from GET /api/inventory/items (by expiration). */
+/**
+ * A serialized unit row from GET /api/inventory/items.
+ *
+ * product and location are nullable because this endpoint also serves the two
+ * queues where they are legitimately absent: PENDING units have no location, and
+ * unidentified units have no product.
+ */
 export interface ExpiringItem {
   id: string;
   storeId: number;
-  productId: number;
-  sku: string;
-  name: string;
-  locationId: number;
-  locationName: string;
-  locationKind: LocationKind;
+  productId: number | null;
+  sku: string | null;
+  name: string | null;
+  locationId: number | null;
+  locationName: string | null;
+  locationKind: LocationKind | null;
   serial: string;
+  status: ItemStatus;
   expirationDate: string | null;
   receivedAt: string | null;
+  needsReview: boolean;
+  importCheckStatus: ImportCheckStatus | null;
+  /** For a PENDING unit this is the handoff moment. */
+  createdAt: string;
+  /** Whole days since handoff; null unless PENDING. */
+  daysPending: number | null;
 }
 
 export type InventoryProductDetail = SerializedInventoryDetail | QuantityInventoryDetail;

@@ -635,9 +635,12 @@ export class InventoryService {
     const { limit, offset } = resolvePaging(query);
     const storeId = this.readStoreId(ctx, query.storeId);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      // Defaults to ON_HAND so the stock grid is unaffected; ?status=PENDING is
+      // the shipped-not-yet-received queue.
+      const status = query.status ?? 'ON_HAND';
       const conds: SQL[] = [
         eq(inventoryItems.companyId, ctx.companyId),
-        eq(inventoryItems.status, 'ON_HAND'),
+        eq(inventoryItems.status, status),
       ];
       if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
       if (query.locationId != null)
@@ -671,17 +674,37 @@ export class InventoryService {
           locationName: storeLocations.name,
           locationKind: storeLocations.kind,
           serial: inventoryItems.serial,
+          status: inventoryItems.status,
           expirationDate: inventoryItems.expirationDate,
           receivedAt: inventoryItems.receivedAt,
+          needsReview: inventoryItems.needsReview,
+          importCheckStatus: inventoryItems.importCheckStatus,
+          // For PENDING units this is the handoff moment: the row is created when
+          // the ERP hands the unit over.
+          createdAt: inventoryItems.createdAt,
+          daysPending: sql<number>`
+            case when ${inventoryItems.status} = 'PENDING'
+              then (current_date - ${inventoryItems.createdAt}::date)
+            end`.as('days_pending'),
         })
         .from(inventoryItems)
-        .innerJoin(products, eq(products.id, inventoryItems.productId))
-        .innerJoin(
+        // LEFT joins, not inner: a PENDING unit has no location and an unidentified
+        // unit has no product. Inner joins would silently hide exactly the rows
+        // these queues exist to show. For ON_HAND rows the result is identical,
+        // since those always have both.
+        .leftJoin(products, eq(products.id, inventoryItems.productId))
+        .leftJoin(
           storeLocations,
           eq(storeLocations.id, inventoryItems.locationId),
         )
         .where(where)
-        .orderBy(asc(inventoryItems.expirationDate), asc(inventoryItems.serial))
+        // Pending arrivals are most useful oldest-first (what has been waiting
+        // longest); everything else stays sorted by expiry as before.
+        .orderBy(
+          ...(status === 'PENDING'
+            ? [asc(inventoryItems.createdAt), asc(inventoryItems.serial)]
+            : [asc(inventoryItems.expirationDate), asc(inventoryItems.serial)]),
+        )
         .limit(limit)
         .offset(offset);
       const [{ count }] = await tx

@@ -24,6 +24,7 @@ import {
   HealthResponse,
   InventoryItem,
   InventoryOpBody,
+  ItemStatus,
   InventoryProductDetail,
   Invitation,
   InvitationStatus,
@@ -169,6 +170,8 @@ export class ApiService {
     storeId?: number;
     locationId?: number;
     productId?: number;
+    /** Defaults server-side to ON_HAND; pass PENDING for the arrivals queue. */
+    status?: ItemStatus;
     expiresBefore?: string;
     expiringWithinDays?: number;
     hasExpiration?: boolean;
@@ -179,6 +182,7 @@ export class ApiService {
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
     if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
     if (opts.productId != null) params = params.set('productId', String(opts.productId));
+    if (opts.status) params = params.set('status', opts.status);
     if (opts.expiresBefore) params = params.set('expiresBefore', opts.expiresBefore);
     if (opts.expiringWithinDays != null)
       params = params.set('expiringWithinDays', String(opts.expiringWithinDays));

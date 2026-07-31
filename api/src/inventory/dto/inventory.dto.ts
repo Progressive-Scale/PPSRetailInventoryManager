@@ -3,6 +3,7 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsBooleanString,
+  IsEnum,
   IsIn,
   IsInt,
   IsISO8601,
@@ -16,6 +17,15 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
+
+// Mirrors the item_status enum. Kept local so the DTO does not import the schema.
+const ITEM_STATUSES = [
+  'PENDING',
+  'ON_HAND',
+  'SOLD',
+  'RETURNED_TO_WAREHOUSE',
+  'ADJUSTED_OUT',
+] as const;
 
 // Product-level inventory listing (reads the store_inventory view).
 export class ListInventoryQuery extends PaginationQuery {
@@ -272,4 +282,12 @@ export class ListItemsQuery extends PaginationQuery {
   @IsOptional()
   @IsBooleanString()
   hasExpiration?: string;
+
+  /**
+   * Which unit lifecycle state to list. Defaults to ON_HAND, which is what the
+   * stock grid has always shown; PENDING is the "shipped, not yet received" queue.
+   */
+  @IsOptional()
+  @IsEnum(ITEM_STATUSES as unknown as string[])
+  status?: (typeof ITEM_STATUSES)[number];
 }

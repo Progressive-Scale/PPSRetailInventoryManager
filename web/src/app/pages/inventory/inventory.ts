@@ -24,9 +24,10 @@ import {
   TrackingType,
 } from '../../core/models';
 import { LocationsComponent } from './locations';
+import { PendingArrivalsComponent } from './pending-arrivals';
 import { ItemDetailComponent } from './item-detail';
 
-type SubTab = 'stock' | 'locations';
+type SubTab = 'stock' | 'locations' | 'pending';
 
 /** Long enough to swallow a burst of typing, short enough to feel instant. */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -40,15 +41,26 @@ interface Column {
 
 @Component({
   selector: 'app-inventory',
-  imports: [FormsModule, DatePipe, LocationsComponent, ItemDetailComponent],
+  imports: [
+    FormsModule,
+    DatePipe,
+    LocationsComponent,
+    PendingArrivalsComponent,
+    ItemDetailComponent,
+  ],
   template: `
     <main class="container">
       <div class="tabs">
         <button [class.active]="tab() === 'stock'" (click)="tab.set('stock')">Stock</button>
         <button [class.active]="tab() === 'locations'" (click)="tab.set('locations')">Locations</button>
+        <button [class.active]="tab() === 'pending'" (click)="tab.set('pending')">
+          Pending arrival
+        </button>
       </div>
 
-      @if (tab() === 'locations') {
+      @if (tab() === 'pending') {
+        <app-pending-arrivals />
+      } @else if (tab() === 'locations') {
         <app-locations (showStockAt)="showStockAt($event)" />
       } @else {
         <section class="card">
