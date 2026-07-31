@@ -171,6 +171,16 @@ export class ApiService {
     );
   }
 
+  /**
+   * Admin: write a unit off as lost — a pending arrival that is never coming, or a
+   * unit missing off a shelf. The note is why, and is worth filling in.
+   */
+  markItemLost(itemId: string, note?: string): Observable<InventoryItem> {
+    return this.http.post<InventoryItem>(`/api/inventory/items/${itemId}/lost`, {
+      note,
+    });
+  }
+
   /** Admin: set a quantity product's on-hand at a location to an exact value. */
   setQuantity(body: {
     productId: number;

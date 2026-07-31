@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { Observable } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
@@ -26,7 +27,7 @@ import { ExpiringItem, ImportCheckStatus, Product } from '../../core/models';
   template: `
     <section class="card">
       <div class="section-head">
-        <h2>Needs review</h2>
+        <h2>Review</h2>
         <button class="ghost sm" (click)="reload()" [disabled]="loading()">Refresh</button>
       </div>
       <p class="muted small intro">
@@ -121,6 +122,10 @@ import { ExpiringItem, ImportCheckStatus, Product } from '../../core/models';
       @if (reviewProducts().length === 0) {
         <p class="muted sm">None.</p>
       } @else {
+        <p class="muted sm hint">
+          Click a row to open it in the catalog, where its name and details can be
+          edited. "Mark reviewed" clears the flag without changing anything.
+        </p>
         <div class="table-scroll">
           <table>
             <thead>
@@ -134,13 +139,23 @@ import { ExpiringItem, ImportCheckStatus, Product } from '../../core/models';
             </thead>
             <tbody>
               @for (p of reviewProducts(); track p.id) {
-                <tr>
-                  <td class="mono">{{ p.sku }}</td>
+                <tr
+                  class="clickable"
+                  (click)="editInCatalog(p)"
+                  [title]="'Edit ' + p.sku + ' in the catalog'"
+                >
+                  <td class="mono link">{{ p.sku }}</td>
                   <td class="ctext">{{ p.name }}</td>
                   <td class="muted">{{ p.upc ?? '—' }}</td>
                   <td class="muted">{{ p.trackingType === 'QUANTITY' ? 'UPC' : 'Serialized' }}</td>
                   <td class="actions">
-                    <button class="sm ghost" (click)="completeProduct(p)" [disabled]="busySku() === p.sku">
+                    <!-- Stops the row's own click: this row does two things and the
+                         button is the one that does not navigate away. -->
+                    <button
+                      class="sm ghost"
+                      (click)="$event.stopPropagation(); completeProduct(p)"
+                      [disabled]="busySku() === p.sku"
+                    >
                       Mark reviewed
                     </button>
                   </td>
@@ -271,6 +286,21 @@ import { ExpiringItem, ImportCheckStatus, Product } from '../../core/models';
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      .hint {
+        margin: 0.35rem 0 0.6rem;
+      }
+      /* A product row is a link into the catalog, so it looks like one. */
+      tr.clickable {
+        cursor: pointer;
+      }
+      tr.clickable:hover td {
+        background: #f8fafc;
+      }
+      tr.clickable .link {
+        color: var(--brand, var(--accent));
+        text-decoration: underline;
+        text-decoration-style: dotted;
+      }
       /* The badge is a button: the payload behind Discrepancy is the useful part. */
       .badge {
         font-size: 0.72rem;
@@ -372,6 +402,7 @@ import { ExpiringItem, ImportCheckStatus, Product } from '../../core/models';
 })
 export class CountNeedsReviewComponent implements OnInit {
   private readonly api = inject(ApiService);
+  private readonly router = inject(Router);
 
   readonly items = signal<ExpiringItem[]>([]);
   readonly allProducts = signal<Product[]>([]);
@@ -493,6 +524,15 @@ export class CountNeedsReviewComponent implements OnInit {
         this.assignError.set(messageFor(err));
       },
     });
+  }
+
+  /**
+   * Open this product in the catalog, ready to edit. The name is the usual thing
+   * wrong with a scanner-created product, and the catalog is where names are
+   * edited — duplicating that editor here would give two places to change one field.
+   */
+  editInCatalog(p: Product): void {
+    void this.router.navigate(['/products'], { queryParams: { edit: p.id } });
   }
 
   completeProduct(p: Product): void {

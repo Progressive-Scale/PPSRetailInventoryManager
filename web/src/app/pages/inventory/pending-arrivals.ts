@@ -99,6 +99,9 @@ const PAGE_SIZE = 200;
                 <th class="col-store">Store</th>
                 <th class="col-when">Handed off</th>
                 <th class="col-days num">Waiting</th>
+                @if (isCompanyAdmin) {
+                  <th class="col-act actions"></th>
+                }
               </tr>
             </thead>
             <tbody>
@@ -112,6 +115,11 @@ const PAGE_SIZE = 200;
                   <td class="num" [class.warn]="(r.daysPending ?? 0) >= 7">
                     {{ dayLabel(r.daysPending) }}
                   </td>
+                  @if (isCompanyAdmin) {
+                    <td class="actions">
+                      <button class="sm ghost" (click)="askLost(r)">Mark lost</button>
+                    </td>
+                  }
                 </tr>
               }
             </tbody>
@@ -119,6 +127,42 @@ const PAGE_SIZE = 200;
         </div>
       }
     </section>
+
+    <!-- Marking something lost is a write-off, not a filter change, so it gets a
+         confirmation and a place to say why. -->
+    @if (losing(); as target) {
+      <div class="overlay" (click)="cancelLost()">
+        <div class="modal" (click)="$event.stopPropagation()">
+          <h3>Mark {{ target.serial }} as lost?</h3>
+          <p class="muted sm">
+            {{ target.name ?? 'This unit' }} was handed over
+            {{ dayLabel(target.daysPending) }} ago and never arrived. Marking it lost
+            takes it off this list for good. It never became stock, so nothing is
+            removed from on-hand — but the write-off is recorded against the unit.
+          </p>
+          <label class="field">
+            Why (optional)
+            <input
+              name="lost-note"
+              placeholder="e.g. never left the warehouse"
+              [ngModel]="lostNote()"
+              (ngModelChange)="lostNote.set($event)"
+            />
+          </label>
+          @if (lostError()) {
+            <p class="error">{{ lostError() }}</p>
+          }
+          <div class="modal-actions">
+            <button class="ghost" (click)="cancelLost()" [disabled]="lostBusy()">
+              Keep waiting
+            </button>
+            <button class="danger" (click)="confirmLost()" [disabled]="lostBusy()">
+              {{ lostBusy() ? 'Marking…' : 'Mark lost' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    }
   `,
   styles: [
     `
@@ -211,18 +255,20 @@ const PAGE_SIZE = 200;
         border-bottom: 1px solid var(--border);
         vertical-align: middle;
       }
-      /* Widths sum to 100% — a column with none collapses under fixed layout. */
+      /* Widths sum to 100% — a column with none collapses under fixed layout.
+         The actions column is admin-only; without it the rest simply share the
+         freed space proportionally, which is what fixed layout does anyway. */
       .col-serial {
-        width: 22%;
+        width: 20%;
       }
       .col-sku {
-        width: 16%;
+        width: 14%;
       }
       .col-name {
-        width: 28%;
+        width: 22%;
       }
       .col-store {
-        width: 14%;
+        width: 12%;
       }
       .col-when {
         width: 12%;
@@ -230,9 +276,97 @@ const PAGE_SIZE = 200;
       .col-days {
         width: 8%;
       }
+      .col-act {
+        width: 12%;
+      }
       th.num,
       td.num {
         text-align: right;
+      }
+      td.actions {
+        text-align: right;
+        white-space: nowrap;
+      }
+      td.actions button {
+        font-family: inherit;
+        cursor: pointer;
+      }
+      button.sm {
+        padding: 0.25rem 0.55rem;
+        font-size: 0.8rem;
+        border-radius: 6px;
+      }
+      button.ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      button.ghost:hover:not(:disabled) {
+        color: #1f2937;
+        border-color: #cbd5e1;
+      }
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+      }
+      .modal {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+        width: min(32rem, calc(100vw - 2rem));
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      .modal h3 {
+        margin: 0;
+        font-size: 1rem;
+      }
+      .modal .sm {
+        font-size: 0.85rem;
+        line-height: 1.5;
+        margin: 0;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .field input {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-family: inherit;
+      }
+      .modal-actions {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.25rem;
+      }
+      .modal-actions button {
+        padding: 0.45rem 0.9rem;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      .modal-actions .danger {
+        background: #b42318;
+        border: 1px solid #b42318;
+        color: #fff;
+      }
+      .modal-actions .danger:disabled {
+        opacity: 0.6;
       }
       .mono {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -269,6 +403,11 @@ export class PendingArrivalsComponent implements OnInit {
   readonly search = signal('');
   readonly storeFilter = signal<number | null>(null);
   readonly minDays = signal(0);
+
+  readonly losing = signal<ExpiringItem | null>(null);
+  readonly lostNote = signal('');
+  readonly lostBusy = signal(false);
+  readonly lostError = signal<string | null>(null);
 
   readonly filtersActive = computed(
     () =>
@@ -344,5 +483,40 @@ export class PendingArrivalsComponent implements OnInit {
     if (days == null) return '—';
     if (days === 0) return 'today';
     return days === 1 ? '1 day' : `${days} days`;
+  }
+
+  // ---- marking a never-arrived unit lost ---------------------------------
+
+  askLost(row: ExpiringItem): void {
+    this.losing.set(row);
+    this.lostNote.set('');
+    this.lostError.set(null);
+  }
+
+  cancelLost(): void {
+    if (this.lostBusy()) return; // don't drop a request that is in flight
+    this.losing.set(null);
+    this.lostError.set(null);
+  }
+
+  confirmLost(): void {
+    const target = this.losing();
+    if (!target || this.lostBusy()) return;
+    this.lostBusy.set(true);
+    this.lostError.set(null);
+    this.api.markItemLost(target.id, this.lostNote().trim() || undefined).subscribe({
+      next: () => {
+        this.lostBusy.set(false);
+        this.losing.set(null);
+        // The unit is no longer PENDING, so it drops off this list on reload.
+        this.reload();
+      },
+      error: (err) => {
+        this.lostBusy.set(false);
+        // Reported inside the dialog: it is about the action just attempted, and
+        // the dialog stays open so it can be retried or abandoned.
+        this.lostError.set(messageFor(err));
+      },
+    });
   }
 }

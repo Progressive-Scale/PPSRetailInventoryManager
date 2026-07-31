@@ -27,12 +27,12 @@ interface ResolutionGroup {
   template: `
     <main class="container">
       @if (isCompanyAdmin) {
-        <div class="subtabs">
+        <div class="tabs">
           <button [class.active]="tab() === 'counts'" (click)="tab.set('counts')">
             Counts
           </button>
           <button [class.active]="tab() === 'review'" (click)="tab.set('review')">
-            Needs review
+            Review
           </button>
         </div>
       }
@@ -320,22 +320,36 @@ interface ResolutionGroup {
         font-family: inherit;
         border-radius: 8px;
       }
-      .subtabs {
+      /* Chrome-style tabs, matching Inventory and Manage: inactive tabs sit a
+         shade darker than the page and the active tab shares the card's surface,
+         so it reads as attached to the form below rather than floating above it. */
+      .tabs {
         display: flex;
-        gap: 0.35rem;
-        margin-bottom: 0.25rem;
+        gap: 4px;
+        padding-left: 6px;
+        /* Cancels the container's row gap, then 1px more so the active tab's
+           bottom border lands on the card's top border instead of above it. */
+        margin-bottom: calc(-1.25rem - 1px);
+        position: relative;
+        z-index: 2;
       }
-      .subtabs button {
-        padding: 0.4rem 0.8rem;
+      .tabs button {
+        background: #e6e9ef;
         border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--surface);
+        border-radius: 10px 10px 0 0;
+        padding: 0.5rem 1.15rem;
         font-family: inherit;
         font-size: 0.88rem;
+        color: var(--muted);
         cursor: pointer;
       }
-      .subtabs button.active {
-        border-color: var(--brand, var(--accent));
+      .tabs button:hover:not(.active) {
+        background: #dce0e7;
+        color: #1f2937;
+      }
+      .tabs button.active {
+        background: var(--surface);
+        border-bottom-color: var(--surface);
         color: var(--brand, var(--accent));
         font-weight: 600;
       }

@@ -50,13 +50,18 @@ export interface Branding {
   };
 }
 
-/** PENDING = shipped by the ERP, not yet physically received (not stock). */
+/**
+ * PENDING = shipped by the ERP, not yet physically received (not stock).
+ * LOST    = written off as never going to turn up; usually a pending arrival that
+ *           stopped being worth waiting for.
+ */
 export type ItemStatus =
   | 'PENDING'
   | 'ON_HAND'
   | 'SOLD'
   | 'RETURNED_TO_WAREHOUSE'
-  | 'ADJUSTED_OUT';
+  | 'ADJUSTED_OUT'
+  | 'LOST';
 
 /** Outcome of asking the PPS import agent about an unknown serial. */
 export type ImportCheckStatus = 'REQUESTED' | 'MATCHED' | 'NOT_FOUND' | 'DISCREPANCY';

@@ -1,11 +1,16 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
 
-// The Review sub-tab moved to Cycle Counts -> Needs Review: everything in it
+// The Review sub-tab moved to Cycle Counts -> Review: everything in it
 // originates from a count, so it belongs beside the counts, not the catalog.
+//
+// ?edit=<productId> opens that product for editing on arrival. Cycle Counts ->
+// Review links here to fix a scanner-created product's name, and dropping someone
+// on an unfiltered catalog to hunt for the row would defeat the point.
 
 @Component({
   selector: 'app-products',
@@ -451,6 +456,8 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
 })
 export class ProductsComponent implements OnInit {
   private readonly api = inject(ApiService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   readonly loading = signal(false);
   readonly saving = signal(false);
@@ -507,6 +514,8 @@ export class ProductsComponent implements OnInit {
     return t === 'QUANTITY' ? 'UPC' : 'Serialized';
   }
   readonly editProductId = signal<number | null>(null);
+  /** Set only when the editor was opened from the Review queue via ?edit=. */
+  private clearReviewOnSave = false;
   productEdit: {
     sku: string;
     name: string;
@@ -521,21 +530,55 @@ export class ProductsComponent implements OnInit {
   readonly deleteError = signal<string | null>(null);
 
   ngOnInit(): void {
-    this.loadProducts();
+    const raw = this.route.snapshot.queryParamMap.get('edit');
+    const editId = raw ? Number(raw) : null;
+    this.loadProducts(Number.isFinite(editId) ? editId : null);
   }
 
-  loadProducts(): void {
+  loadProducts(openForEdit: number | null = null): void {
     // Always fetch the whole catalog; the Active filter is applied client-side.
     this.loading.set(true);
     this.api.listProducts({}).subscribe({
       next: (rows) => {
         this.products.set(rows);
         this.loading.set(false);
+        if (openForEdit != null) this.openFromLink(openForEdit);
       },
       error: (err) => {
         this.loading.set(false);
         this.error.set(messageFor(err));
       },
+    });
+  }
+
+  /**
+   * Open a product sent here by ?edit=. Also searches for its SKU: the catalog can
+   * be long, and an edit row opened somewhere off-screen looks like nothing
+   * happened. The Clear button beside the filter undoes it.
+   */
+  private openFromLink(id: number): void {
+    const product = this.products().find((p) => p.id === id);
+    if (!product) {
+      this.error.set('That product no longer exists.');
+      this.dropEditParam();
+      return;
+    }
+    this.search.set(product.sku);
+    this.startEditProduct(product);
+    // Arriving by this link IS the review: somebody clicked the row in Cycle Counts
+    // -> Review to come and fix it. Saving therefore clears the flag, so the item
+    // does not sit in the queue waiting for a second, redundant click.
+    this.clearReviewOnSave = product.needsReview;
+    // Consume the parameter so a later reload does not reopen the editor.
+    this.dropEditParam();
+  }
+
+  private dropEditParam(): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { edit: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
     });
   }
 
@@ -611,6 +654,9 @@ export class ProductsComponent implements OnInit {
   }
 
   startEditProduct(p: Product): void {
+    // Reset first: openFromLink sets it again straight after, and this keeps the
+    // flag from leaking onto the next row someone edits by hand.
+    this.clearReviewOnSave = false;
     this.editProductId.set(p.id);
     this.productEdit = {
       sku: p.sku,
@@ -631,12 +677,16 @@ export class ProductsComponent implements OnInit {
       active: this.productEdit.active,
     };
     if (this.productEdit.price != null) dto.price = Number(this.productEdit.price);
+    // Only when this row was opened from the Review queue — a normal catalog edit
+    // has no opinion about whether somebody has reviewed the product.
+    if (this.clearReviewOnSave && this.editProductId() === p.id) dto.needsReview = false;
     this.saving.set(true);
     this.error.set(null);
     this.api.updateProduct(p.id, dto).subscribe({
       next: () => {
         this.saving.set(false);
         this.editProductId.set(null);
+        this.clearReviewOnSave = false;
         this.loadProducts();
       },
       error: (err) => {
