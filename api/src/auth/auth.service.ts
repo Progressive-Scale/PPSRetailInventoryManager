@@ -1,12 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   Company,
@@ -25,6 +26,7 @@ import {
   invitationStateMessage,
 } from '../company/invitation.util';
 import { AuthUser, JwtPayload } from './auth.types';
+import { looksLikeEmail, normaliseUsername } from './username.util';
 
 @Injectable()
 export class AuthService {
@@ -33,8 +35,16 @@ export class AuthService {
     private readonly jwt: JwtService,
   ) {}
 
-  async login(host: HostContext, email: string, password: string) {
-    const normalized = email.trim().toLowerCase();
+  /**
+   * Sign in with a username or an email address. Which one it is comes from the
+   * value itself — a username can never contain '@' — so nothing has to be told
+   * apart by a flag or a second field. Both are compared lowercase.
+   */
+  async login(host: HostContext, identifier: string, password: string) {
+    const normalized = identifier.trim().toLowerCase();
+    const match = looksLikeEmail(normalized)
+      ? eq(users.email, normalized)
+      : sql`lower(${users.username}) = ${normalized}`;
 
     if (host.kind === 'admin') {
       return this.tenantDb.withBypass(async (tx) => {
@@ -42,11 +52,7 @@ export class AuthService {
           .select()
           .from(users)
           .where(
-            and(
-              eq(users.email, normalized),
-              eq(users.role, 'PLATFORM_ADMIN'),
-              isNull(users.companyId),
-            ),
+            and(match, eq(users.role, 'PLATFORM_ADMIN'), isNull(users.companyId)),
           )
           .limit(1);
         return this.finishLogin(u, password);
@@ -55,11 +61,7 @@ export class AuthService {
 
     if (host.kind === 'company') {
       return this.tenantDb.withCompany(host.company.id, async (tx) => {
-        const [u] = await tx
-          .select()
-          .from(users)
-          .where(eq(users.email, normalized))
-          .limit(1);
+        const [u] = await tx.select().from(users).where(match).limit(1);
         return this.finishLogin(u, password, tx);
       });
     }
@@ -67,7 +69,12 @@ export class AuthService {
     throw new UnauthorizedException('Invalid host for login.');
   }
 
-  async acceptInvite(company: Company, token: string, password: string) {
+  async acceptInvite(
+    company: Company,
+    token: string,
+    username: string,
+    password: string,
+  ) {
     return this.tenantDb.withCompany(company.id, async (tx) => {
       const [inv] = await tx
         .select()
@@ -93,6 +100,9 @@ export class AuthService {
       let storeIds = [...new Set(granted.map((g) => g.storeId))];
       if (storeIds.length === 0 && inv.storeId != null) storeIds = [inv.storeId];
 
+      const wantedUsername = normaliseUsername(username);
+      const email = inv.email.trim().toLowerCase();
+
       let created: User | undefined;
       try {
         [created] = await tx
@@ -102,14 +112,24 @@ export class AuthService {
             // The active store is only implied when a single store was granted;
             // multi-store users choose theirs at login.
             storeId: storeIds.length === 1 ? storeIds[0] : null,
-            email: inv.email.trim().toLowerCase(),
+            email,
+            username: wantedUsername,
             passwordHash: await hash(password, 10),
             role: inv.role,
             status: 'ACTIVE',
           })
           .returning();
       } catch (err) {
+        // Two different unique indexes can fire here, and the caller needs to know
+        // which: the email one means the invitation is moot, the username one means
+        // retry with a different name. Checking the DB beforehand would still race,
+        // so the constraint stays the arbiter and we only translate its complaint.
         if (this.isUniqueViolation(err)) {
+          if (this.violatedConstraint(err) === 'users_company_username_uniq') {
+            throw new ConflictException(
+              'That username is already taken. Please choose another.',
+            );
+          }
           throw new BadRequestException('A user with that email already exists.');
         }
         throw err;
@@ -143,6 +163,7 @@ export class AuthService {
         payload: {
           userId: created!.id,
           email: created!.email,
+          username: created!.username,
           role: created!.role,
           storeIds,
         },
@@ -243,6 +264,7 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
+        username: user.username,
         companyId: user.companyId,
         storeId: activeStoreId,
         role: user.role,
@@ -261,5 +283,11 @@ export class AuthService {
       'code' in err &&
       (err as { code?: string }).code === '23505'
     );
+  }
+
+  /** Which unique index a 23505 came from, so the message can name the real clash. */
+  private violatedConstraint(err: unknown): string | undefined {
+    if (!err || typeof err !== 'object') return undefined;
+    return (err as { constraint?: string }).constraint;
   }
 }

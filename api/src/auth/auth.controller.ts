@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -30,14 +31,21 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Tenant() host: HostContext, @Body() dto: LoginDto) {
-    return this.auth.login(host, dto.email, dto.password);
+    // `email` is the legacy field name; a scanner build already in the field sends
+    // whatever was typed in it, username included. Either way the service works out
+    // which kind of identifier it received.
+    const identifier = dto.identifier ?? dto.email;
+    if (!identifier) {
+      throw new BadRequestException('A username or email address is required.');
+    }
+    return this.auth.login(host, identifier, dto.password);
   }
 
   @Post('accept-invite')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   acceptInvite(@CurrentCompany() company: Company, @Body() dto: AcceptInviteDto) {
-    return this.auth.acceptInvite(company, dto.token, dto.password);
+    return this.auth.acceptInvite(company, dto.token, dto.username, dto.password);
   }
 
   /** Stores the signed-in user may access (drives a store switcher). */

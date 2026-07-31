@@ -23,8 +23,18 @@ import { Role } from '../../core/models';
 
         @if (storeChoices().length === 0) {
           <label>
-            Email
-            <input type="email" name="email" [(ngModel)]="email" autocomplete="username" required />
+            Username or email
+            <!-- type="text", not "email": the browser would otherwise refuse to
+                 submit a bare username as malformed. -->
+            <input
+              type="text"
+              name="identifier"
+              [(ngModel)]="identifier"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+            />
           </label>
 
           <label>
@@ -139,7 +149,8 @@ export class LoginComponent implements OnInit {
 
   readonly adminHost = isAdminHost();
 
-  email = '';
+  /** Username or email address — the API tells them apart by the '@'. */
+  identifier = '';
   password = '';
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -166,13 +177,13 @@ export class LoginComponent implements OnInit {
   }
 
   submit(): void {
-    if (!this.email || !this.password) {
-      this.error.set('Email and password are required.');
+    if (!this.identifier || !this.password) {
+      this.error.set('A username or email and a password are required.');
       return;
     }
     this.loading.set(true);
     this.error.set(null);
-    this.auth.login(this.email, this.password).subscribe({
+    this.auth.login(this.identifier, this.password).subscribe({
       next: (res) => {
         this.loading.set(false);
         // A user permitted several stores picks one before entering the app.
@@ -187,7 +198,7 @@ export class LoginComponent implements OnInit {
         this.loading.set(false);
         this.error.set(
           err.status === 401
-            ? 'Invalid email or password.'
+            ? 'Invalid credentials.'
             : 'Something went wrong. Please try again.',
         );
       },

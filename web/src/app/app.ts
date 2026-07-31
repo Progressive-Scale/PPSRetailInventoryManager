@@ -87,7 +87,7 @@ interface NavLink {
                               <button class="notif-main" type="button" (click)="openNotification(n)">
                                 @if (n.type === 'INVITE_ACCEPTED') {
                                   <span class="notif-title">
-                                    {{ n.payload.email }}
+                                    {{ n.payload.username || n.payload.email }}
                                     <span class="notif-serial">joined</span>
                                   </span>
                                   <span class="notif-sub">
@@ -122,7 +122,9 @@ interface NavLink {
                   }
                 </div>
               }
-              <span class="email">{{ u.email }}</span>
+              <!-- Username is who you signed in as; the email is the tooltip so the
+                   header stays short but still identifies the account. -->
+              <span class="email" [title]="u.email">{{ u.username || u.email }}</span>
               <span class="badge">{{ roleLabel(u.role) }}</span>
               <button class="ghost" (click)="signOut()">Sign out</button>
             </div>

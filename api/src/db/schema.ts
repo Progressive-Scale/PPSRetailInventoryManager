@@ -154,6 +154,9 @@ export const users = pgTable(
     companyId: integer('company_id').references(() => companies.id),
     storeId: integer('store_id').references(() => stores.id),
     email: text('email').notNull(),
+    // Sign-in name, unique per company. Existing rows were backfilled from the
+    // email local part (migration 0016); new users pick one at accept-invite.
+    username: text('username').notNull(),
     passwordHash: text('password_hash').notNull(),
     role: userRole('role').notNull(),
     status: userStatus('status').notNull().default('ACTIVE'),
@@ -165,6 +168,14 @@ export const users = pgTable(
     index('users_company_idx').on(t.companyId),
     // Email unique within a company.
     uniqueIndex('users_company_email_uniq').on(t.companyId, t.email),
+    // Username unique per company, case-insensitively: two accounts must not
+    // differ only by capitalisation when either can be typed at login.
+    // coalesce because PLATFORM_ADMIN rows have a null company_id, and NULLs are
+    // distinct in a unique index — without it those rows go unconstrained.
+    uniqueIndex('users_company_username_uniq').on(
+      sql`coalesce(${t.companyId}, 0)`,
+      sql`lower(${t.username})`,
+    ),
   ],
 );
 

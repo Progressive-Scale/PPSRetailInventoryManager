@@ -358,6 +358,7 @@ type Tab = 'stores' | 'users' | 'invitations';
               <table class="fixed">
                 <thead>
                   <tr>
+                    <th class="uc-username">Username</th>
                     <th class="uc-email">Email</th>
                     <th class="uc-role">Role</th>
                     <th class="uc-stores">Stores</th>
@@ -370,6 +371,10 @@ type Tab = 'stores' | 'users' | 'invitations';
                   @for (u of filteredUsers(); track u.id) {
                     <tr [class.row-edit]="editUserId() === u.id">
                       @if (editUserId() === u.id) {
+                        <!-- Username is not editable here: a user changes their own
+                             on their profile, so an admin cannot lock them out of a
+                             name they have memorised. -->
+                        <td class="ctext" [title]="u.username">{{ u.username }}</td>
                         <td class="ctext">{{ u.email }}</td>
                         <td>
                           <select class="cell-input" [(ngModel)]="userEdit.role" name="u-role-{{ u.id }}">
@@ -425,6 +430,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                           <button class="sm ghost" (click)="editUserId.set(null)">Cancel</button>
                         </td>
                       } @else {
+                        <td class="ctext" [title]="u.username">{{ u.username }}</td>
                         <td class="ctext" [title]="u.email">{{ u.email }}</td>
                         <td>{{ roleLabel(u.role) }}</td>
                         <td>
@@ -1091,24 +1097,28 @@ type Tab = 'stores' | 'users' | 'invitations';
         background: #99200f;
         border-color: #99200f;
       }
-      /* Users table: fixed widths so Edit mode doesn't reflow the row. */
+      /* Users table: fixed widths so Edit mode doesn't reflow the row. These must
+         sum to 100% — a column with no width collapses under table-layout: fixed. */
+      .uc-username {
+        width: 14%;
+      }
       .uc-email {
-        width: 24%;
+        width: 20%;
       }
       .uc-role {
-        width: 15%;
+        width: 13%;
       }
       .uc-stores {
-        width: 22%;
+        width: 19%;
       }
       .uc-active {
-        width: 16%;
+        width: 14%;
       }
       .uc-status {
-        width: 11%;
+        width: 10%;
       }
       .uc-actions {
-        width: 12%;
+        width: 10%;
       }
       /* View mode: one badge per store, stacked vertically (same visual language
          as the inventory type/location badges). */
@@ -1442,6 +1452,7 @@ export class ManageComponent implements OnInit {
       if (!term) return true;
       // Search spans every column shown in the table, matching labels not raw enums.
       const haystack = [
+        u.username,
         u.email,
         this.roleLabel(u.role),
         u.status === 'ACTIVE' ? 'active' : 'suspended',

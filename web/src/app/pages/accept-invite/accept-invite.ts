@@ -6,6 +6,7 @@ import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { InvitationState, Role } from '../../core/models';
 import { homePathForRole } from '../../core/tenant';
+import { USERNAME_INPUT_PATTERN, USERNAME_RULE } from '../../core/username';
 
 @Component({
   selector: 'app-accept-invite',
@@ -24,9 +25,27 @@ import { homePathForRole } from '../../core/tenant';
         } @else {
           <p class="sub">
             You've been invited to <strong>{{ companyName() }}</strong> as
-            {{ roleLabel() }}. Choose a password to activate
+            {{ roleLabel() }}. Choose a username and password to activate
             <strong>{{ email() }}</strong>.
           </p>
+
+          <label>
+            Username
+            <input
+              type="text"
+              name="username"
+              [(ngModel)]="username"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              maxlength="32"
+              required
+            />
+            <small class="hint">
+              You'll sign in with this or your email address. 3–32 characters:
+              letters, numbers, dot, underscore or hyphen.
+            </small>
+          </label>
 
           <label>
             New password
@@ -104,6 +123,11 @@ import { homePathForRole } from '../../core/tenant';
         border-radius: 8px;
         font-size: 0.95rem;
       }
+      .hint {
+        font-size: 0.72rem;
+        line-height: 1.35;
+        color: var(--muted);
+      }
       .link {
         font-size: 0.9rem;
         color: var(--brand, var(--accent));
@@ -123,6 +147,7 @@ export class AcceptInviteComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
 
   readonly token = signal<string | null>(null);
+  username = '';
   password = '';
   confirm = '';
   readonly loading = signal(false);
@@ -169,6 +194,13 @@ export class AcceptInviteComponent implements OnInit {
   submit(): void {
     const t = this.token();
     if (!t) return;
+    // Mirrors the server rule so a typo is caught before a round trip. The server
+    // re-validates and owns the "already taken" verdict, which only it can know.
+    const username = this.username.trim().toLowerCase();
+    if (!USERNAME_INPUT_PATTERN.test(this.username.trim())) {
+      this.error.set(USERNAME_RULE);
+      return;
+    }
     if (this.password.length < 8) {
       this.error.set('Password must be at least 8 characters.');
       return;
@@ -179,7 +211,7 @@ export class AcceptInviteComponent implements OnInit {
     }
     this.loading.set(true);
     this.error.set(null);
-    this.auth.acceptInvite(t, this.password).subscribe({
+    this.auth.acceptInvite(t, username, this.password).subscribe({
       next: (res) => {
         this.loading.set(false);
         void this.router.navigate([homePathForRole(res.user.role)]);

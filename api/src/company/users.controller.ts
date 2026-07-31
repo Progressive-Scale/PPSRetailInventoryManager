@@ -25,6 +25,7 @@ const publicUser = {
   companyId: users.companyId,
   storeId: users.storeId,
   email: users.email,
+  username: users.username,
   role: users.role,
   status: users.status,
   createdAt: users.createdAt,

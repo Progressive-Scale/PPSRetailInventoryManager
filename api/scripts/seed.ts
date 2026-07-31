@@ -179,6 +179,12 @@ async function ensureUser(
   email: string,
   password: string,
   role: schema.Role,
+  /**
+   * Sign-in name. Defaults to the email local part, matching how migration 0016
+   * derived one for accounts that predate usernames — so a reseeded database and a
+   * migrated one give the same people the same username.
+   */
+  username = email.split('@')[0].toLowerCase(),
 ) {
   await db
     .insert(users)
@@ -186,6 +192,7 @@ async function ensureUser(
       companyId,
       storeId,
       email,
+      username,
       passwordHash: await hash(password, 10),
       role,
       status: 'ACTIVE',

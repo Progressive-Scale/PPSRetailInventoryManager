@@ -50,6 +50,25 @@ transaction as the item change), `outbox_returns` (queue for the sync agent).
 No open self-registration: users are created via **invitations** (an admin issues
 one; the signup page works only with a valid, unexpired token).
 
+### Signing in: username or email
+
+Every user has a **username**, chosen when they accept their invitation and unique
+**per company** — two tenants can both have an `admin`, and the host decides which
+one a given login means. `POST /auth/login` takes a single `identifier` and works
+out what it received: anything containing `@` is looked up as an email, everything
+else as a username. Usernames cannot contain `@`, so the two never overlap.
+
+Both are compared case-insensitively; usernames are stored lowercase. The rule
+(3–32 chars, letters/digits/`.`/`_`/`-`, must start and end alphanumeric) lives in
+`api/src/auth/username.util.ts` and is mirrored for the browser in
+`web/src/app/core/username.ts` — **change both together**; there is no shared
+package between `api` and `web`.
+
+Accounts predating this feature were given a username derived from their email
+local part by migration `0016`, deduplicated per company (`alice`, `alice2`, …).
+The login DTO still accepts the old `email` field as an alias for `identifier`, so
+a scanner build already in the field keeps working.
+
 ### Row-Level Security (the backstop)
 
 Every tenant table has RLS **enabled + FORCED** with a `tenant_isolation` policy:

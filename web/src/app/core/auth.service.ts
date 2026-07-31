@@ -14,15 +14,24 @@ export class AuthService {
   readonly user = this._user.asReadonly();
   readonly isLoggedIn = computed(() => this._user() !== null);
 
-  login(email: string, password: string): Observable<LoginResponse> {
+  /** `identifier` is a username or an email; the API tells them apart. */
+  login(identifier: string, password: string): Observable<LoginResponse> {
     return this.http
-      .post<LoginResponse>('/api/auth/login', { email, password })
+      .post<LoginResponse>('/api/auth/login', { identifier, password })
       .pipe(tap((res) => this.persist(res)));
   }
 
-  acceptInvite(token: string, password: string): Observable<LoginResponse> {
+  acceptInvite(
+    token: string,
+    username: string,
+    password: string,
+  ): Observable<LoginResponse> {
     return this.http
-      .post<LoginResponse>('/api/auth/accept-invite', { token, password })
+      .post<LoginResponse>('/api/auth/accept-invite', {
+        token,
+        username,
+        password,
+      })
       .pipe(tap((res) => this.persist(res)));
   }
 

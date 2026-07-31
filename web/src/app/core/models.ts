@@ -3,6 +3,8 @@ export type Role = 'PLATFORM_ADMIN' | 'COMPANY_ADMIN' | 'STORE_USER';
 export interface AuthUser {
   id: number;
   email: string;
+  /** Sign-in name, unique within the company. */
+  username: string;
   companyId: number | null;
   storeId: number | null;
   role: Role;
@@ -296,6 +298,8 @@ export interface User {
   /** Every store this user may access. */
   storeIds: number[];
   email: string;
+  /** Sign-in name, unique within the company. */
+  username: string;
   role: Role;
   status: 'ACTIVE' | 'SUSPENDED';
   createdAt: string;
@@ -552,6 +556,8 @@ export interface ExpirationPayload {
 export interface InviteAcceptedPayload {
   userId: number;
   email: string;
+  /** Absent on notifications raised before usernames existed. */
+  username?: string;
   role: Role;
   storeIds: number[];
 }
