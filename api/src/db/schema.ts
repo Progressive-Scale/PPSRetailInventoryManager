@@ -247,6 +247,39 @@ export const invitations = pgTable(
   ],
 );
 
+/**
+ * Single-use password-reset links. Same token discipline as invitations: only the
+ * sha256 is stored, the plaintext exists once in the emailed URL.
+ *
+ * company_id is nullable because PLATFORM_ADMIN users have no company, and they
+ * need to be able to reset a password too. Those rows are unreachable under the
+ * tenant policy (which compares company_id) and are only ever read via withBypass
+ * on the admin host — which is exactly right: a tenant must not see them.
+ */
+export const passwordResets = pgTable(
+  'password_resets',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id').references(() => companies.id),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    // Set the moment the link is redeemed, which is what makes it single-use.
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    // Set when a newer request supersedes this one, so only the latest link works.
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('password_resets_user_idx').on(t.userId),
+    uniqueIndex('password_resets_token_hash_uniq').on(t.tokenHash),
+  ],
+);
+
 // Stores an invitee will be granted on accept — the pending equivalent of
 // user_stores, so an invitation can cover several stores. On accept every row
 // here becomes a user_stores row; users.store_id (the active store) is set only
@@ -849,6 +882,7 @@ export type Product = typeof products.$inferSelect;
 export type Store = typeof stores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Invitation = typeof invitations.$inferSelect;
+export type PasswordReset = typeof passwordResets.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryStock = typeof inventoryStock.$inferSelect;
@@ -891,4 +925,5 @@ export const TENANT_TABLES = [
   'item_audit',
   'user_stores',
   'invitation_stores',
+  'password_resets',
 ] as const;

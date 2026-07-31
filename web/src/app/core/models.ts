@@ -10,6 +10,17 @@ export interface AuthUser {
   role: Role;
 }
 
+/** Why a password-reset link is or is not usable. */
+export type ResetState = 'VALID' | 'INVALID' | 'USED' | 'SUPERSEDED' | 'EXPIRED';
+
+export interface ResetStatusResponse {
+  state: ResetState;
+  /** Empty when VALID; otherwise what to tell the user. */
+  message: string;
+  /** Whose account the link belongs to, present only when VALID. */
+  username?: string;
+}
+
 /** Your own account, as returned by /api/profile. */
 export interface Profile {
   id: number;

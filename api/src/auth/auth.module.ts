@@ -6,6 +6,7 @@ import { BrandingController } from './branding.controller';
 import { ProfileController } from './profile.controller';
 import { AuthService } from './auth.service';
 import { ProfileService } from './profile.service';
+import { PasswordResetService } from './password-reset.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 
@@ -22,7 +23,13 @@ import { RolesGuard } from './roles.guard';
     }),
   ],
   controllers: [AuthController, BrandingController, ProfileController],
-  providers: [AuthService, ProfileService, JwtAuthGuard, RolesGuard],
+  providers: [
+    AuthService,
+    ProfileService,
+    PasswordResetService,
+    JwtAuthGuard,
+    RolesGuard,
+  ],
   exports: [JwtAuthGuard, RolesGuard, JwtModule],
 })
 export class AuthModule {}

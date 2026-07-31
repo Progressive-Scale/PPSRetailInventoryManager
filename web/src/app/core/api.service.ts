@@ -35,6 +35,7 @@ import {
   Paginated,
   Product,
   Profile,
+  ResetStatusResponse,
   CreateProduct,
   PutNotificationSettings,
   StoreLocation,
@@ -58,6 +59,19 @@ export class ApiService {
   // ---- public / branding ----
   branding(): Observable<Branding> {
     return this.http.get<Branding>('/api/branding');
+  }
+
+  // ---- forgotten password (all unauthenticated) ----
+  /** Ask for a reset link. 404 means no active account has that address. */
+  forgotPassword(email: string): Observable<{ sent: boolean }> {
+    return this.http.post<{ sent: boolean }>('/api/auth/forgot-password', { email });
+  }
+
+  /** Lifecycle of a reset link, so the page can explain a dead one before asking. */
+  resetStatus(token: string): Observable<ResetStatusResponse> {
+    return this.http.get<ResetStatusResponse>('/api/auth/reset-status', {
+      params: new HttpParams().set('token', token),
+    });
   }
 
   // ---- your own account ----

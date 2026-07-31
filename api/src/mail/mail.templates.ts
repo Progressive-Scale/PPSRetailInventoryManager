@@ -1,4 +1,8 @@
-import { InvitationEmailData, PRODUCT_NAME } from './mail.types';
+import {
+  InvitationEmailData,
+  PasswordResetEmailData,
+  PRODUCT_NAME,
+} from './mail.types';
 
 /**
  * Provider-agnostic invitation email. Every provider sends exactly this content —
@@ -81,4 +85,76 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * Password-reset email. Same provider-agnostic contract as the invitation: every
+ * provider sends exactly this, so MAIL_PROVIDER cannot change what a user receives.
+ */
+export function passwordResetSubject(d: PasswordResetEmailData): string {
+  return `Reset your ${PRODUCT_NAME} password`;
+}
+
+export function passwordResetHtml(d: PasswordResetEmailData): string {
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f5f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+    <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e3e6ea;border-radius:12px;padding:28px;">
+      <h1 style="margin:0 0 12px;font-size:20px;color:#2563eb;">Reset your password</h1>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">
+        Somebody asked to reset the password for <strong>${escapeHtml(d.username)}</strong>
+        at <strong>${escapeHtml(d.companyName)}</strong>.
+      </p>
+      <p style="margin:0 0 24px;font-size:15px;line-height:1.5;">
+        If that was you, click below to choose a new one.
+      </p>
+      <p style="margin:0 0 24px;">
+        <a href="${d.resetUrl}"
+           style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;font-size:15px;">
+          Choose a new password
+        </a>
+      </p>
+      <p style="margin:0 0 8px;font-size:13px;color:#6b7280;">
+        This link works once and expires in <strong>${d.ttlMinutes} minutes</strong>
+        (at ${fmtDateTime(d.expiresAt)}).
+      </p>
+      <p style="margin:0 0 20px;font-size:13px;color:#6b7280;">
+        If the button doesn't work, paste this link into your browser:<br />
+        <span style="word-break:break-all;">${escapeHtml(d.resetUrl)}</span>
+      </p>
+      <p style="margin:0;font-size:13px;color:#6b7280;">
+        If you didn't ask for this, you can ignore this email — your password has not
+        changed.
+      </p>
+      <hr style="border:none;border-top:1px solid #e3e6ea;margin:20px 0 12px;" />
+      <p style="margin:0;font-size:12px;color:#9ca3af;">${PRODUCT_NAME}</p>
+    </div>
+  </body>
+</html>`;
+}
+
+export function passwordResetText(d: PasswordResetEmailData): string {
+  return [
+    'Reset your password',
+    '',
+    `Somebody asked to reset the password for ${d.username} at ${d.companyName}.`,
+    'If that was you, open this link to choose a new one:',
+    d.resetUrl,
+    '',
+    `The link works once and expires in ${d.ttlMinutes} minutes (at ${fmtDateTime(d.expiresAt)}).`,
+    '',
+    "If you didn't ask for this, you can ignore this email — your password has not changed.",
+    '',
+    `— ${PRODUCT_NAME}`,
+  ].join('\n');
+}
+
+function fmtDateTime(d: Date): string {
+  return d.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 }

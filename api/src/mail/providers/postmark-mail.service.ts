@@ -1,10 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from '../mail.service';
-import { InvitationEmailData, MailResult, MAX_ERROR_LEN } from '../mail.types';
+import {
+  InvitationEmailData,
+  MailResult,
+  MAX_ERROR_LEN,
+  PasswordResetEmailData,
+} from '../mail.types';
 import {
   invitationHtml,
   invitationSubject,
   invitationText,
+  passwordResetHtml,
+  passwordResetSubject,
+  passwordResetText,
 } from '../mail.templates';
 
 export interface PostmarkMailOptions {
@@ -51,6 +59,33 @@ export class PostmarkMailService extends MailService {
     to: string,
     data: InvitationEmailData,
   ): Promise<MailResult> {
+    return this.send('Invitation', to, {
+      subject: invitationSubject(data),
+      html: invitationHtml(data),
+      text: invitationText(data),
+    });
+  }
+
+  async sendPasswordResetEmail(
+    to: string,
+    data: PasswordResetEmailData,
+  ): Promise<MailResult> {
+    return this.send('Password reset', to, {
+      subject: passwordResetSubject(data),
+      html: passwordResetHtml(data),
+      text: passwordResetText(data),
+    });
+  }
+
+  /**
+   * One transport for every message type, so the failure mapping below stays the
+   * only copy of it. `label` appears in logs only.
+   */
+  private async send(
+    label: string,
+    to: string,
+    msg: { subject: string; html: string; text: string },
+  ): Promise<MailResult> {
     try {
       const res = await fetch(this.opts.endpoint, {
         method: 'POST',
@@ -62,9 +97,9 @@ export class PostmarkMailService extends MailService {
         body: JSON.stringify({
           From: this.opts.from,
           To: to,
-          Subject: invitationSubject(data),
-          HtmlBody: invitationHtml(data),
-          TextBody: invitationText(data),
+          Subject: msg.subject,
+          HtmlBody: msg.html,
+          TextBody: msg.text,
           MessageStream: this.opts.messageStream,
         }),
       });
@@ -77,11 +112,11 @@ export class PostmarkMailService extends MailService {
       if (res.ok && (parsed?.ErrorCode ?? 0) === 0) return { ok: true };
 
       const reason = this.describeFailure(res.status, parsed, raw);
-      this.logger.error(`Invitation email to ${to} failed — ${reason}`);
+      this.logger.error(`${label} email to ${to} failed — ${reason}`);
       return { ok: false, error: reason.slice(0, MAX_ERROR_LEN) };
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'unknown mail error';
-      this.logger.error(`Invitation email to ${to} failed — ${reason}`);
+      this.logger.error(`${label} email to ${to} failed — ${reason}`);
       return { ok: false, error: reason.slice(0, MAX_ERROR_LEN) };
     }
   }

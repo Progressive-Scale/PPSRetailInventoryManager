@@ -21,6 +21,16 @@ export class AuthService {
       .pipe(tap((res) => this.persist(res)));
   }
 
+  /**
+   * Redeem a password-reset link. Signs in on success, like accept-invite, so the
+   * user is not asked for the password they just chose.
+   */
+  resetPassword(token: string, newPassword: string): Observable<LoginResponse> {
+    return this.http
+      .post<LoginResponse>('/api/auth/reset-password', { token, newPassword })
+      .pipe(tap((res) => this.persist(res)));
+  }
+
   acceptInvite(
     token: string,
     username: string,

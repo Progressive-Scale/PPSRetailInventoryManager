@@ -219,6 +219,15 @@ export class AuthService {
     });
   }
 
+  /**
+   * Sign a user in without a password, for a flow that has already proven identity
+   * another way — currently redeeming a password-reset link. Pass the transaction
+   * that flow is running in so the permitted-store list reflects uncommitted work.
+   */
+  issueSessionFor(user: User, tx?: Tx) {
+    return this.buildResponse(user, tx);
+  }
+
   private async finishLogin(user: User | undefined, password: string, tx?: Tx) {
     if (
       !user ||

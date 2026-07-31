@@ -69,6 +69,35 @@ local part by migration `0016`, deduplicated per company (`alice`, `alice2`, …
 The login DTO still accepts the old `email` field as an alias for `identifier`, so
 a scanner build already in the field keeps working.
 
+### Forgotten password
+
+Three unauthenticated steps, all scoped by host — a request on `demo.example.com`
+can only find and reset a Demo user, even when the same address exists in another
+company. Platform admins use the admin host and are handled under `withBypass`,
+since they have no company to scope to.
+
+| Step | Endpoint | Notes |
+| --- | --- | --- |
+| Ask | `POST /auth/forgot-password` | 5/min. **404 when no active account has that address.** |
+| Check | `GET /auth/reset-status?token=` | Lets the page explain a dead link before asking for a password |
+| Redeem | `POST /auth/reset-password` | Single use; signs the user in on success |
+
+Links live **60 minutes** (`RESET_TTL_MINUTES`), work **once**, and requesting a new
+one **supersedes** every outstanding link for that user — so an older email sitting
+in an inbox stops working. Only the sha256 of the token is stored, as with
+invitations. A suspended account is treated as absent: it cannot log in, so a
+working link would be misleading.
+
+> **Account enumeration, by choice.** Reporting a 404 for an unknown address is
+> friendlier when someone mistypes their own email, but it lets anyone probe which
+> addresses belong to users of a tenant. Set `REVEAL_UNKNOWN_EMAIL = false` in
+> `api/src/auth/password-reset.util.ts` for the standard privacy-preserving
+> behaviour — identical response either way, no email for an unknown address.
+> Nothing else has to change.
+
+A reset does **not** sign other devices out, for the same reason a password change
+does not: stateless tokens, no revocation list.
+
 ### My profile (`/profile`)
 
 Clicking your own name in the top bar opens it. Users change **their own** username

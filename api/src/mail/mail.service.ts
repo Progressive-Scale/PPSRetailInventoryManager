@@ -1,4 +1,8 @@
-import { InvitationEmailData, MailResult } from './mail.types';
+import {
+  InvitationEmailData,
+  MailResult,
+  PasswordResetEmailData,
+} from './mail.types';
 
 /**
  * Transport-agnostic mail contract, and the DI token feature modules inject.
@@ -13,7 +17,17 @@ export abstract class MailService {
     to: string,
     data: InvitationEmailData,
   ): Promise<MailResult>;
+
+  abstract sendPasswordResetEmail(
+    to: string,
+    data: PasswordResetEmailData,
+  ): Promise<MailResult>;
 }
 
 // Re-exported so existing importers of '../mail/mail.service' keep working.
-export { InvitationEmailData, MailResult, PRODUCT_NAME } from './mail.types';
+export {
+  InvitationEmailData,
+  MailResult,
+  PasswordResetEmailData,
+  PRODUCT_NAME,
+} from './mail.types';

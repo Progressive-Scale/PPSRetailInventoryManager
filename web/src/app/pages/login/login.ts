@@ -1,6 +1,6 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
@@ -9,7 +9,7 @@ import { Role } from '../../core/models';
 
 @Component({
   selector: 'app-login',
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   template: `
     <div class="login-wrap" [style.--brand]="brandColor()">
       <form class="card" (ngSubmit)="submit()">
@@ -55,6 +55,8 @@ import { Role } from '../../core/models';
           <button type="submit" [disabled]="loading()">
             {{ loading() ? 'Signing in…' : 'Sign in' }}
           </button>
+
+          <a class="link" routerLink="/forgot-password">Forgot your password?</a>
         } @else {
           <p class="sub">Choose the store you're working in:</p>
           @if (error()) {
@@ -133,6 +135,11 @@ import { Role } from '../../core/models';
         width: 100%;
         text-align: left;
         padding: 0.65rem 0.75rem;
+      }
+      .link {
+        align-self: center;
+        font-size: 0.85rem;
+        color: var(--brand, var(--accent));
       }
       .error {
         color: #b42318;

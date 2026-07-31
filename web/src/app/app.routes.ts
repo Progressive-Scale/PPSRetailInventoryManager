@@ -24,6 +24,21 @@ export const routes: Routes = [
       import('./pages/accept-invite/accept-invite').then((m) => m.AcceptInviteComponent),
   },
   {
+    // Both steps of a forgotten password. Public: whoever needs them cannot sign in.
+    path: 'forgot-password',
+    loadComponent: () =>
+      import('./pages/forgot-password/forgot-password').then(
+        (m) => m.ForgotPasswordComponent,
+      ),
+  },
+  {
+    path: 'reset-password',
+    loadComponent: () =>
+      import('./pages/reset-password/reset-password').then(
+        (m) => m.ResetPasswordComponent,
+      ),
+  },
+  {
     path: 'inventory',
     canActivate: [authGuard, roleGuard(['STORE_USER', 'COMPANY_ADMIN'])],
     loadComponent: () => import('./pages/inventory/inventory').then((m) => m.InventoryComponent),

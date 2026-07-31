@@ -1,10 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from '../mail.service';
-import { InvitationEmailData, MailResult, MAX_ERROR_LEN } from '../mail.types';
+import {
+  InvitationEmailData,
+  MailResult,
+  MAX_ERROR_LEN,
+  PasswordResetEmailData,
+} from '../mail.types';
 import {
   invitationHtml,
   invitationSubject,
   invitationText,
+  passwordResetHtml,
+  passwordResetSubject,
+  passwordResetText,
 } from '../mail.templates';
 
 export interface ResendMailOptions {
@@ -37,8 +45,33 @@ export class ResendMailService extends MailService {
     to: string,
     data: InvitationEmailData,
   ): Promise<MailResult> {
-    const subject = invitationSubject(data);
+    return this.send('Invitation', to, {
+      subject: invitationSubject(data),
+      html: invitationHtml(data),
+      text: invitationText(data),
+    });
+  }
 
+  async sendPasswordResetEmail(
+    to: string,
+    data: PasswordResetEmailData,
+  ): Promise<MailResult> {
+    return this.send('Password reset', to, {
+      subject: passwordResetSubject(data),
+      html: passwordResetHtml(data),
+      text: passwordResetText(data),
+    });
+  }
+
+  /**
+   * One transport for every message type, so the sandbox detection below stays the
+   * only copy of it. `label` appears in logs only.
+   */
+  private async send(
+    label: string,
+    to: string,
+    msg: { subject: string; html: string; text: string },
+  ): Promise<MailResult> {
     try {
       const res = await fetch(this.opts.endpoint, {
         method: 'POST',
@@ -49,9 +82,9 @@ export class ResendMailService extends MailService {
         body: JSON.stringify({
           from: this.opts.from,
           to: [to],
-          subject,
-          html: invitationHtml(data),
-          text: invitationText(data),
+          subject: msg.subject,
+          html: msg.html,
+          text: msg.text,
         }),
       });
       if (res.ok) return { ok: true };
@@ -60,11 +93,11 @@ export class ResendMailService extends MailService {
       const reason = this.isSandboxRecipientRejection(res.status, body)
         ? SANDBOX_REASON
         : `Resend responded ${res.status}: ${body.slice(0, MAX_ERROR_LEN)}`;
-      this.logger.error(`Invitation email to ${to} failed — ${reason}`);
+      this.logger.error(`${label} email to ${to} failed — ${reason}`);
       return { ok: false, error: reason };
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'unknown mail error';
-      this.logger.error(`Invitation email to ${to} failed — ${reason}`);
+      this.logger.error(`${label} email to ${to} failed — ${reason}`);
       return { ok: false, error: reason.slice(0, MAX_ERROR_LEN) };
     }
   }

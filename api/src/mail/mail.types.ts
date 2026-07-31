@@ -7,6 +7,18 @@ export interface InvitationEmailData {
   expiresAt: Date;
 }
 
+/** Everything the password-reset email needs to render. */
+export interface PasswordResetEmailData {
+  /** Company name, or the product name for a platform admin (who has no company). */
+  companyName: string;
+  /** Whose account the link belongs to, so a misdirected email is obvious. */
+  username: string;
+  resetUrl: string;
+  expiresAt: Date;
+  /** How long the link stays valid, stated plainly in the email. */
+  ttlMinutes: number;
+}
+
 /** Outcome of a send attempt. Never throws — callers record the result. */
 export interface MailResult {
   ok: boolean;

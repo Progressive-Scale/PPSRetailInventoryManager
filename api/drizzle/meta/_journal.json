@@ -120,6 +120,13 @@
       "when": 1785513384146,
       "tag": "0016_user_usernames",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785516924997,
+      "tag": "0017_password_resets",
+      "breakpoints": true
     }
   ]
 }
