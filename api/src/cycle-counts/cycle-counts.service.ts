@@ -618,6 +618,11 @@ export class CycleCountsService {
           status: 'AWAITING_REVIEW',
           submittedAt: new Date(),
           submittedByUserId: ctx.userId,
+          // Re-derived here, not left at its open() value. A rejected count reopens
+          // and can be resubmitted later, by which time stock may have changed; the
+          // sweep is computed live, so a frozen expectedCount would contradict the
+          // proposals sitting next to it on the review screen.
+          expectedCount: inScopeUnits.length,
           scannedCount: scanned,
           soldGeneratedCount: lines.filter((l) => l.resolution === 'MARKED_SOLD')
             .length,

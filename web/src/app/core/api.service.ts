@@ -356,6 +356,18 @@ export class ApiService {
     return this.http.get<Paginated<CycleCount>>('/api/cycle-counts', { params: p });
   }
 
+  /** Apply a submitted count's proposals (COMPANY_ADMIN). */
+  approveCycleCount(id: number): Observable<CycleCountDetail> {
+    return this.http.post<CycleCountDetail>(`/api/cycle-counts/${id}/approve`, {});
+  }
+
+  /** Send a submitted count back for a recount; discards the proposals. */
+  rejectCycleCount(id: number, reason?: string): Observable<CycleCountDetail> {
+    return this.http.post<CycleCountDetail>(`/api/cycle-counts/${id}/reject`, {
+      reason,
+    });
+  }
+
   getCycleCount(id: number): Observable<CycleCountDetail> {
     return this.http.get<CycleCountDetail>(`/api/cycle-counts/${id}`);
   }

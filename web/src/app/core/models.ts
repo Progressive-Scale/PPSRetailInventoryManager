@@ -451,20 +451,33 @@ export interface HealthResponse {
 
 // ---- cycle counts ----
 
-export type CycleCountStatus = 'OPEN' | 'CLOSED' | 'CANCELLED';
+/** AWAITING_REVIEW = submitted; the proposals have changed nothing yet. */
+export type CycleCountStatus =
+  | 'OPEN'
+  | 'AWAITING_REVIEW'
+  | 'CLOSED'
+  | 'CANCELLED';
 
 export type CycleCountResolution =
   | 'SCANNED'
   | 'COUNTED_BY_UPC'
   | 'MARKED_SOLD'
-  | 'NEW_ITEM';
+  | 'NEW_ITEM'
+  | 'RECEIVED'
+  | 'PENDING_NOT_RECEIVED'
+  | 'REINSTATED'
+  | 'MOVED_IN';
 
 export interface CycleCount {
   id: number;
   companyId: number;
   storeId: number;
   status: CycleCountStatus;
+  /** The counted location. Null = a whole-store count. */
+  locationId: number | null;
   openedByUserId: number;
+  submittedByUserId: number | null;
+  submittedAt: string | null;
   closedByUserId: number | null;
   openedAt: string;
   closedAt: string | null;
@@ -477,29 +490,48 @@ export interface CycleCountLine {
   id: number;
   companyId: number;
   cycleCountId: number;
-  productId: number;
+  /** Null for an unidentified unit — no catalog row yet. */
+  productId: number | null;
   itemId: string | null;
   serial: string | null;
   quantity: number | null;
   resolution: CycleCountResolution;
+  /** Where the line puts the unit; null on PENDING_NOT_RECEIVED. */
+  locationId: number | null;
+  /** MOVED_IN only: where the system thought it was. */
+  locationFromId: number | null;
+  /** Null while proposed; set once approval applied it. */
+  appliedAt: string | null;
+  importCheckRequested: boolean;
   createdAt: string;
-  sku: string;
-  name: string;
+  sku: string | null;
+  name: string | null;
+  locationName: string | null;
 }
 
-export interface CycleCountNotCounted {
-  productId: number;
-  quantityOnHand: number;
-  sku: string;
-  name: string;
+/** The scope a count was opened with — and therefore what its sweep can touch. */
+export interface CycleCountScope {
+  locationId: number | null;
+  locationName: string | null;
+  productIds: number[];
+  wholeStore: boolean;
+}
+
+/** How much of this count REMOVES stock. Surfaced separately for the reviewer. */
+export interface CycleCountDestructive {
+  inferredSales: number;
+  zeroedStockLines: number;
 }
 
 export interface CycleCountDetail {
   cycleCount: CycleCount;
+  scope: CycleCountScope;
   lines: CycleCountLine[];
   linesByResolution: Record<CycleCountResolution, CycleCountLine[]>;
-  markedSoldSerials: string[];
-  notCounted: CycleCountNotCounted[];
+  markedSoldSerials: (string | null)[];
+  pendingNotReceived: CycleCountLine[];
+  destructive: CycleCountDestructive;
+  awaitingReview: boolean;
 }
 
 export interface Paginated<T> {

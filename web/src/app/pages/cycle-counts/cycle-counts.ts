@@ -38,6 +38,7 @@ interface ResolutionGroup {
             >
               <option [ngValue]="null">All</option>
               <option [ngValue]="'OPEN'">Open</option>
+              <option [ngValue]="'AWAITING_REVIEW'">Awaiting review</option>
               <option [ngValue]="'CLOSED'">Closed</option>
               <option [ngValue]="'CANCELLED'">Cancelled</option>
             </select>
@@ -131,6 +132,19 @@ interface ResolutionGroup {
           } @else if (detailError()) {
             <p class="error">{{ detailError() }}</p>
           } @else if (detail(); as d) {
+            <p class="scope">
+              <strong>Scope:</strong>
+              {{ d.scope.wholeStore ? 'Whole store' : d.scope.locationName }}
+              @if (d.scope.productIds.length > 0) {
+                <span class="muted">
+                  — narrowed to {{ d.scope.productIds.length }} product(s)
+                </span>
+              }
+              <span class="muted">
+                · only units in this scope could be swept
+              </span>
+            </p>
+
             <div class="tallies">
               <div class="tally">
                 <span class="tally-num">{{ d.cycleCount.expectedCount }}</span>
@@ -138,13 +152,62 @@ interface ResolutionGroup {
               </div>
               <div class="tally">
                 <span class="tally-num">{{ d.cycleCount.scannedCount }}</span>
-                <span class="tally-label">Scanned</span>
+                <span class="tally-label">Accounted for</span>
               </div>
               <div class="tally warn">
-                <span class="tally-num">{{ d.cycleCount.soldGeneratedCount }}</span>
-                <span class="tally-label">Marked sold</span>
+                <span class="tally-num">{{ d.destructive.inferredSales }}</span>
+                <span class="tally-label">Would be sold</span>
+              </div>
+              <div class="tally warn">
+                <span class="tally-num">{{ d.destructive.zeroedStockLines }}</span>
+                <span class="tally-label">Shelves zeroed</span>
               </div>
             </div>
+
+            @if (d.awaitingReview) {
+              <!-- The reviewer's whole job is here: what this count REMOVES. It is
+                   stated before the routine lines because that is the part nobody can
+                   undo for quantity stock. -->
+              <div class="review-box">
+                <h3>Waiting for your approval — nothing has been applied yet</h3>
+                @if (d.destructive.inferredSales + d.destructive.zeroedStockLines > 0) {
+                  <p class="destructive">
+                    Approving will mark
+                    <strong>{{ d.destructive.inferredSales }}</strong>
+                    unit(s) sold and set
+                    <strong>{{ d.destructive.zeroedStockLines }}</strong>
+                    stock line(s) to zero.
+                    @if (d.destructive.zeroedStockLines > 0) {
+                      Zeroed quantity stock has no per-unit record, so it cannot be
+                      reinstated the way a serialized unit can — check those lines
+                      before approving.
+                    }
+                  </p>
+                } @else {
+                  <p class="muted sm">
+                    This count removes nothing: everything in scope was accounted for.
+                  </p>
+                }
+                @if (reviewError()) {
+                  <p class="error">{{ reviewError() }}</p>
+                }
+                @if (isCompanyAdmin) {
+                  <div class="review-actions">
+                    <button (click)="approve()" [disabled]="reviewBusy()">
+                      {{ reviewBusy() ? 'Applying…' : 'Approve & apply' }}
+                    </button>
+                    <button class="ghost" (click)="reject()" [disabled]="reviewBusy()">
+                      Send back for recount
+                    </button>
+                  </div>
+                } @else {
+                  <p class="muted sm">
+                    A company admin has to approve this. Nothing you counted is lost —
+                    it is stored until they do.
+                  </p>
+                }
+              </div>
+            }
 
             @for (g of groups(); track g.key) {
               <div class="group" [class.prominent]="g.prominent">
@@ -164,22 +227,7 @@ interface ResolutionGroup {
               </div>
             }
 
-            @if (d.notCounted.length > 0) {
-              <div class="group not-counted">
-                <h3>
-                  Not counted
-                  <span class="count-pill warn">{{ d.notCounted.length }}</span>
-                </h3>
-                <p class="muted sm">
-                  These quantity products weren't counted during this cycle.
-                </p>
-                <ul class="serials">
-                  @for (n of d.notCounted; track n.productId) {
-                    <li>{{ n.sku }} {{ n.name }} — {{ n.quantityOnHand }} on hand</li>
-                  }
-                </ul>
-              </div>
-            }
+
           }
         </section>
       }
@@ -255,6 +303,46 @@ interface ResolutionGroup {
         font-size: 0.85rem;
         font-family: inherit;
         border-radius: 8px;
+      }
+      .scope {
+        margin: 0 0 0.85rem;
+        font-size: 0.88rem;
+      }
+      .review-box {
+        border: 1px solid #fcd34d;
+        background: #fffbeb;
+        border-radius: 10px;
+        padding: 0.9rem 1rem;
+        margin: 0 0 1rem;
+      }
+      .review-box h3 {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+      }
+      .destructive {
+        margin: 0 0 0.75rem;
+        font-size: 0.88rem;
+        line-height: 1.5;
+        color: #92400e;
+      }
+      .review-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .review-actions button {
+        padding: 0.45rem 0.9rem;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      .review-actions button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .st-AWAITING_REVIEW {
+        background: #fef3c7;
+        color: #92400e;
       }
       .table-scroll {
         overflow-x: auto;
@@ -404,9 +492,13 @@ export class CycleCountsComponent implements OnInit {
 
   private static readonly ORDER: { key: CycleCountResolution; label: string }[] = [
     { key: 'SCANNED', label: 'Scanned' },
+    { key: 'MOVED_IN', label: 'Found here (moved in)' },
+    { key: 'RECEIVED', label: 'Received (shipped units scanned in)' },
+    { key: 'REINSTATED', label: 'Reinstated (found after being sold)' },
+    { key: 'NEW_ITEM', label: 'New / unidentified' },
     { key: 'COUNTED_BY_UPC', label: 'Counted by UPC' },
-    { key: 'MARKED_SOLD', label: 'Marked sold' },
-    { key: 'NEW_ITEM', label: 'New item' },
+    { key: 'MARKED_SOLD', label: 'Missing — would be marked sold' },
+    { key: 'PENDING_NOT_RECEIVED', label: 'Shipped, not yet received' },
   ];
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
@@ -427,6 +519,9 @@ export class CycleCountsComponent implements OnInit {
   readonly loading = signal(false);
   readonly listError = signal<string | null>(null);
 
+  readonly reviewBusy = signal(false);
+  readonly reviewError = signal<string | null>(null);
+
   readonly selectedId = signal<number | null>(null);
   readonly detail = signal<CycleCountDetail | null>(null);
   readonly detailLoading = signal(false);
@@ -446,22 +541,33 @@ export class CycleCountsComponent implements OnInit {
       key,
       label,
       items: (d.linesByResolution?.[key] ?? []).map((l) => this.formatLine(l)),
+      // Highlighted because these are the lines that REMOVE stock.
       prominent: key === 'MARKED_SOLD',
     }));
   });
 
   private formatLine(line: CycleCountLine): string {
+    // An unidentified unit has no product, so lead with the serial and say so.
+    if (line.productId == null && line.serial) {
+      return `${line.serial} — unidentified${
+        line.importCheckRequested ? ', PPS check requested' : ''
+      }`;
+    }
+    if (line.resolution === 'MOVED_IN' && line.serial) {
+      return `${line.serial} — ${line.sku ?? ''} (moved to ${line.locationName ?? 'here'})`;
+    }
     if (line.resolution === 'COUNTED_BY_UPC') {
-      // Quantity products counted by scanning the UPC.
-      return `${line.sku} ${line.name} — counted ${line.quantity ?? 0}`;
+      const where = line.locationName ? ` at ${line.locationName}` : '';
+      return `${line.sku ?? ''} ${line.name ?? ''}${where} — counted ${line.quantity ?? 0}`;
     }
     if (line.resolution === 'NEW_ITEM' && line.serial == null && line.quantity != null) {
-      // Quantity product newly seen this cycle.
-      return `${line.sku} — +${line.quantity}`;
+      // A quantity product newly seen this cycle.
+      const where = line.locationName ? ` at ${line.locationName}` : '';
+      return `${line.sku ?? ''}${where} — +${line.quantity}`;
     }
-    // Serialized lines (SCANNED / MARKED_SOLD / serialized NEW_ITEM).
-    if (line.serial) return `${line.serial} — ${line.sku}`;
-    return `${line.sku} ${line.name}`.trim();
+    // Serialized lines (SCANNED / MARKED_SOLD / RECEIVED / REINSTATED / …).
+    if (line.serial) return `${line.serial} — ${line.sku ?? 'unidentified'}`;
+    return `${line.sku ?? ''} ${line.name ?? ''}`.trim();
   }
 
   ngOnInit(): void {
@@ -540,6 +646,45 @@ export class CycleCountsComponent implements OnInit {
   closeDetail(): void {
     this.selectedId.set(null);
     this.detail.set(null);
+    this.reviewError.set(null);
+  }
+
+  /** Apply the proposals. Refreshes the list too: the status changes. */
+  approve(): void {
+    const id = this.selectedId();
+    if (id == null) return;
+    this.reviewBusy.set(true);
+    this.reviewError.set(null);
+    this.api.approveCycleCount(id).subscribe({
+      next: (d) => {
+        this.reviewBusy.set(false);
+        this.detail.set(d);
+        this.reload();
+      },
+      error: (err) => {
+        this.reviewBusy.set(false);
+        this.reviewError.set(messageFor(err));
+      },
+    });
+  }
+
+  /** Discard the proposals and reopen for a recount. Nothing was applied. */
+  reject(): void {
+    const id = this.selectedId();
+    if (id == null) return;
+    this.reviewBusy.set(true);
+    this.reviewError.set(null);
+    this.api.rejectCycleCount(id).subscribe({
+      next: (d) => {
+        this.reviewBusy.set(false);
+        this.detail.set(d);
+        this.reload();
+      },
+      error: (err) => {
+        this.reviewBusy.set(false);
+        this.reviewError.set(messageFor(err));
+      },
+    });
   }
 
   prevPage(): void {
@@ -558,6 +703,8 @@ export class CycleCountsComponent implements OnInit {
     switch (status) {
       case 'OPEN':
         return 'Open';
+      case 'AWAITING_REVIEW':
+        return 'Awaiting review';
       case 'CLOSED':
         return 'Closed';
       case 'CANCELLED':
