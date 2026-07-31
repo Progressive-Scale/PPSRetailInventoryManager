@@ -100,6 +100,32 @@ export class NotificationsService {
   }
 
   /**
+   * Apply one status to many notifications. Scoped exactly like remove(), so a
+   * store user cannot reach another store's rows or the company-wide ones, and
+   * unmatched ids are silently skipped rather than failing the whole batch.
+   */
+  async setStatus(
+    ctx: DataContext,
+    ids: number[],
+    status: UpdateNotificationDto['status'],
+  ): Promise<{ updated: number }> {
+    const storeId = this.storeScope(ctx, undefined);
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const conds: SQL[] = [
+        eq(notifications.companyId, ctx.companyId),
+        inArray(notifications.id, ids),
+      ];
+      if (storeId != null) conds.push(eq(notifications.storeId, storeId));
+      const rows = await tx
+        .update(notifications)
+        .set({ status })
+        .where(and(...conds))
+        .returning({ id: notifications.id });
+      return { updated: rows.length };
+    });
+  }
+
+  /**
    * Permanently remove notifications from the history. Ids outside the caller's
    * company — or, for a STORE_USER, outside their own store — are simply not
    * matched, so nothing leaks and the count reflects what was actually removed.

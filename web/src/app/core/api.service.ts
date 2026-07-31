@@ -256,6 +256,7 @@ export class ApiService {
   }): Observable<Paginated<AppNotification>> {
     let params = new HttpParams();
     if (opts?.status) params = params.set('status', opts.status);
+    if (opts?.type) params = params.set('type', opts.type);
     if (opts?.storeId != null) params = params.set('storeId', String(opts.storeId));
     if (opts?.limit != null) params = params.set('limit', String(opts.limit));
     if (opts?.offset != null) params = params.set('offset', String(opts.offset));
@@ -270,6 +271,17 @@ export class ApiService {
 
   updateNotification(id: number, status: NotificationStatus): Observable<AppNotification> {
     return this.http.patch<AppNotification>(`/api/notifications/${id}`, { status });
+  }
+
+  /** Apply one status to many notifications at once. */
+  setNotificationStatus(
+    ids: number[],
+    status: NotificationStatus,
+  ): Observable<{ updated: number }> {
+    return this.http.post<{ updated: number }>('/api/notifications/status', {
+      ids,
+      status,
+    });
   }
 
   /** Permanently remove notifications from the history. */

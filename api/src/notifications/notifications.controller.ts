@@ -20,6 +20,7 @@ import { DataContext } from '../auth/auth.types';
 import { NotificationsService } from './notifications.service';
 import { ExpirationAlertsJob } from './expiration-alerts.job';
 import {
+  BulkStatusDto,
   DeleteNotificationsDto,
   ListNotificationsQuery,
   UpdateNotificationDto,
@@ -54,6 +55,13 @@ export class NotificationsController {
     @Query() query: ListNotificationsQuery,
   ) {
     return this.svc.unreadCount(ctx, query.storeId);
+  }
+
+  /** Mark one or many notifications read / unread / dismissed. */
+  @Post('status')
+  @HttpCode(HttpStatus.OK)
+  setStatus(@Ctx() ctx: DataContext, @Body() dto: BulkStatusDto) {
+    return this.svc.setStatus(ctx, dto.ids, dto.status);
   }
 
   /** Remove one or many notifications from the history. */

@@ -42,6 +42,12 @@ export class UpdateNotificationDto {
   status!: (typeof STATUSES)[number];
 }
 
+/** Apply one status to many notifications. Scoped like DeleteNotificationsDto. */
+export class BulkStatusDto extends DeleteNotificationsDto {
+  @IsEnum(STATUSES as unknown as string[])
+  status!: (typeof STATUSES)[number];
+}
+
 // Upsert notification settings. storeId omitted / null => the company default;
 // a storeId sets a per-store override.
 export class NotificationSettingsDto {

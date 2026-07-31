@@ -92,6 +92,46 @@ const PAGE_SIZE = 200;
               <button
                 type="button"
                 class="icon-btn"
+                (click)="setStatus('READ')"
+                [disabled]="busy()"
+                title="Mark as read"
+              >
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M21.99 8c0-.72-.37-1.35-.94-1.7L12 1 2.95 6.3C2.38 6.65 2 7.28 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2l-.01-10zM12 13L3.74 7.84 12 3l8.26 4.84L12 13z"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                (click)="setStatus('UNREAD')"
+                [disabled]="busy()"
+                title="Mark as unread"
+              >
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                (click)="setStatus('DISMISSED')"
+                [disabled]="busy()"
+                title="Dismiss"
+              >
+                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z"
+                  />
+                </svg>
+              </button>
+              <span class="bulk-sep"></span>
+              <button
+                type="button"
+                class="icon-btn"
                 (click)="askDelete()"
                 [disabled]="busy()"
                 title="Delete from history"
@@ -348,6 +388,13 @@ const PAGE_SIZE = 200;
       .bulk-count {
         font-weight: 600;
       }
+      /* Keeps the reversible status actions visually apart from the destructive one. */
+      .bulk-sep {
+        width: 1px;
+        height: 1.4rem;
+        margin: 0 0.2rem;
+        background: var(--border);
+      }
       .icon-btn {
         display: inline-flex;
         align-items: center;
@@ -532,6 +579,43 @@ export class NotificationsComponent implements OnInit {
 
   clearSelection(): void {
     this.selected.set(new Set());
+  }
+
+  // ---- status ------------------------------------------------------------
+
+  /**
+   * Apply one status to the whole selection. These are reversible, so they go
+   * through without a confirmation — unlike delete. Rows are patched in place
+   * instead of reloading so nothing jumps around, and the selection is kept for
+   * anything still visible, which makes a mis-click easy to undo by pressing a
+   * different status.
+   */
+  setStatus(status: NotificationStatus): void {
+    const ids = [...this.selected()];
+    if (ids.length === 0) return;
+    this.busy.set(true);
+    this.error.set(null);
+    this.api.setNotificationStatus(ids, status).subscribe({
+      next: () => {
+        this.busy.set(false);
+        const touched = new Set(ids);
+        this.rows.update((rows) =>
+          rows.map((n) => (touched.has(n.id) ? { ...n, status } : n)),
+        );
+        // With a status filter on, the changed rows leave the view; drop them
+        // from the selection so the bulk bar never counts rows you cannot see.
+        const visible = new Set(this.filtered().map((n) => n.id));
+        this.selected.update(
+          (sel) => new Set([...sel].filter((id) => visible.has(id))),
+        );
+        // The bell badge counts unread rows.
+        this.store.refreshCount();
+      },
+      error: (err) => {
+        this.busy.set(false);
+        this.error.set(messageFor(err));
+      },
+    });
   }
 
   // ---- delete ------------------------------------------------------------
