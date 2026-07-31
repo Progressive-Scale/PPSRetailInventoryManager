@@ -50,10 +50,12 @@ interface NavLink {
                   <path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z" />
                 </svg>
               </button>
-              @if (logoUrl()) {
-                <img class="logo" [src]="logoUrl()" alt="" />
-              }
-              <strong class="company">{{ appName() }}</strong>
+              <span class="topbar-brand">
+                @if (logoUrl()) {
+                  <img class="logo" [src]="logoUrl()" alt="" />
+                }
+                <strong class="company">{{ appName() }}</strong>
+              </span>
             </div>
             <div class="user">
               @if (showBell()) {
@@ -226,6 +228,12 @@ interface NavLink {
       .company {
         color: var(--brand, var(--accent));
       }
+      /* The drawer already shows the logo and company name, so this is a duplicate
+         whenever the drawer is on screen. Kept only for the narrow layout, where
+         the drawer is off-canvas and this is the sole branding. */
+      .topbar-brand {
+        display: none;
+      }
       .hamburger {
         display: none;
         padding: 0.35rem;
@@ -389,6 +397,11 @@ interface NavLink {
         }
         .hamburger {
           display: inline-flex;
+        }
+        .topbar-brand {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.6rem;
         }
         .drawer-open .scrim {
           display: block;
