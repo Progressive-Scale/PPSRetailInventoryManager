@@ -1,6 +1,14 @@
 node_modules/
 dist/
+# .env holds live provider tokens. The glob covers the variants people create by
+# hand — .env.local, .env.bak, .env.postmark — any one of which would otherwise be
+# committable with real secrets in it.
 .env
+.env.*
+!.env.example
+# Captured stdout/stderr when the API is started detached (see README on running it).
+api-restart.log
+api-restart.err
 # Angular build copied here for single-service production
 client/
 *.tsbuildinfo
