@@ -1,5 +1,8 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
@@ -11,13 +14,27 @@ import {
 import { PaginationQuery } from '../../common/pagination';
 
 const STATUSES = ['UNREAD', 'READ', 'DISMISSED'] as const;
+const TYPES = ['EXPIRATION_WARNING', 'INVITE_ACCEPTED'] as const;
 
 export class ListNotificationsQuery extends PaginationQuery {
   @IsOptional()
   @IsEnum(STATUSES as unknown as string[])
   status?: (typeof STATUSES)[number];
 
+  @IsOptional() @IsEnum(TYPES as unknown as string[])
+  type?: (typeof TYPES)[number];
+
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() storeId?: number;
+}
+
+/** Ids to remove from the history. Scoped to the caller's company/store. */
+export class DeleteNotificationsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  ids!: number[];
 }
 
 export class UpdateNotificationDto {

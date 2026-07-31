@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -19,6 +20,7 @@ import { DataContext } from '../auth/auth.types';
 import { NotificationsService } from './notifications.service';
 import { ExpirationAlertsJob } from './expiration-alerts.job';
 import {
+  DeleteNotificationsDto,
   ListNotificationsQuery,
   UpdateNotificationDto,
 } from './dto/notifications.dto';
@@ -52,6 +54,19 @@ export class NotificationsController {
     @Query() query: ListNotificationsQuery,
   ) {
     return this.svc.unreadCount(ctx, query.storeId);
+  }
+
+  /** Remove one or many notifications from the history. */
+  @Post('delete')
+  @HttpCode(HttpStatus.OK)
+  remove(@Ctx() ctx: DataContext, @Body() dto: DeleteNotificationsDto) {
+    return this.svc.remove(ctx, dto.ids);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  removeOne(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
+    return this.svc.remove(ctx, [id]);
   }
 
   @Patch(':id')

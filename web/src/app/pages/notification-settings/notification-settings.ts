@@ -8,9 +8,9 @@ import { NotificationSetting, Store } from '../../core/models';
 @Component({
   selector: 'app-notification-settings',
   imports: [FormsModule],
+  // Rendered as a section inside the Settings page, so no page wrapper here.
   template: `
-    <main class="container">
-      <section class="card">
+    <section class="card">
         <div class="section-head">
           <h2>Expiration Alerts</h2>
           <button class="ghost" (click)="runScan()" [disabled]="scanning()">
@@ -83,8 +83,7 @@ import { NotificationSetting, Store } from '../../core/models';
             </form>
           </div>
         }
-      </section>
-    </main>
+    </section>
   `,
   styles: [
     `

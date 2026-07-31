@@ -30,6 +30,7 @@ import {
   MoveResult,
   NotificationSettingsResponse,
   NotificationStatus,
+  NotificationType,
   Paginated,
   Product,
   CreateProduct,
@@ -248,6 +249,7 @@ export class ApiService {
   // ---- notifications ----
   listNotifications(opts?: {
     status?: NotificationStatus;
+    type?: NotificationType;
     storeId?: number;
     limit?: number;
     offset?: number;
@@ -268,6 +270,11 @@ export class ApiService {
 
   updateNotification(id: number, status: NotificationStatus): Observable<AppNotification> {
     return this.http.patch<AppNotification>(`/api/notifications/${id}`, { status });
+  }
+
+  /** Permanently remove notifications from the history. */
+  deleteNotifications(ids: number[]): Observable<{ deleted: number }> {
+    return this.http.post<{ deleted: number }>('/api/notifications/delete', { ids });
   }
 
   runExpirationScan(): Observable<{ created: number }> {

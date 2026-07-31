@@ -52,12 +52,17 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/settings/settings').then((m) => m.SettingsComponent),
   },
   {
-    path: 'notification-settings',
-    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
+    // Full notification history (all statuses), with bulk removal.
+    path: 'notifications',
+    canActivate: [authGuard],
     loadComponent: () =>
-      import('./pages/notification-settings/notification-settings').then(
-        (m) => m.NotificationSettingsComponent,
-      ),
+      import('./pages/notifications/notifications').then((m) => m.NotificationsComponent),
+  },
+  {
+    // Alert configuration moved into Settings as a section.
+    path: 'notification-settings',
+    redirectTo: 'settings',
+    pathMatch: 'full',
   },
   {
     path: 'platform',

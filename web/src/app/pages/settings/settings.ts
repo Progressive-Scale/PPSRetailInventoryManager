@@ -3,16 +3,20 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { BrandingStore } from '../../core/branding.store';
 import { messageFor } from '../../core/http-error';
+import { NotificationSettingsComponent } from '../notification-settings/notification-settings';
 
 /** Max data-URI size we let the client send (server caps JSON at 6 MB). */
 const MAX_LOGO_BYTES = 1.5 * 1024 * 1024;
 
 @Component({
   selector: 'app-settings',
-  imports: [FormsModule],
+  imports: [FormsModule, NotificationSettingsComponent],
   template: `
     <main class="container">
       <h1>Settings</h1>
+
+      <!-- Alert configuration lives here rather than on its own page. -->
+      <app-notification-settings />
 
       <!-- Branding / Logo -->
       <section class="card">

@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, isNull, sql, SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql, SQL } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   Notification,
@@ -40,6 +40,7 @@ export class NotificationsService {
       const conds: SQL[] = [eq(notifications.companyId, ctx.companyId)];
       if (storeId != null) conds.push(eq(notifications.storeId, storeId));
       if (query.status) conds.push(eq(notifications.status, query.status));
+      if (query.type) conds.push(eq(notifications.type, query.type));
       const where = and(...conds);
       const data = await tx
         .select()
@@ -95,6 +96,29 @@ export class NotificationsService {
         .where(eq(notifications.id, id))
         .returning();
       return row;
+    });
+  }
+
+  /**
+   * Permanently remove notifications from the history. Ids outside the caller's
+   * company — or, for a STORE_USER, outside their own store — are simply not
+   * matched, so nothing leaks and the count reflects what was actually removed.
+   */
+  async remove(ctx: DataContext, ids: number[]): Promise<{ deleted: number }> {
+    const storeId = this.storeScope(ctx, undefined);
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const conds: SQL[] = [
+        eq(notifications.companyId, ctx.companyId),
+        inArray(notifications.id, ids),
+      ];
+      // A store user may only clear their own store's alerts; company-wide rows
+      // (store_id null) belong to admins.
+      if (storeId != null) conds.push(eq(notifications.storeId, storeId));
+      const removed = await tx
+        .delete(notifications)
+        .where(and(...conds))
+        .returning({ id: notifications.id });
+      return { deleted: removed.length };
     });
   }
 

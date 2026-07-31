@@ -70,9 +70,9 @@ interface NavLink {
                     <div class="bell-dropdown">
                       <div class="bell-head">
                         <strong>Alerts</strong>
-                        @if (isCompanyAdmin()) {
-                          <a routerLink="/notification-settings" (click)="bellOpen.set(false)">Settings</a>
-                        }
+                        <a routerLink="/notifications" (click)="bellOpen.set(false)">
+                          View all
+                        </a>
                       </div>
                       @if (notifications.loading()) {
                         <p class="muted pad">Loading…</p>
@@ -456,7 +456,7 @@ export class App implements OnInit {
           { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
           { path: '/products', label: 'Products', icon: I.products },
           { path: '/manage', label: 'Manage', icon: I.manage },
-          { path: '/notification-settings', label: 'Alerts', icon: I.alerts },
+          { path: '/notifications', label: 'Notifications', icon: I.alerts },
           { path: '/settings', label: 'Settings', icon: I.settings },
         ];
       default:
