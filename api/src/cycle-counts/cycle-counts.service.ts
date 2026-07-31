@@ -350,6 +350,7 @@ export class CycleCountsService {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const conds: SQL[] = [eq(cycleCounts.companyId, ctx.companyId)];
       if (storeId != null) conds.push(eq(cycleCounts.storeId, storeId));
+      if (query.status) conds.push(eq(cycleCounts.status, query.status));
       const where = and(...conds);
       const data = await tx
         .select()

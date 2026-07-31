@@ -1,6 +1,8 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
+import { AuthService } from '../../core/auth.service';
 import { messageFor } from '../../core/http-error';
 import {
   CycleCount,
@@ -8,6 +10,7 @@ import {
   CycleCountLine,
   CycleCountResolution,
   CycleCountStatus,
+  Store,
 } from '../../core/models';
 
 interface ResolutionGroup {
@@ -19,13 +22,49 @@ interface ResolutionGroup {
 
 @Component({
   selector: 'app-cycle-counts',
-  imports: [DatePipe],
+  imports: [DatePipe, FormsModule],
   template: `
     <main class="container">
       <section class="card">
-        <div class="row-between">
-          <h2>Cycle counts</h2>
-          <button class="ghost" (click)="reload()" [disabled]="loading()">Refresh</button>
+        <h2>Cycle counts</h2>
+
+        <div class="filters">
+          <label class="f">
+            Status
+            <select
+              name="cc-status"
+              [ngModel]="statusFilter()"
+              (ngModelChange)="setStatusFilter($event)"
+            >
+              <option [ngValue]="null">All</option>
+              <option [ngValue]="'OPEN'">Open</option>
+              <option [ngValue]="'CLOSED'">Closed</option>
+              <option [ngValue]="'CANCELLED'">Cancelled</option>
+            </select>
+          </label>
+          @if (isCompanyAdmin) {
+            <label class="f">
+              Store
+              <select
+                name="cc-store"
+                [ngModel]="storeFilter()"
+                (ngModelChange)="setStoreFilter($event)"
+              >
+                <option [ngValue]="null">All</option>
+                @for (s of stores(); track s.id) {
+                  <option [ngValue]="s.id">{{ s.name }}</option>
+                }
+              </select>
+            </label>
+          }
+          <div class="f-actions">
+            <button type="button" class="ghost" (click)="clearFilters()" [disabled]="!filtersActive()">
+              Clear
+            </button>
+            <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
+              Refresh
+            </button>
+          </div>
         </div>
 
         @if (loading()) {
@@ -180,6 +219,43 @@ interface ResolutionGroup {
         gap: 1rem;
         flex-wrap: wrap;
       }
+      .filters {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin: 0 0 1rem;
+      }
+      .f {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .f-actions {
+        display: flex;
+        gap: 0.4rem;
+      }
+      /* Keeps Clear/Refresh level with the inputs beside them. */
+      .filters select,
+      .filters .f-actions button {
+        height: 2.25rem;
+        box-sizing: border-box;
+      }
+      .filters select {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-family: inherit;
+      }
+      .filters .f-actions button {
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        font-family: inherit;
+        border-radius: 8px;
+      }
       .table-scroll {
         overflow-x: auto;
       }
@@ -324,6 +400,7 @@ interface ResolutionGroup {
 })
 export class CycleCountsComponent implements OnInit {
   private readonly api = inject(ApiService);
+  private readonly auth = inject(AuthService);
 
   private static readonly ORDER: { key: CycleCountResolution; label: string }[] = [
     { key: 'SCANNED', label: 'Scanned' },
@@ -331,6 +408,17 @@ export class CycleCountsComponent implements OnInit {
     { key: 'MARKED_SOLD', label: 'Marked sold' },
     { key: 'NEW_ITEM', label: 'New item' },
   ];
+
+  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  readonly stores = signal<Store[]>([]);
+
+  // Filtered server-side: the list is paginated, so narrowing the loaded page
+  // would leave the total and the pager describing a different set.
+  readonly statusFilter = signal<CycleCountStatus | null>(null);
+  readonly storeFilter = signal<number | null>(null);
+  readonly filtersActive = computed(
+    () => this.statusFilter() !== null || this.storeFilter() !== null,
+  );
 
   readonly counts = signal<CycleCount[]>([]);
   readonly total = signal(0);
@@ -377,23 +465,59 @@ export class CycleCountsComponent implements OnInit {
   }
 
   ngOnInit(): void {
+    if (this.isCompanyAdmin) {
+      this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
+    }
     this.reload();
   }
 
   reload(): void {
     this.loading.set(true);
     this.listError.set(null);
-    this.api.listCycleCounts({ limit: this.limit(), offset: this.offset() }).subscribe({
-      next: (res) => {
-        this.counts.set(res.data);
-        this.total.set(res.total);
-        this.loading.set(false);
-      },
-      error: (err) => {
-        this.loading.set(false);
-        this.listError.set(messageFor(err));
-      },
-    });
+    this.api
+      .listCycleCounts({
+        limit: this.limit(),
+        offset: this.offset(),
+        status: this.statusFilter() ?? undefined,
+        storeId: this.storeFilter() ?? undefined,
+      })
+      .subscribe({
+        next: (res) => {
+          this.counts.set(res.data);
+          this.total.set(res.total);
+          this.loading.set(false);
+        },
+        error: (err) => {
+          this.loading.set(false);
+          this.listError.set(messageFor(err));
+        },
+      });
+  }
+
+  setStatusFilter(status: CycleCountStatus | null): void {
+    this.statusFilter.set(status);
+    this.refilter();
+  }
+
+  setStoreFilter(storeId: number | null): void {
+    this.storeFilter.set(storeId);
+    this.refilter();
+  }
+
+  clearFilters(): void {
+    this.statusFilter.set(null);
+    this.storeFilter.set(null);
+    this.refilter();
+  }
+
+  /**
+   * Any filter change restarts at page one — the open detail is closed because
+   * the count it describes may no longer be in the narrowed list.
+   */
+  private refilter(): void {
+    this.offset.set(0);
+    this.closeDetail();
+    this.reload();
   }
 
   select(c: CycleCount): void {

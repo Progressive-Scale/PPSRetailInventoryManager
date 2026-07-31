@@ -14,6 +14,7 @@ import {
   LoginResponse,
   CycleCount,
   CycleCountDetail,
+  CycleCountStatus,
   CreateInvitation,
   CreateStore,
   ExpiringItem,
@@ -306,11 +307,13 @@ export class ApiService {
     limit?: number;
     offset?: number;
     storeId?: number;
+    status?: CycleCountStatus;
   }): Observable<Paginated<CycleCount>> {
     let p = new HttpParams();
     if (params?.limit != null) p = p.set('limit', String(params.limit));
     if (params?.offset != null) p = p.set('offset', String(params.offset));
     if (params?.storeId != null) p = p.set('storeId', String(params.storeId));
+    if (params?.status) p = p.set('status', params.status);
     return this.http.get<Paginated<CycleCount>>('/api/cycle-counts', { params: p });
   }
 

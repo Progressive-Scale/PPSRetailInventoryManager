@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsEnum,
   IsInt,
   IsISO8601,
   IsOptional,
@@ -59,6 +60,14 @@ export class CloseCycleCountDto {
   newItems?: NewItemDto[];
 }
 
+const CYCLE_COUNT_STATUSES = ['OPEN', 'CLOSED', 'CANCELLED'] as const;
+
 export class ListCycleCountsQuery extends PaginationQuery {
   @IsOptional() @IsInt() @IsPositive() storeId?: number;
+
+  // Filtered server-side because the list is paginated — narrowing only the
+  // current page would report a total that does not match what is shown.
+  @IsOptional()
+  @IsEnum(CYCLE_COUNT_STATUSES as unknown as string[])
+  status?: (typeof CYCLE_COUNT_STATUSES)[number];
 }
