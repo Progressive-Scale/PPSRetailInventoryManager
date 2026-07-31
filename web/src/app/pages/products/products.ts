@@ -171,17 +171,26 @@ type SubTab = 'catalog' | 'review';
         }
 
         <!-- Delete confirmation -->
-        @if (deleteTarget()) {
-          <div class="overlay" (click)="deleteTarget.set(null)">
+        @if (deleteTarget(); as target) {
+          <div class="overlay" (click)="cancelDeleteProduct()">
             <div class="modal" (click)="$event.stopPropagation()">
               <h2>Delete product</h2>
-              <p>Delete product {{ deleteTarget()!.sku }}? This can't be undone.</p>
-              <div class="modal-actions">
-                <button class="ghost" type="button" (click)="deleteTarget.set(null)">Cancel</button>
-                <button class="danger" type="button" (click)="confirmDeleteProduct()" [disabled]="saving()">
-                  Delete
-                </button>
-              </div>
+              @if (deleteError()) {
+                <!-- The delete was refused (usually: the product still has
+                     inventory). Stay open so the reason is read where it happened. -->
+                <p class="error">{{ deleteError() }}</p>
+                <div class="modal-actions">
+                  <button class="ghost" type="button" (click)="cancelDeleteProduct()">Close</button>
+                </div>
+              } @else {
+                <p>Delete product {{ target.sku }}? This can't be undone.</p>
+                <div class="modal-actions">
+                  <button class="ghost" type="button" (click)="cancelDeleteProduct()">Cancel</button>
+                  <button class="danger" type="button" (click)="confirmDeleteProduct()" [disabled]="saving()">
+                    {{ saving() ? 'Deleting…' : 'Delete' }}
+                  </button>
+                </div>
+              }
             </div>
           </div>
         }
@@ -521,6 +530,7 @@ export class ProductsComponent implements OnInit {
   readonly showAddModal = signal(false);
   readonly modalError = signal<string | null>(null);
   readonly deleteTarget = signal<Product | null>(null);
+  readonly deleteError = signal<string | null>(null);
 
   ngOnInit(): void {
     this.loadProducts();
@@ -589,7 +599,13 @@ export class ProductsComponent implements OnInit {
 
   askDeleteProduct(p: Product): void {
     this.error.set(null);
+    this.deleteError.set(null);
     this.deleteTarget.set(p);
+  }
+
+  cancelDeleteProduct(): void {
+    this.deleteTarget.set(null);
+    this.deleteError.set(null);
   }
 
   confirmDeleteProduct(): void {
@@ -605,9 +621,9 @@ export class ProductsComponent implements OnInit {
       },
       error: (err) => {
         this.saving.set(false);
-        this.deleteTarget.set(null);
-        // 409 = product still has inventory; surface the server message.
-        this.error.set(messageFor(err));
+        // 409 = product still has inventory. Report it inside the dialog rather
+        // than as a banner at the top of the page, and leave the dialog open.
+        this.deleteError.set(messageFor(err));
       },
     });
   }
