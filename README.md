@@ -69,6 +69,23 @@ local part by migration `0016`, deduplicated per company (`alice`, `alice2`, …
 The login DTO still accepts the old `email` field as an alias for `identifier`, so
 a scanner build already in the field keeps working.
 
+### My profile (`/profile`)
+
+Clicking your own name in the top bar opens it. Users change **their own** username
+and password here; `/api/profile/*` acts on whoever the token belongs to, so there
+is no id in any path and one user can never address another's account. Email and
+role are read-only — an administrator owns those, via Manage → Users, where in turn
+usernames are *not* editable. The two screens never overlap.
+
+Changing a password does **not** sign other devices out: tokens are stateless with
+no revocation list, so a session opened beforehand keeps working until it expires.
+
+**A 401 from an authenticated route means the session is dead** — the web
+interceptor logs the user out and redirects to `/login` when it sees one. An
+endpoint that validates a credential passed in the *body* (the current-password
+confirmation) must therefore answer **400**, not 401, when that value is wrong.
+Otherwise a single typo ejects the user from the app.
+
 ### Row-Level Security (the backstop)
 
 Every tenant table has RLS **enabled + FORCED** with a `tenant_isolation` policy:

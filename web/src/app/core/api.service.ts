@@ -34,6 +34,7 @@ import {
   NotificationType,
   Paginated,
   Product,
+  Profile,
   CreateProduct,
   PutNotificationSettings,
   StoreLocation,
@@ -57,6 +58,26 @@ export class ApiService {
   // ---- public / branding ----
   branding(): Observable<Branding> {
     return this.http.get<Branding>('/api/branding');
+  }
+
+  // ---- your own account ----
+  // No id in any of these: the API acts on whoever the token belongs to.
+  profile(): Observable<Profile> {
+    return this.http.get<Profile>('/api/profile');
+  }
+
+  changeUsername(username: string): Observable<Profile> {
+    return this.http.patch<Profile>('/api/profile/username', { username });
+  }
+
+  changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Observable<{ changed: true }> {
+    return this.http.patch<{ changed: true }>('/api/profile/password', {
+      currentPassword,
+      newPassword,
+    });
   }
 
   /** Update the current company's branding (COMPANY_ADMIN). Empty-string

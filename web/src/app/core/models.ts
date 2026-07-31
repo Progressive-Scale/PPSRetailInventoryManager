@@ -10,6 +10,17 @@ export interface AuthUser {
   role: Role;
 }
 
+/** Your own account, as returned by /api/profile. */
+export interface Profile {
+  id: number;
+  email: string;
+  username: string;
+  companyId: number | null;
+  storeId: number | null;
+  role: Role;
+  createdAt: string;
+}
+
 export interface LoginResponse {
   access_token: string;
   user: AuthUser;

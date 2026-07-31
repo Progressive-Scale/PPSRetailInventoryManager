@@ -65,6 +65,13 @@ export const routes: Routes = [
     pathMatch: 'full',
   },
   {
+    // Your own account. Every role has one, platform admins included, so this is
+    // guarded on being signed in and nothing more.
+    path: 'profile',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/profile/profile').then((m) => m.ProfileComponent),
+  },
+  {
     path: 'platform',
     canActivate: [authGuard, roleGuard(['PLATFORM_ADMIN'])],
     loadComponent: () => import('./pages/platform/platform').then((m) => m.PlatformComponent),

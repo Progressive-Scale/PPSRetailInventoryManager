@@ -122,9 +122,12 @@ interface NavLink {
                   }
                 </div>
               }
-              <!-- Username is who you signed in as; the email is the tooltip so the
-                   header stays short but still identifies the account. -->
-              <span class="email" [title]="u.email">{{ u.username || u.email }}</span>
+              <!-- Your name opens your own profile. Username is who you signed in
+                   as; the email is the tooltip so the header stays short but still
+                   identifies the account. -->
+              <a class="email me" routerLink="/profile" [title]="u.email + ' — my profile'">
+                {{ u.username || u.email }}
+              </a>
               <span class="badge">{{ roleLabel(u.role) }}</span>
               <button class="ghost" (click)="signOut()">Sign out</button>
             </div>
@@ -249,6 +252,15 @@ interface NavLink {
       }
       .email {
         color: var(--text);
+      }
+      /* Reads as plain header text until hovered, so it does not compete with the
+         nav, but it is a real link to your profile. */
+      a.me {
+        text-decoration: none;
+      }
+      a.me:hover {
+        text-decoration: underline;
+        color: var(--brand, var(--accent));
       }
       .badge {
         padding: 0.1rem 0.5rem;

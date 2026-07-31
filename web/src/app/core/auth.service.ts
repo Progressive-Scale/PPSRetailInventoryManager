@@ -51,6 +51,20 @@ export class AuthService {
     this._user.set(null);
   }
 
+  /**
+   * Fold a change the user made to their own account into the cached session, so
+   * the header and anything else reading `user()` update without a re-login. The
+   * token is untouched: it carries id, company, store and role, none of which this
+   * can change.
+   */
+  patchUser(patch: Partial<AuthUser>): void {
+    const current = this._user();
+    if (!current) return;
+    const next = { ...current, ...patch };
+    localStorage.setItem(USER_KEY, JSON.stringify(next));
+    this._user.set(next);
+  }
+
   get token(): string | null {
     return localStorage.getItem(TOKEN_KEY);
   }
