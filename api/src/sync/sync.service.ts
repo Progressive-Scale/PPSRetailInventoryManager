@@ -115,21 +115,25 @@ export class SyncService {
       return { kind: 'unit', serial: it.serial, status: 'already_processed' };
     }
 
-    // Handoffs always land in the store's BACKROOM; staff move to the floor.
-    const backroomId = await systemLocationId(tx, companyId, store.id, 'BACKROOM');
+    // A handoff means the ERP SHIPPED the unit, not that it is in the store. It
+    // lands PENDING with no location and is not stock until somebody physically
+    // scans it in during a cycle count, which writes the RECEIVE row. receivedAt
+    // stays null for the same reason — it records arrival, which has not happened.
     const [item] = await tx
       .insert(inventoryItems)
       .values({
         companyId,
         storeId: store.id,
         productId: product.id,
-        locationId: backroomId,
+        locationId: null,
         serial: it.serial,
-        status: 'ON_HAND',
+        status: 'PENDING',
         expirationDate: it.expirationDate ?? null,
-        receivedAt: new Date(),
       })
       .returning();
+    // The RECEIPT still belongs at handoff time: this is when the ERP handed the
+    // unit over, and the ledger records when things were said, not just when they
+    // were confirmed. locationToId is null because there is no location yet.
     await tx.insert(inventoryTransactions).values({
       companyId,
       storeId: store.id,
@@ -137,8 +141,7 @@ export class SyncService {
       itemId: item.id,
       type: 'RECEIPT',
       quantityDelta: 1,
-      locationToId: backroomId,
-      note: 'Handoff from sync agent',
+      note: 'Handoff from sync agent — awaiting receiving scan',
       source: 'SYNC',
     });
     return { kind: 'unit', serial: it.serial, status: 'accepted' };

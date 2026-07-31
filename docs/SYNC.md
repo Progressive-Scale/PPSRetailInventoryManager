@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.1
+# Sync Agent Integration Contract — v3.2
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,11 +10,46 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.1`
+- **Contract version:** `v3.2`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
+
+## What's new in v3.2
+
+**A `unit` handoff no longer puts stock in the store.** It records that the ERP
+*shipped* the unit. The item is created with status **`PENDING`** and **no
+location**, and is deliberately excluded from on-hand totals, expiration alerts,
+sell/move eligibility and location emptiness checks. It becomes real stock only
+when somebody physically scans it during a cycle count, which sets it `ON_HAND`,
+assigns the location being counted, and writes a **`RECEIVE`** ledger row.
+
+The `RECEIPT` ledger row is still written at handoff time — that is when the ERP
+handed the unit over, and the ledger records what was said as well as what was
+confirmed — carrying the note `awaiting receiving scan` and no location.
+
+**Nothing changes for the agent.** The request and response shapes are identical;
+`accepted` still means "recorded". What changed is what `accepted` implies: shipped,
+not shelved. A unit that is never scanned in stays `PENDING` indefinitely and is
+reported as *shipped, not yet received* — it is never inferred sold, because it was
+never in the store to sell.
+
+### The unit/stock asymmetry (deliberate)
+
+| Handoff kind | On arrival at the cloud | Becomes stock when |
+| --- | --- | --- |
+| `unit` (serialized) | `PENDING`, no location | physically scanned in a cycle count |
+| `stock` (quantity) | added to Backroom stock **immediately** | at once, on handoff |
+
+Quantity handoffs are **unchanged** and still land in the store's default Backroom.
+The asymmetry is intentional: a serialized unit is an identifiable thing whose
+physical arrival can be confirmed by scanning its serial, so it is worth tracking
+the gap between shipped and received. A quantity handoff is an anonymous count with
+nothing to scan one-by-one on arrival, so there is no confirmation event to wait
+for and pretending otherwise would only strand stock in limbo. If per-unit receiving
+for quantity products is ever needed it requires lot/batch identity first, which is
+the same prerequisite as quantity expiration.
 
 ## What's new in v3.1
 
