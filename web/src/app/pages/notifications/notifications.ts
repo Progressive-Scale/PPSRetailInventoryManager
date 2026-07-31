@@ -89,67 +89,82 @@ const PAGE_SIZE = 200;
         @if (selectionCount() > 0) {
           <div class="bulk-bar">
             <span class="bulk-actions">
-              <button
-                type="button"
-                class="icon-btn"
-                (click)="setStatus('READ')"
-                [disabled]="busy()"
-                title="Mark as read"
-              >
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M21.99 8c0-.72-.37-1.35-.94-1.7L12 1 2.95 6.3C2.38 6.65 2 7.28 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2l-.01-10zM12 13L3.74 7.84 12 3l8.26 4.84L12 13z"
-                  />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="icon-btn"
-                (click)="setStatus('UNREAD')"
-                [disabled]="busy()"
-                title="Mark as unread"
-              >
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
-                  />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="icon-btn"
-                (click)="setStatus('DISMISSED')"
-                [disabled]="busy()"
-                title="Dismiss"
-              >
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z"
-                  />
-                </svg>
-              </button>
+              <span class="tip-wrap">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  (click)="setStatus('READ')"
+                  [disabled]="busy()"
+                  aria-label="Mark as read"
+                >
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M21.99 8c0-.72-.37-1.35-.94-1.7L12 1 2.95 6.3C2.38 6.65 2 7.28 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2l-.01-10zM12 13L3.74 7.84 12 3l8.26 4.84L12 13z"
+                    />
+                  </svg>
+                </button>
+                <span class="tip-bubble">Mark as read</span>
+              </span>
+              <span class="tip-wrap">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  (click)="setStatus('UNREAD')"
+                  [disabled]="busy()"
+                  aria-label="Mark as unread"
+                >
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
+                    />
+                  </svg>
+                </button>
+                <span class="tip-bubble">Mark as unread</span>
+              </span>
+              <span class="tip-wrap">
+                <button
+                  type="button"
+                  class="icon-btn"
+                  (click)="setStatus('DISMISSED')"
+                  [disabled]="busy()"
+                  aria-label="Dismiss"
+                >
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z"
+                    />
+                  </svg>
+                </button>
+                <span class="tip-bubble">Dismiss — hide it without deleting</span>
+              </span>
               <span class="bulk-sep"></span>
-              <button
-                type="button"
-                class="icon-btn"
-                (click)="askDelete()"
-                [disabled]="busy()"
-                title="Delete from history"
-              >
-                <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
-                  />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="icon-btn clear-btn"
-                (click)="clearSelection()"
-                title="Clear selection"
-              >
-                ✕
-              </button>
+              <span class="tip-wrap">
+                <button
+                  type="button"
+                  class="icon-btn danger-icon"
+                  (click)="askDelete()"
+                  [disabled]="busy()"
+                  aria-label="Delete from history"
+                >
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                    />
+                  </svg>
+                </button>
+                <span class="tip-bubble">Delete from history — permanent</span>
+              </span>
+              <span class="tip-wrap">
+                <button
+                  type="button"
+                  class="icon-btn clear-btn"
+                  (click)="clearSelection()"
+                  aria-label="Clear selection"
+                >
+                  ✕
+                </button>
+                <span class="tip-bubble">Clear selection</span>
+              </span>
             </span>
             <span class="bulk-count">{{ selectionCount() }} selected</span>
           </div>
@@ -399,22 +414,66 @@ const PAGE_SIZE = 200;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 2rem;
-        height: 2rem;
+        width: 30px;
+        height: 30px;
         padding: 0;
         border: 1px solid var(--border);
         border-radius: 8px;
-        background: var(--surface);
+        background: transparent;
+        /* Required: the glyphs are filled with currentColor, and the inherited
+           colour here is white, so without this they paint invisibly. */
+        color: var(--muted);
         cursor: pointer;
+      }
+      .icon-btn:hover:not(:disabled) {
+        color: var(--brand, var(--accent));
+        border-color: var(--brand, var(--accent));
+      }
+      .icon-btn.danger-icon:hover:not(:disabled) {
+        color: #b42318;
+        border-color: #b42318;
       }
       .icon-btn:disabled {
         opacity: 0.45;
         cursor: not-allowed;
       }
-      .ico {
-        width: 1.1rem;
-        height: 1.1rem;
+      .icon-btn .ico {
+        width: 18px;
+        height: 18px;
         fill: currentColor;
+      }
+      /* Custom tooltip rather than a native title attribute: no ~1s delay, and it
+         is styled to match the app instead of the OS. */
+      .tip-wrap {
+        display: inline-flex;
+        position: relative;
+      }
+      .tip-bubble {
+        position: absolute;
+        left: 0;
+        top: calc(100% + 6px);
+        z-index: 90;
+        width: max-content;
+        max-width: 240px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
+        font-size: 0.75rem;
+        line-height: 1.3;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-2px);
+        transition: opacity 0.08s ease, transform 0.08s ease;
+        pointer-events: none;
+      }
+      .tip-wrap:hover .tip-bubble,
+      .tip-wrap:focus-within .tip-bubble {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
       }
       .clear-btn {
         font-size: 0.9rem;
