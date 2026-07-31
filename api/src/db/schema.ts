@@ -33,18 +33,34 @@ export const userStatus = pgEnum('user_status', ['ACTIVE', 'SUSPENDED']);
 //  - SERIALIZED: one inventory_items row per physical unit (serial-tracked).
 //  - QUANTITY:   one inventory_stock counter row per store (quantity-tracked).
 export const trackingType = pgEnum('tracking_type', ['SERIALIZED', 'QUANTITY']);
+// PENDING = shipped by the ERP but not yet physically scanned in at the store. It
+// is NOT stock: no location, excluded from on-hand, alerts, moves and sales. A
+// cycle count scan is what receives it (PENDING -> ON_HAND, RECEIVE ledger row).
 export const itemStatus = pgEnum('item_status', [
+  'PENDING',
   'ON_HAND',
   'SOLD',
   'RETURNED_TO_WAREHOUSE',
   'ADJUSTED_OUT',
 ]);
+// RECEIVE  = a PENDING unit physically arrived and was scanned into a location.
+// REINSTATE = a SOLD unit turned up in a count; a compensating entry, because the
+//             original SALE row is never modified (the ledger is append-only).
 export const transactionType = pgEnum('transaction_type', [
   'RECEIPT',
+  'RECEIVE',
   'SALE',
   'ADJUSTMENT',
   'RETURN',
   'MOVE',
+  'REINSTATE',
+]);
+// Outcome of asking the PPS import agent about an unknown serial.
+export const importCheckStatus = pgEnum('import_check_status', [
+  'REQUESTED',
+  'MATCHED',
+  'NOT_FOUND',
+  'DISCREPANCY',
 ]);
 // Areas within a store. BACKROOM (not customer-facing) and ONFLOOR
 // (customer-purchasable) are REQUIRED kinds: one of each is auto-created with the
@@ -92,6 +108,15 @@ export const cycleCountResolution = pgEnum('cycle_count_resolution', [
   'COUNTED_BY_UPC',
   'MARKED_SOLD',
   'NEW_ITEM',
+  // A PENDING unit scanned in — the count doubled as its receiving confirmation.
+  'RECEIVED',
+  // Shipped but never scanned. Deliberately NOT inferred sold: it was never here.
+  'PENDING_NOT_RECEIVED',
+  // A SOLD unit found on the shelf and put back, on the counter's say-so.
+  'REINSTATED',
+  // Found in the counted location while the system had it elsewhere in the store;
+  // moved to where it actually is rather than swept as missing.
+  'MOVED_IN',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -443,17 +468,30 @@ export const inventoryItems = pgTable(
     storeId: integer('store_id')
       .notNull()
       .references(() => stores.id),
-    // Catalog link — always set (the product carries sku/name/price/upc).
-    productId: integer('product_id')
-      .notNull()
-      .references(() => products.id),
-    // The area of the store this unit lives in (defaults to BACKROOM on intake).
-    locationId: integer('location_id')
-      .notNull()
-      .references(() => storeLocations.id),
+    // Catalog link. Null ONLY for an unidentified scan awaiting review — an unknown
+    // serial found in a count, where nobody yet knows what the product is. The
+    // needs_review CHECK below is what keeps null from meaning anything else.
+    productId: integer('product_id').references(() => products.id),
+    // The area of the store this unit lives in. Null exactly when PENDING: the unit
+    // is somewhere in transit, so claiming it sits in a location would be a lie.
+    locationId: integer('location_id').references(() => storeLocations.id),
     // The ERP's serial / GS1 id. Unique per company.
     serial: text('serial').notNull(),
     status: itemStatus('status').notNull().default('ON_HAND'),
+    // Set on a unit that needs a human (or the import agent) to identify it.
+    // Distinct from products.needs_review, which flags an incomplete CATALOG row;
+    // this flags an incomplete UNIT.
+    needsReview: boolean('needs_review').notNull().default(false),
+    // Lifecycle of a "check PPS for this serial" request. Null = never asked.
+    importCheckStatus: importCheckStatus('import_check_status'),
+    importCheckRequestedAt: timestamp('import_check_requested_at', {
+      withTimezone: true,
+    }),
+    importCheckResolvedAt: timestamp('import_check_resolved_at', {
+      withTimezone: true,
+    }),
+    // Whatever the agent reported — the match payload, or the reason it could not.
+    importCheckResult: jsonb('import_check_result'),
     // Expiration date (calendar date, nullable). Per physical unit.
     expirationDate: date('expiration_date'),
     receivedAt: timestamp('received_at', { withTimezone: true }),
@@ -477,6 +515,23 @@ export const inventoryItems = pgTable(
     ),
     index('inventory_items_company_product_idx').on(t.companyId, t.productId),
     index('inventory_items_company_location_idx').on(t.companyId, t.locationId),
+    // These two CHECKs are the whole reason the columns above can be nullable
+    // without the nulls becoming ambiguous. Enforced in the database rather than
+    // in a service, because every write path — sync, cycle count, portal, the
+    // import agent — has to obey them and only one of those can be forgotten.
+    // status is cast to text deliberately. Postgres refuses to *use* an enum value
+    // in the same transaction that adds it (check_safe_enum_use), and 'PENDING' is
+    // added by the very migration that creates this constraint. Comparing as text
+    // sidesteps that without changing what the constraint means.
+    check(
+      'inventory_items_pending_has_no_location',
+      sql`(status::text = 'PENDING' AND location_id IS NULL)
+          OR (status::text <> 'PENDING' AND location_id IS NOT NULL)`,
+    ),
+    check(
+      'inventory_items_productless_needs_review',
+      sql`product_id IS NOT NULL OR needs_review`,
+    ),
   ],
 );
 
@@ -538,9 +593,11 @@ export const inventoryTransactions = pgTable(
     storeId: integer('store_id')
       .notNull()
       .references(() => stores.id),
-    productId: integer('product_id')
-      .notNull()
-      .references(() => products.id),
+    // Nullable for the same reason inventory_items.product_id is: a unit created
+    // from an unknown serial has no catalog row yet, and the ledger still has to
+    // record its arrival. Leaving this NOT NULL would force a gap in an append-only
+    // ledger, which is strictly worse than a null here. It is populated on adoption.
+    productId: integer('product_id').references(() => products.id),
     // Serialized units only; null for quantity movements.
     itemId: uuid('item_id').references(() => inventoryItems.id),
     type: transactionType('type').notNull(),
@@ -712,6 +769,11 @@ export const cycleCounts = pgTable(
       .notNull()
       .references(() => stores.id),
     status: cycleCountStatus('status').notNull().default('OPEN'),
+    // THE SCOPE OF THE COUNT, and therefore the scope of the missing-stock sweep.
+    // Null = the whole store (the original behaviour, still what an older scanner
+    // build gets by omitting it). Set = only this location is counted, and only
+    // items here can be swept. Optionally narrowed further by cycle_count_products.
+    locationId: integer('location_id').references(() => storeLocations.id),
     openedByUserId: integer('opened_by_user_id')
       .notNull()
       .references(() => users.id),
@@ -730,6 +792,36 @@ export const cycleCounts = pgTable(
   ],
 );
 
+/**
+ * Optional product narrowing for a count: "count only these products, in this
+ * location". Empty = every product in scope.
+ *
+ * A junction rather than an array column so the products are joinable (the review
+ * screen lists them by name) and referentially safe against product deletion.
+ */
+export const cycleCountProducts = pgTable(
+  'cycle_count_products',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    cycleCountId: integer('cycle_count_id')
+      .notNull()
+      .references(() => cycleCounts.id, { onDelete: 'cascade' }),
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
+  },
+  (t) => [
+    uniqueIndex('cycle_count_products_count_product_uniq').on(
+      t.cycleCountId,
+      t.productId,
+    ),
+    index('cycle_count_products_company_count_idx').on(t.companyId, t.cycleCountId),
+  ],
+);
+
 // One line per resolution within a cycle count (append-only in practice).
 // product_id is always set; item_id/serial only for serialized resolutions;
 // quantity only for COUNTED_BY_UPC (quantity) lines.
@@ -743,9 +835,9 @@ export const cycleCountLines = pgTable(
     cycleCountId: integer('cycle_count_id')
       .notNull()
       .references(() => cycleCounts.id),
-    productId: integer('product_id')
-      .notNull()
-      .references(() => products.id),
+    // Nullable like the ledger's: a line for a unit created from an unknown serial
+    // has no catalog row to name yet.
+    productId: integer('product_id').references(() => products.id),
     itemId: uuid('item_id').references(() => inventoryItems.id),
     serial: text('serial'),
     quantity: integer('quantity'),
@@ -883,6 +975,7 @@ export type Store = typeof stores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Invitation = typeof invitations.$inferSelect;
 export type PasswordReset = typeof passwordResets.$inferSelect;
+export type CycleCountProduct = typeof cycleCountProducts.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InventoryStock = typeof inventoryStock.$inferSelect;
@@ -926,4 +1019,5 @@ export const TENANT_TABLES = [
   'user_stores',
   'invitation_stores',
   'password_resets',
+  'cycle_count_products',
 ] as const;

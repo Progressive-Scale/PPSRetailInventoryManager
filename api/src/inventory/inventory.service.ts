@@ -149,8 +149,11 @@ export class InventoryService {
           })
           .from(inventoryItems)
           .where(and(...serialConds));
+        // A product-less unit (unknown serial awaiting review) cannot contribute a
+        // product-level search hit; it is found through the review queue instead.
         for (const r of serialRows)
-          if (!matched.has(r.productId)) matched.set(r.productId, r.serial);
+          if (r.productId != null && !matched.has(r.productId))
+            matched.set(r.productId, r.serial);
 
         const ors: SQL[] = [
           ilike(storeInventory.name, like),
@@ -338,6 +341,14 @@ export class InventoryService {
           'RETURN',
           dto.note,
         );
+        // An unidentified unit cannot be returned: the ERP receives against a SKU,
+        // and this unit has no catalog row yet. Identify it first (review queue or
+        // an import check), then return it.
+        if (item.productId == null) {
+          throw new BadRequestException(
+            'This unit has no product yet — resolve it in Needs Review before returning it to the warehouse.',
+          );
+        }
         const product = await this.loadProduct(tx, ctx, item.productId);
         const store = await this.storeOf(tx, item.storeId);
         await tx.insert(outboxReturns).values({

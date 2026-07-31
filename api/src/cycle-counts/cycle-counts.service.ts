@@ -30,7 +30,8 @@ import {
 } from './dto/cycle-counts.dto';
 
 interface PendingLine {
-  productId: number;
+  // Null for a unit created from an unknown serial: there is no catalog row yet.
+  productId: number | null;
   itemId: string | null;
   serial: string | null;
   quantity: number | null;
@@ -483,7 +484,13 @@ export class CycleCountsService {
     storeId: number,
     locationId: number,
     ni: NewItemDto,
-    scan: { bySerial: Map<string, { id: string; productId: number; serial: string }>; accounted: Set<string> },
+    scan: {
+      bySerial: Map<
+        string,
+        { id: string; productId: number | null; serial: string }
+      >;
+      accounted: Set<string>;
+    },
   ): Promise<PendingLine | null> {
     if (!ni.isUpc) {
       // Serialized. If the serial already exists, treat as a scan.
@@ -636,6 +643,10 @@ export class CycleCountsService {
       COUNTED_BY_UPC: [],
       MARKED_SOLD: [],
       NEW_ITEM: [],
+      RECEIVED: [],
+      PENDING_NOT_RECEIVED: [],
+      REINSTATED: [],
+      MOVED_IN: [],
     };
     for (const r of rows) byResolution[r.resolution].push(r);
 
