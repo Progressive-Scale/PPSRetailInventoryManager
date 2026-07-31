@@ -117,6 +117,12 @@ not shelved. A unit that is never scanned in stays `PENDING` indefinitely and is
 reported as *shipped, not yet received* — it is never inferred sold, because it was
 never in the store to sell.
 
+A `PENDING` unit that is clearly never coming can be written off by hand from
+**Inventory → Pending arrival** (`POST /inventory/items/:id/lost`, company admin),
+which moves it to status `LOST`. That is a deliberate human decision, not something a
+count or a timer does: the ledger row carries `quantity_delta = 0`, because the unit
+never became stock and nothing leaves on-hand. Nothing is sent back to the ERP.
+
 ### The unit/stock asymmetry (deliberate)
 
 | Handoff kind | On arrival at the cloud | Becomes stock when |

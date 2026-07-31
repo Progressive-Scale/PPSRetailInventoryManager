@@ -404,6 +404,56 @@ export class InventoryService {
     });
   }
 
+  // ---- lost ----------------------------------------------------------------
+
+  /**
+   * Write a unit off as lost.
+   *
+   * The case this exists for is a handoff that never physically arrived: it sat in
+   * Pending arrival long enough that somebody decided it is not coming. That unit was
+   * never stock, so the ledger delta is 0 — writing -1 would claim a unit left the
+   * shelf, and no unit ever reached one. A unit lost off a shelf DID leave stock, so
+   * it gets -1 and keeps its last known location as the only clue about where it went.
+   *
+   * Not reachable from a cycle count on purpose. A count only ever proposes, and
+   * declaring something gone for good is a decision someone should make deliberately
+   * while looking at how long it has been missing.
+   */
+  async markLost(ctx: DataContext, itemId: string, note?: string) {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const current = await this.loadUnit(tx, ctx, itemId);
+      if (current.status === 'LOST') return current; // idempotent
+      if (current.status !== 'PENDING' && current.status !== 'ON_HAND') {
+        throw new ConflictException(
+          `Only pending or on-hand units can be marked lost; this one is ${current.status}.`,
+        );
+      }
+
+      const wasStock = current.status === 'ON_HAND';
+      const [item] = await tx
+        .update(inventoryItems)
+        .set({ status: 'LOST', updatedAt: new Date() })
+        .where(eq(inventoryItems.id, itemId))
+        .returning();
+
+      await tx.insert(inventoryTransactions).values({
+        companyId: item.companyId,
+        storeId: item.storeId,
+        productId: item.productId,
+        itemId: item.id,
+        type: 'ADJUSTMENT',
+        quantityDelta: wasStock ? -1 : 0,
+        locationFromId: current.locationId,
+        note:
+          note?.trim() ||
+          (wasStock ? 'marked lost' : 'marked lost — never arrived'),
+        performedByUserId: ctx.userId,
+        source: 'PORTAL',
+      });
+      return item;
+    });
+  }
+
   // ---- move (between locations) ------------------------------------------
 
   /**

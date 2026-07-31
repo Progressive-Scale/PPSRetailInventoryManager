@@ -25,6 +25,7 @@ const ITEM_STATUSES = [
   'SOLD',
   'RETURNED_TO_WAREHOUSE',
   'ADJUSTED_OUT',
+  'LOST',
 ] as const;
 
 // Product-level inventory listing (reads the store_inventory view).
@@ -298,8 +299,13 @@ export class ListItemsQuery extends PaginationQuery {
   @IsEnum(ITEM_STATUSES as unknown as string[])
   status?: (typeof ITEM_STATUSES)[number];
 
-  /** 'true' -> only units awaiting identification (the Needs Review queue). */
+  /** 'true' -> only units awaiting identification (the Review queue). */
   @IsOptional()
   @IsBooleanString()
   needsReview?: string;
+}
+
+/** Writing a unit off as lost. The note is why, and worth encouraging. */
+export class MarkLostDto {
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }

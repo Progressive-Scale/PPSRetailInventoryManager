@@ -36,12 +36,17 @@ export const trackingType = pgEnum('tracking_type', ['SERIALIZED', 'QUANTITY']);
 // PENDING = shipped by the ERP but not yet physically scanned in at the store. It
 // is NOT stock: no location, excluded from on-hand, alerts, moves and sales. A
 // cycle count scan is what receives it (PENDING -> ON_HAND, RECEIVE ledger row).
+// LOST = written off as never going to turn up. Its own status rather than
+// ADJUSTED_OUT because the usual case is a handoff that never physically arrived:
+// it was never stock, so there is nothing to adjust out of, and "lost" is a
+// warehouse question while "adjusted out" reads like a stock correction.
 export const itemStatus = pgEnum('item_status', [
   'PENDING',
   'ON_HAND',
   'SOLD',
   'RETURNED_TO_WAREHOUSE',
   'ADJUSTED_OUT',
+  'LOST',
 ]);
 // RECEIVE  = a PENDING unit physically arrived and was scanned into a location.
 // REINSTATE = a SOLD unit turned up in a count; a compensating entry, because the
@@ -529,10 +534,14 @@ export const inventoryItems = pgTable(
     // in the same transaction that adds it (check_safe_enum_use), and 'PENDING' is
     // added by the very migration that creates this constraint. Comparing as text
     // sidesteps that without changing what the constraint means.
+    // LOST is exempt on purpose, and in both directions. A handoff that never
+    // arrived has no location to keep, while a unit that goes missing off a shelf
+    // should keep its last known one — that is the only clue about where it went.
     check(
       'inventory_items_pending_has_no_location',
       sql`(status::text = 'PENDING' AND location_id IS NULL)
-          OR (status::text <> 'PENDING' AND location_id IS NOT NULL)`,
+          OR status::text = 'LOST'
+          OR (status::text NOT IN ('PENDING', 'LOST') AND location_id IS NOT NULL)`,
     ),
     check(
       'inventory_items_productless_needs_review',

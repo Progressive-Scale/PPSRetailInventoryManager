@@ -26,6 +26,7 @@ import {
   ListItemsQuery,
   ListStockQuery,
   LookupQuery,
+  MarkLostDto,
   MoveInventoryDto,
   SetQuantityDto,
   UpdateItemDto,
@@ -75,6 +76,21 @@ export class InventoryController {
   @Roles(['COMPANY_ADMIN'])
   requestImportCheck(@Ctx() ctx: DataContext, @Param('itemId') itemId: string) {
     return this.importChecks.request(ctx.companyId, itemId);
+  }
+
+  /**
+   * Write a unit off as lost — a pending arrival that is never coming, or a unit
+   * missing off a shelf. Company admin only: it is a write-off, not a correction.
+   */
+  @Post('items/:itemId/lost')
+  @HttpCode(HttpStatus.OK)
+  @Roles(['COMPANY_ADMIN'])
+  markLost(
+    @Ctx() ctx: DataContext,
+    @Param('itemId') itemId: string,
+    @Body() dto: MarkLostDto,
+  ) {
+    return this.svc.markLost(ctx, itemId, dto?.note);
   }
 
   // Audit trail (expiration changes) for a serialized item — shown in history.
