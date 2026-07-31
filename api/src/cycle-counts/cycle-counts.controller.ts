@@ -45,6 +45,20 @@ export class CycleCountsController {
   }
 
   /**
+   * What this count makes of one serial. The scanner calls it for a serial its own
+   * snapshot cannot explain, so it can offer the right choice — put a sold unit
+   * back, note one found away from where it was recorded, or record an unknown.
+   */
+  @Get(':id/resolve')
+  resolve(
+    @Ctx() ctx: DataContext,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('serial') serial?: string,
+  ) {
+    return this.svc.resolveSerial(ctx, id, serial ?? '');
+  }
+
+  /**
    * Hand the count in. Computes what it WOULD change and stores that; inventory is
    * untouched until an admin approves. Open to the store user doing the counting.
    */

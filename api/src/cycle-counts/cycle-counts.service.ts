@@ -189,6 +189,10 @@ export class CycleCountsService {
           locationId: inventoryItems.locationId,
           sku: products.sku,
           name: products.name,
+          // So a scanner can tell a serialized product's barcode from a quantity
+          // one and say "scan each serial" instead of asking for a count that the
+          // submit endpoint would reject.
+          upc: products.upc,
         })
         .from(inventoryItems)
         .leftJoin(products, eq(products.id, inventoryItems.productId))
@@ -956,6 +960,87 @@ export class CycleCountsService {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const cc = await this.loadCount(tx, ctx, id);
       return this.buildResult(tx, ctx, cc);
+    });
+  }
+
+  /**
+   * How this count would classify one serial, right now.
+   *
+   * The scanner can answer IN_SCOPE and PENDING from its own snapshot, but not the
+   * other two: a unit held at another location is not in the snapshot, and a SOLD
+   * unit is deliberately absent from every snapshot (the store's whole sales history
+   * would be a pointless download). Both need a decision from the person holding the
+   * item — "this was sold, put it back?" — so the scanner asks the server what it is
+   * looking at.
+   *
+   * Deliberately reuses inScope() and the same status order as submit(), so an
+   * answer here cannot contradict what submitting will actually do.
+   */
+  async resolveSerial(ctx: DataContext, id: number, serialRaw: string) {
+    const serial = serialRaw.trim();
+    if (!serial) throw new BadRequestException('A serial is required.');
+
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const cc = await this.loadCount(tx, ctx, id);
+      const scopeProducts = await this.scopeProductIds(tx, ctx, cc.id);
+
+      const [unit] = await tx
+        .select({
+          id: inventoryItems.id,
+          serial: inventoryItems.serial,
+          status: inventoryItems.status,
+          productId: inventoryItems.productId,
+          locationId: inventoryItems.locationId,
+          locationName: storeLocations.name,
+          sku: products.sku,
+          name: products.name,
+        })
+        .from(inventoryItems)
+        .leftJoin(products, eq(products.id, inventoryItems.productId))
+        .leftJoin(storeLocations, eq(storeLocations.id, inventoryItems.locationId))
+        .where(
+          and(
+            eq(inventoryItems.companyId, ctx.companyId),
+            eq(inventoryItems.storeId, cc.storeId),
+            eq(inventoryItems.serial, serial),
+          ),
+        )
+        .limit(1);
+
+      const base = { serial, itemId: unit?.id ?? null };
+      if (!unit) return { ...base, classification: 'UNKNOWN' as const };
+
+      const shared = {
+        ...base,
+        productId: unit.productId,
+        sku: unit.sku,
+        name: unit.name,
+        locationId: unit.locationId,
+        locationName: unit.locationName,
+      };
+
+      if (unit.status === 'PENDING') {
+        return { ...shared, classification: 'PENDING' as const };
+      }
+      if (unit.status === 'SOLD') {
+        return { ...shared, classification: 'SOLD' as const };
+      }
+      if (unit.status !== 'ON_HAND') {
+        // RETURNED etc. — a real unit, but not something this count can account for.
+        return { ...shared, classification: 'OTHER' as const, status: unit.status };
+      }
+
+      const inScopeHere =
+        (cc.locationId == null || unit.locationId === cc.locationId) &&
+        (scopeProducts.length === 0 ||
+          (unit.productId != null && scopeProducts.includes(unit.productId)));
+
+      return {
+        ...shared,
+        classification: inScopeHere
+          ? ('IN_SCOPE' as const)
+          : ('ELSEWHERE' as const),
+      };
     });
   }
 

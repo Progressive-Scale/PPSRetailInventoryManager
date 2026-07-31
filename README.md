@@ -247,12 +247,28 @@ source of truth for the DB shape.
 - **Store/company (JWT):** `GET/POST/PATCH/DELETE /inventory` (`?needsReview=true`
   review queue), `POST /inventory/:id/sell`, `/return`, `/adjust`;
   `GET /transactions`; company-admin CRUD `/stores`, `/users`, `/invitations`.
-- **Cycle counts (JWT):** `POST /cycle-counts` (open + ON_HAND snapshot),
-  `POST /cycle-counts/:id/close` (idempotent one-transaction resolution: scanned
-  serials, count-by-UPC keeps newest N, new items, and everything unaccounted →
-  SOLD via a `CYCLE_COUNT` ledger row), `POST /cycle-counts/:id/cancel`,
-  `GET /cycle-counts` (+`/:id` with lines). Cycle-count sales are cloud-side
-  ledger events — nothing flows to the ERP outbox, so `docs/SYNC.md` is unchanged.
+- **Cycle counts (JWT):** two-phase, because a count infers sales and that is
+  destructive.
+  - `POST /cycle-counts` — open, scoped by `locationId` (+ optional `productIds`).
+    **The scope of the count is the scope of the sold sweep:** units elsewhere are
+    untouched and cannot be inferred sold by a count that never went near them.
+    Returns `{scope, snapshot:{units, pending, stock}}`.
+  - `GET /cycle-counts/:id/resolve?serial=` — how the count classifies one serial
+    (`IN_SCOPE | ELSEWHERE | PENDING | SOLD | OTHER | UNKNOWN`). For the scanner,
+    which cannot know that a serial belongs to a unit held elsewhere or one already
+    sold. Reuses the same scope logic as submit, so the two cannot disagree.
+  - `POST /cycle-counts/:id/submit` — idempotent; computes proposed lines and sets
+    `AWAITING_REVIEW`. **Changes nothing.** Handles scanned serials, units found
+    away from their recorded location, arrivals being received, sold units the
+    counter chose to put back, quantity counts, unknown serials, and everything
+    unaccounted-for. `/close` remains as a deprecated alias with this new meaning.
+  - `POST /cycle-counts/:id/approve` / `reject` — **`COMPANY_ADMIN` only.** Approve
+    applies every unapplied line in one transaction (this is the step that sells
+    unscanned units and zeroes uncounted shelves); reject reopens for a recount and
+    discards the proposals. The role that counts is not the role that confirms.
+  - `POST /cycle-counts/:id/cancel`, `GET /cycle-counts` (+`/:id` with lines and a
+    `destructive` summary). Cycle-count sales are cloud-side ledger events —
+    nothing flows to the ERP outbox.
 - **Sync (X-Api-Key):** `POST /sync/handoffs`, `GET /sync/returns`,
   `POST /sync/returns/ack` — see [`docs/SYNC.md`](docs/SYNC.md).
 - **Platform admin (admin host, PLATFORM_ADMIN):** `/admin/companies` CRUD,
@@ -358,8 +374,13 @@ raises alerts for on-floor units nearing/past expiration so staff rotate stock.
 
 > **Future feature:** expiration is **serialized-only**. Quantity products track
 > per-location counts but have no expiration (lot/batch expiration for quantity
-> products is a planned enhancement). The scanner's cycle-count screen is not yet
-> location-aware — counted quantities default to the Backroom (a follow-up).
+> products is a planned enhancement).
+
+The scanner's cycle-count flow **is** location-aware: the counter picks the
+location before the count starts, and that choice bounds the sweep. Omitting a
+location still opens a whole-store count, and quantity counts without an explicit
+location fall back to the count's own location (the Backroom for a whole-store
+count).
 
 ## Invitation emails
 
