@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.2
+# Sync Agent Integration Contract — v3.3
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,11 +10,93 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.2`
+- **Contract version:** `v3.3`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
+
+## What's new in v3.3
+
+Two endpoints for a new job: **identifying serials nobody recognises.**
+
+When a store scans a serial the catalog has never seen, the cloud creates a unit with
+**no product at all** and flags it for review. If the counter chose "check for
+imported inventory", that unit enters `import_check_status = REQUESTED` and appears
+in the queue below for PPS to identify.
+
+*(The task that specified this called it v2.2; this document was already at v3.2, so
+it lands as v3.3. Same contract.)*
+
+### 4. Pull import checks — `GET /api/sync/import-checks`
+
+Query: `limit` (default 100, max 500), `offset`.
+
+```json
+{
+  "data": [
+    { "itemId": "957d0e3c-…", "serial": "SN-77219", "storeId": 1,
+      "storeName": "Downtown", "scannedAt": "2026-07-31T20:27:09.000Z",
+      "requestedAt": "2026-07-31T20:27:09.000Z" }
+  ],
+  "total": 3, "limit": 100, "offset": 0
+}
+```
+
+**Oldest first**, by `requestedAt` — drain the backlog in the order things were
+scanned so a unit cannot be starved by a trickle of newer ones.
+
+`storeId` is the cloud's store id, and `storeName` is included so a human reading agent
+logs can tell where a serial came from. There is deliberately **no** `retailStoreId`:
+the cloud does not hold PPS's own store identifiers, so the agent maps
+`storeId -> PPS store` on its side.
+
+### 5. Return answers — `POST /api/sync/import-checks/results`
+
+```json
+{ "results": [
+  { "itemId": "957d0e3c-…", "outcome": "MATCHED",
+    "match": { "sku": "WIDGET-9", "name": "Widget", "description": "…",
+               "price": 12.50, "expirationDate": "2028-03-01",
+               "ppsProductRef": "PPSREF-9" } },
+  { "itemId": "aa3b338f-…", "outcome": "NOT_FOUND" },
+  { "itemId": "b1602114-…", "outcome": "DISCREPANCY",
+    "discrepancy": { "reason": "serial belongs to a different store",
+                     "ppsState": { "store": "Uptown", "qty": 3 } } }
+] }
+```
+
+Response — **one ack per item**, in request order:
+
+```json
+{ "results": [
+  { "itemId": "957d0e3c-…", "status": "resolved", "outcome": "MATCHED" },
+  { "itemId": "aa3b338f-…", "status": "resolved", "outcome": "NOT_FOUND" },
+  { "itemId": "zzz",        "status": "error", "reason": "unknown itemId" }
+] }
+```
+
+| Outcome | What the cloud does |
+| --- | --- |
+| `MATCHED` | Finds the product by (company, `sku`) and links it, or creates it — **`needs_review = false`, because the ERP is authoritative for catalog data**. Sets the unit's product, price and expiration, clears its needs-review flag, and writes a ledger row noted `adopted via PPS import match (<sku>)`. The unit leaves the review queue on its own. |
+| `NOT_FOUND` | Records the answer. The unit **stays** needs-review — nobody has identified it, so it must not leave the queue just because the ERP shrugged. |
+| `DISCREPANCY` | Stores `reason` and `ppsState` verbatim and surfaces them to an admin. The unit **stays** needs-review. |
+
+**MATCHED is the only outcome that resolves a unit.** The other two are answers, not
+fixes.
+
+**Idempotent.** A redelivered result for a unit that has already been answered returns
+`already_resolved` and changes nothing, so the agent can retry a whole batch safely.
+
+**Per-item isolation.** Each item is applied in its own transaction, exactly like
+handoff lines: one bad result never rolls back the rest of the batch. A `MATCHED`
+naming a quantity-tracked SKU, a missing `match.sku`, a `DISCREPANCY` with no
+`reason`, or an unknown `itemId` all come back as that item's `error` while its
+siblings succeed.
+
+**Re-asking.** An admin can re-request a check from `NOT_FOUND` or `DISCREPANCY` — the
+ERP may have caught up since it last answered — which puts the unit back into
+`REQUESTED` and so back into this queue.
 
 ## What's new in v3.2
 

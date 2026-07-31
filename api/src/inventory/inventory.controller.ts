@@ -17,6 +17,7 @@ import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
+import { ImportChecksService } from '../sync/import-checks.service';
 import {
   BulkExpirationDto,
   BulkSellDto,
@@ -34,7 +35,10 @@ import {
 @Roles(['COMPANY_ADMIN', 'STORE_USER'])
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly svc: InventoryService) {}
+  constructor(
+    private readonly svc: InventoryService,
+    private readonly importChecks: ImportChecksService,
+  ) {}
 
   // Product-level on-hand rows (serialized unit counts + quantity stock).
   @Get()
@@ -59,6 +63,18 @@ export class InventoryController {
   @Get('lookup')
   lookup(@Ctx() ctx: DataContext, @Query() query: LookupQuery) {
     return this.svc.lookup(ctx, query);
+  }
+
+  /**
+   * Ask PPS to identify an unidentified unit — the "check for imported inventory"
+   * button. Also used to RE-ask after NOT_FOUND or DISCREPANCY, because the ERP may
+   * have caught up since it last answered.
+   */
+  @Post('items/:itemId/import-check')
+  @HttpCode(HttpStatus.OK)
+  @Roles(['COMPANY_ADMIN'])
+  requestImportCheck(@Ctx() ctx: DataContext, @Param('itemId') itemId: string) {
+    return this.importChecks.request(ctx.companyId, itemId);
   }
 
   // Audit trail (expiration changes) for a serialized item — shown in history.
