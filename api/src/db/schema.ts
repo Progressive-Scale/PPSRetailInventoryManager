@@ -56,7 +56,12 @@ export const locationKind = pgEnum('location_kind', [
   'ONFLOOR',
   'CUSTOM',
 ]);
-export const notificationType = pgEnum('notification_type', ['EXPIRATION_WARNING']);
+// EXPIRATION_WARNING is per-store (an item on a shop floor); INVITE_ACCEPTED is
+// company-wide and addressed at admins, so its notification has no store.
+export const notificationType = pgEnum('notification_type', [
+  'EXPIRATION_WARNING',
+  'INVITE_ACCEPTED',
+]);
 export const invitationEmailStatus = pgEnum('invitation_email_status', [
   'PENDING',
   'SENT',
@@ -606,9 +611,8 @@ export const notifications = pgTable(
     companyId: integer('company_id')
       .notNull()
       .references(() => companies.id),
-    storeId: integer('store_id')
-      .notNull()
-      .references(() => stores.id),
+    // Null for company-wide notifications (e.g. INVITE_ACCEPTED).
+    storeId: integer('store_id').references(() => stores.id),
     type: notificationType('type').notNull(),
     payload: jsonb('payload').notNull(),
     status: notificationStatus('status').notNull().default('UNREAD'),

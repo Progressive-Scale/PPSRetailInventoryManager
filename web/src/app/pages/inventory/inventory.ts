@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { catchError, EMPTY, firstValueFrom, Subject, switchMap, timer } from 'rxjs';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
@@ -829,6 +830,10 @@ export class InventoryComponent implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly route = inject(ActivatedRoute);
+
+  /** Unit id from a notification link, selected once its row loads. */
+  private pendingItemId: string | null = null;
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
 
@@ -949,6 +954,7 @@ export class InventoryComponent implements OnInit {
 
   ngOnInit(): void {
     this.startReloadPipeline();
+    this.applyDeepLink();
     if (this.isCompanyAdmin) {
       this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
     } else {
@@ -1015,6 +1021,7 @@ export class InventoryComponent implements OnInit {
         this.total.set(res.total);
         this.loading.set(false);
         this.loaded.set(true);
+        this.openPendingItem();
       });
   }
 
@@ -1026,6 +1033,34 @@ export class InventoryComponent implements OnInit {
   refresh(): void {
     this.clearSelection();
     this.reload();
+  }
+
+  /**
+   * Opened from a notification: ?itemId=&serial= searches for that unit and opens
+   * its detail once the row arrives. The serial drives the search because the stock
+   * query has no by-id filter; the id then picks the exact row.
+   */
+  private applyDeepLink(): void {
+    const params = this.route.snapshot.queryParamMap;
+    const itemId = params.get('itemId');
+    const serial = params.get('serial');
+    if (!itemId) return;
+    this.pendingItemId = itemId;
+    if (serial) this.searchTerm = serial;
+    // Sold units must be reachable too, so do not restrict by status.
+    this.statusFilter = 'ALL';
+    this.offset.set(0);
+  }
+
+  /** Select the deep-linked unit once it appears in the loaded rows. */
+  private openPendingItem(): void {
+    const wanted = this.pendingItemId;
+    if (!wanted) return;
+    const row = this.rows().find((r) => r.itemId === wanted);
+    if (row) {
+      this.pendingItemId = null;
+      this.selectedRow.set(row);
+    }
   }
 
   /**

@@ -12,6 +12,7 @@ import {
   Company,
   invitationStores,
   invitations,
+  notifications,
   stores,
   User,
   users,
@@ -132,6 +133,21 @@ export class AuthService {
         .update(invitations)
         .set({ acceptedAt: new Date() })
         .where(eq(invitations.id, inv.id));
+
+      // Tell the company's admins somebody joined. Company-wide (no store), so it
+      // reaches admins regardless of which store they are working in.
+      await tx.insert(notifications).values({
+        companyId: company.id,
+        storeId: null,
+        type: 'INVITE_ACCEPTED',
+        payload: {
+          userId: created!.id,
+          email: created!.email,
+          role: created!.role,
+          storeIds,
+        },
+        status: 'UNREAD',
+      });
 
       return this.buildResponse(created!, tx);
     });

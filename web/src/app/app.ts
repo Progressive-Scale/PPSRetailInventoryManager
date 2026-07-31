@@ -4,7 +4,7 @@ import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/rou
 import { AuthService } from './core/auth.service';
 import { BrandingStore } from './core/branding.store';
 import { NotificationStore } from './core/notification.store';
-import { Role } from './core/models';
+import { AppNotification, Role } from './core/models';
 import { isAdminHost } from './core/tenant';
 
 interface NavLink {
@@ -82,19 +82,30 @@ interface NavLink {
                         <ul class="notif-list">
                           @for (n of notifications.items(); track n.id) {
                             <li [class.read]="n.status !== 'UNREAD'">
-                              <div class="notif-main">
-                                <span class="notif-title">
-                                  {{ n.payload.productName }}
-                                  <span class="notif-serial">{{ n.payload.serial }}</span>
-                                </span>
-                                <span class="notif-sub" [class.exp]="n.payload.expired">
-                                  @if (n.payload.expired) {
-                                    Expired {{ n.payload.expirationDate | date: 'shortDate' }}
-                                  } @else {
-                                    Expires in {{ n.payload.daysLeft }} day(s)
-                                  }
-                                </span>
-                              </div>
+                              <button class="notif-main" type="button" (click)="openNotification(n)">
+                                @if (n.type === 'INVITE_ACCEPTED') {
+                                  <span class="notif-title">
+                                    {{ n.payload.email }}
+                                    <span class="notif-serial">joined</span>
+                                  </span>
+                                  <span class="notif-sub">
+                                    Accepted their invitation as
+                                    {{ n.payload.role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User' }}
+                                  </span>
+                                } @else {
+                                  <span class="notif-title">
+                                    {{ n.payload.productName }}
+                                    <span class="notif-serial">{{ n.payload.serial }}</span>
+                                  </span>
+                                  <span class="notif-sub" [class.exp]="n.payload.expired">
+                                    @if (n.payload.expired) {
+                                      Expired {{ n.payload.expirationDate | date: 'shortDate' }}
+                                    } @else {
+                                      Expires in {{ n.payload.daysLeft }} day(s)
+                                    }
+                                  </span>
+                                }
+                              </button>
                               <div class="notif-actions">
                                 @if (n.status === 'UNREAD') {
                                   <button class="link" (click)="notifications.markRead(n.id)">Read</button>
@@ -291,6 +302,24 @@ interface NavLink {
         padding: 0.75rem;
         margin: 0;
       }
+      /* .notif-main is a button so the whole alert is clickable, but it must read
+         as the plain stacked text it replaced. */
+      .notif-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        width: 100%;
+        padding: 0;
+        border: none;
+        background: none;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .notif-main:hover .notif-title {
+        text-decoration: underline;
+      }
       .notif-list {
         list-style: none;
         margin: 0;
@@ -456,6 +485,24 @@ export class App implements OnInit {
     const open = !this.bellOpen();
     this.bellOpen.set(open);
     if (open) this.notifications.refreshList();
+  }
+
+  /**
+   * Clicking an alert takes you to the thing it is about: an expiration warning
+   * opens that unit in Inventory (the item id is passed so the page can select it
+   * once the row loads); an accepted invitation opens the users list. Marking it
+   * read is implicit — you have now seen it.
+   */
+  openNotification(n: AppNotification): void {
+    this.bellOpen.set(false);
+    if (n.status === 'UNREAD') this.notifications.markRead(n.id);
+    if (n.type === 'INVITE_ACCEPTED') {
+      this.router.navigate(['/manage'], { queryParams: { tab: 'users' } });
+      return;
+    }
+    this.router.navigate(['/inventory'], {
+      queryParams: { itemId: n.payload.itemId, serial: n.payload.serial },
+    });
   }
 
   roleLabel(role: Role): string {

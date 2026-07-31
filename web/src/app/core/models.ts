@@ -536,7 +536,7 @@ export interface UpdateLocation {
 
 // ---- notifications ----
 
-export type NotificationType = 'EXPIRATION_WARNING';
+export type NotificationType = 'EXPIRATION_WARNING' | 'INVITE_ACCEPTED';
 export type NotificationStatus = 'UNREAD' | 'READ' | 'DISMISSED';
 
 export interface ExpirationPayload {
@@ -548,12 +548,21 @@ export interface ExpirationPayload {
   expired: boolean;
 }
 
+/** Raised for company admins when an invitee finishes signing up. */
+export interface InviteAcceptedPayload {
+  userId: number;
+  email: string;
+  role: Role;
+  storeIds: number[];
+}
+
 export interface AppNotification {
   id: number;
   companyId: number;
-  storeId: number;
+  /** Null for company-wide notifications such as INVITE_ACCEPTED. */
+  storeId: number | null;
   type: NotificationType;
-  payload: ExpirationPayload;
+  payload: ExpirationPayload & Partial<InviteAcceptedPayload>;
   status: NotificationStatus;
   createdAt: string;
 }

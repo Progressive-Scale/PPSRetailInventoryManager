@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import {
@@ -1265,6 +1266,7 @@ type Tab = 'stores' | 'users' | 'invitations';
 })
 export class ManageComponent implements OnInit {
   private readonly api = inject(ApiService);
+  private readonly route = inject(ActivatedRoute);
 
   readonly tab = signal<Tab>('stores');
   readonly loading = signal(false);
@@ -1525,6 +1527,11 @@ export class ManageComponent implements OnInit {
     // Stores are needed by every tab (user/invite store pickers) and are the
     // initial tab, so load them once up front.
     this.loadStores();
+    // ?tab=users lets a notification link open straight onto the right tab.
+    const wanted = this.route.snapshot.queryParamMap.get('tab');
+    if (wanted === 'users' || wanted === 'invitations' || wanted === 'stores') {
+      this.select(wanted);
+    }
   }
 
   select(tab: Tab): void {
