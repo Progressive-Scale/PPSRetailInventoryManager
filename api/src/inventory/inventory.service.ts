@@ -647,6 +647,8 @@ export class InventoryService {
         conds.push(eq(inventoryItems.locationId, query.locationId));
       if (query.productId != null)
         conds.push(eq(inventoryItems.productId, query.productId));
+      if (query.needsReview === 'true')
+        conds.push(eq(inventoryItems.needsReview, true));
 
       // Expiration filters. expiringWithinDays wins over an explicit date if both.
       let cutoff: string | undefined = query.expiresBefore;
@@ -679,6 +681,11 @@ export class InventoryService {
           receivedAt: inventoryItems.receivedAt,
           needsReview: inventoryItems.needsReview,
           importCheckStatus: inventoryItems.importCheckStatus,
+          // The stored answer, not just the state name: the review queue expands it so
+          // a human can read what PPS actually said before deciding what to do.
+          importCheckResult: inventoryItems.importCheckResult,
+          importCheckRequestedAt: inventoryItems.importCheckRequestedAt,
+          importCheckResolvedAt: inventoryItems.importCheckResolvedAt,
           // For PENDING units this is the handoff moment: the row is created when
           // the ERP hands the unit over.
           createdAt: inventoryItems.createdAt,
@@ -837,13 +844,40 @@ export class InventoryService {
   async updateItem(
     ctx: DataContext,
     itemId: string,
-    dto: { expirationDate?: string | null },
+    dto: { expirationDate?: string | null; productId?: number },
   ) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const item = await this.loadUnit(tx, ctx, itemId);
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (dto.expirationDate !== undefined) {
         patch.expirationDate = dto.expirationDate; // string 'YYYY-MM-DD' or null
+      }
+
+      // Manual identification: attach a catalog product to an unidentified unit.
+      if (dto.productId !== undefined) {
+        const product = await this.loadProduct(tx, ctx, dto.productId);
+        if (product.trackingType !== 'SERIALIZED') {
+          throw new BadRequestException(
+            `Product ${product.sku} is tracked by quantity; a serialized unit cannot belong to it.`,
+          );
+        }
+        patch.productId = product.id;
+        // Identified by a human is still identified — it leaves the queue.
+        patch.needsReview = false;
+        // Explains in the unit's own history where its identity came from, the same
+        // way an import match does.
+        await tx.insert(inventoryTransactions).values({
+          companyId: ctx.companyId,
+          storeId: item.storeId,
+          productId: product.id,
+          itemId: item.id,
+          type: 'ADJUSTMENT',
+          quantityDelta: 0,
+          locationToId: item.locationId,
+          note: `identified manually as ${product.sku}`,
+          source: 'PORTAL',
+          performedByUserId: ctx.userId,
+        });
       }
       const [row] = await tx
         .update(inventoryItems)

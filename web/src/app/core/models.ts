@@ -252,6 +252,8 @@ export interface ExpiringItem {
   receivedAt: string | null;
   needsReview: boolean;
   importCheckStatus: ImportCheckStatus | null;
+  /** Whatever the agent reported; only DISCREPANCY carries useful detail. */
+  importCheckResult: Record<string, unknown> | null;
   /** For a PENDING unit this is the handoff moment. */
   createdAt: string;
   /** Whole days since handoff; null unless PENDING. */

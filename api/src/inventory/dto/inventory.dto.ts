@@ -186,6 +186,13 @@ export class UpdateItemDto {
   @ValidateIf((o: UpdateItemDto) => o.expirationDate !== null)
   @IsISO8601()
   expirationDate?: string | null;
+
+  /**
+   * Identify an unidentified unit by attaching it to a catalog product. This is the
+   * manual counterpart to a PPS import match, and clears the unit's needs_review —
+   * a unit with a product is, by definition, identified.
+   */
+  @IsOptional() @IsInt() @IsPositive() productId?: number;
 }
 
 // Bulk mark serialized items as sold.
@@ -290,4 +297,9 @@ export class ListItemsQuery extends PaginationQuery {
   @IsOptional()
   @IsEnum(ITEM_STATUSES as unknown as string[])
   status?: (typeof ITEM_STATUSES)[number];
+
+  /** 'true' -> only units awaiting identification (the Needs Review queue). */
+  @IsOptional()
+  @IsBooleanString()
+  needsReview?: string;
 }

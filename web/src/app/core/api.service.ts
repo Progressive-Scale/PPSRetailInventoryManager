@@ -23,6 +23,7 @@ import {
   StockStatusFilter,
   HealthResponse,
   InventoryItem,
+  ImportCheckStatus,
   InventoryOpBody,
   ItemStatus,
   InventoryProductDetail,
@@ -149,9 +150,25 @@ export class ApiService {
     return this.http.get<Paginated<StockRow>>('/api/inventory/stock', { params });
   }
 
-  /** Admin: edit a serialized unit's expiration date. */
-  updateItem(itemId: string, dto: { expirationDate: string | null }): Observable<InventoryItem> {
+  /**
+   * Admin: edit a serialized unit. `expirationDate` corrects a date; `productId`
+   * identifies an unidentified unit (and takes it out of the review queue).
+   */
+  updateItem(
+    itemId: string,
+    dto: { expirationDate?: string | null; productId?: number },
+  ): Observable<InventoryItem> {
     return this.http.patch<InventoryItem>(`/api/inventory/items/${itemId}`, dto);
+  }
+
+  /** Ask PPS to identify an unidentified unit, or ask again after an answer. */
+  requestImportCheck(
+    itemId: string,
+  ): Observable<{ itemId: string; importCheckStatus: ImportCheckStatus }> {
+    return this.http.post<{ itemId: string; importCheckStatus: ImportCheckStatus }>(
+      `/api/inventory/items/${itemId}/import-check`,
+      {},
+    );
   }
 
   /** Admin: set a quantity product's on-hand at a location to an exact value. */
@@ -172,6 +189,8 @@ export class ApiService {
     productId?: number;
     /** Defaults server-side to ON_HAND; pass PENDING for the arrivals queue. */
     status?: ItemStatus;
+    /** Only units awaiting identification (the Needs Review queue). */
+    needsReview?: boolean;
     expiresBefore?: string;
     expiringWithinDays?: number;
     hasExpiration?: boolean;
@@ -183,6 +202,8 @@ export class ApiService {
     if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
     if (opts.productId != null) params = params.set('productId', String(opts.productId));
     if (opts.status) params = params.set('status', opts.status);
+    if (opts.needsReview != null)
+      params = params.set('needsReview', String(opts.needsReview));
     if (opts.expiresBefore) params = params.set('expiresBefore', opts.expiresBefore);
     if (opts.expiringWithinDays != null)
       params = params.set('expiringWithinDays', String(opts.expiringWithinDays));

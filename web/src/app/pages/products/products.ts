@@ -3,203 +3,192 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
-import { NeedsReviewComponent } from '../needs-review/needs-review';
 
-type SubTab = 'catalog' | 'review';
+// The Review sub-tab moved to Cycle Counts -> Needs Review: everything in it
+// originates from a count, so it belongs beside the counts, not the catalog.
 
 @Component({
   selector: 'app-products',
-  imports: [FormsModule, NeedsReviewComponent],
+  imports: [FormsModule],
   template: `
     <main class="container">
-      <div class="tabs">
-        <button [class.active]="tab() === 'catalog'" (click)="select('catalog')">Catalog</button>
-        <button [class.active]="tab() === 'review'" (click)="select('review')">Review</button>
-      </div>
-
       @if (error()) {
         <p class="error">{{ error() }}</p>
       }
 
       <!-- CATALOG -->
-      @if (tab() === 'catalog') {
-        <section class="card">
-          <div class="section-head">
-            <h2>Products</h2>
-            <button (click)="openAddProduct()">Add product</button>
+      <section class="card">
+        <div class="section-head">
+          <h2>Products</h2>
+          <button (click)="openAddProduct()">Add product</button>
+        </div>
+        <div class="filters">
+          <label class="f">
+            Search
+            <input
+              name="p-search"
+              placeholder="SKU, name, UPC"
+              [ngModel]="search()"
+              (ngModelChange)="search.set($event)"
+            />
+          </label>
+          <label class="f">
+            Type
+            <select name="p-type" [ngModel]="typeFilter()" (ngModelChange)="typeFilter.set($event)">
+              <option [ngValue]="null">All</option>
+              <option [ngValue]="'SERIALIZED'">Serialized</option>
+              <option [ngValue]="'QUANTITY'">UPC</option>
+            </select>
+          </label>
+          <label class="f">
+            Active
+            <select name="p-active" [ngModel]="activeFilter()" (ngModelChange)="activeFilter.set($event)">
+              <option [ngValue]="null">All</option>
+              <option [ngValue]="'active'">Active</option>
+              <option [ngValue]="'inactive'">Inactive</option>
+            </select>
+          </label>
+          <div class="f-actions">
+            <button type="button" class="ghost" (click)="clearFilters()" [disabled]="!filtersActive()">
+              Clear
+            </button>
+            <button type="button" class="ghost" (click)="loadProducts()" [disabled]="loading()">
+              Refresh
+            </button>
           </div>
-          <div class="filters">
-            <label class="f">
-              Search
-              <input
-                name="p-search"
-                placeholder="SKU, name, UPC"
-                [ngModel]="search()"
-                (ngModelChange)="search.set($event)"
-              />
-            </label>
-            <label class="f">
-              Type
-              <select name="p-type" [ngModel]="typeFilter()" (ngModelChange)="typeFilter.set($event)">
-                <option [ngValue]="null">All</option>
-                <option [ngValue]="'SERIALIZED'">Serialized</option>
-                <option [ngValue]="'QUANTITY'">UPC</option>
-              </select>
-            </label>
-            <label class="f">
-              Active
-              <select name="p-active" [ngModel]="activeFilter()" (ngModelChange)="activeFilter.set($event)">
-                <option [ngValue]="null">All</option>
-                <option [ngValue]="'active'">Active</option>
-                <option [ngValue]="'inactive'">Inactive</option>
-              </select>
-            </label>
-            <div class="f-actions">
-              <button type="button" class="ghost" (click)="clearFilters()" [disabled]="!filtersActive()">
-                Clear
-              </button>
-              <button type="button" class="ghost" (click)="loadProducts()" [disabled]="loading()">
-                Refresh
-              </button>
-            </div>
-          </div>
-          @if (loading()) {
-            <p class="muted">Loading…</p>
-          } @else if (products().length === 0) {
-            <p class="muted">No products yet.</p>
-          } @else if (filteredProducts().length === 0) {
-            <p class="muted">No products match these filters.</p>
-          } @else {
-            <div class="table-scroll">
-              <table class="fixed">
-                <thead>
-                  <tr>
-                    <th class="col-sku">SKU</th>
-                    <th class="col-name">Name</th>
-                    <th class="col-type">Type</th>
-                    <th class="col-upc">UPC</th>
-                    <th class="col-active">Active</th>
-                    <th class="actions col-actions"></th>
+        </div>
+        @if (loading()) {
+          <p class="muted">Loading…</p>
+        } @else if (products().length === 0) {
+          <p class="muted">No products yet.</p>
+        } @else if (filteredProducts().length === 0) {
+          <p class="muted">No products match these filters.</p>
+        } @else {
+          <div class="table-scroll">
+            <table class="fixed">
+              <thead>
+                <tr>
+                  <th class="col-sku">SKU</th>
+                  <th class="col-name">Name</th>
+                  <th class="col-type">Type</th>
+                  <th class="col-upc">UPC</th>
+                  <th class="col-active">Active</th>
+                  <th class="actions col-actions"></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (p of filteredProducts(); track p.id) {
+                  <tr [class.inactive-row]="!p.active">
+                    @if (editProductId() === p.id) {
+                      <td><input class="cell-input" name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
+                      <td><input class="cell-input" name="ep-name" [(ngModel)]="productEdit.name" /></td>
+                      <td>
+                        <span class="type-badge" [class]="'tt-' + p.trackingType">
+                          {{ typeLabel(p.trackingType) }}
+                        </span>
+                      </td>
+                      <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
+                      <td>
+                        <select class="cell-input" name="ep-active" [(ngModel)]="productEdit.active">
+                          <option [ngValue]="true">Active</option>
+                          <option [ngValue]="false">Inactive</option>
+                        </select>
+                      </td>
+                      <td class="actions">
+                        <button class="sm" (click)="saveProduct(p)" [disabled]="saving()">Save</button>
+                        <button class="sm ghost" (click)="editProductId.set(null)">Cancel</button>
+                        <button class="sm danger" (click)="askDeleteProduct(p)" [disabled]="saving()">
+                          Delete
+                        </button>
+                      </td>
+                    } @else {
+                      <td>{{ p.sku }}</td>
+                      <td>{{ p.name }}</td>
+                      <td>
+                        <span class="type-badge" [class]="'tt-' + p.trackingType">
+                          {{ typeLabel(p.trackingType) }}
+                        </span>
+                      </td>
+                      <td class="muted">{{ p.upc || '—' }}</td>
+                      <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
+                      <td class="actions">
+                        <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
+                      </td>
+                    }
                   </tr>
-                </thead>
-                <tbody>
-                  @for (p of filteredProducts(); track p.id) {
-                    <tr [class.inactive-row]="!p.active">
-                      @if (editProductId() === p.id) {
-                        <td><input class="cell-input" name="ep-sku" [(ngModel)]="productEdit.sku" /></td>
-                        <td><input class="cell-input" name="ep-name" [(ngModel)]="productEdit.name" /></td>
-                        <td>
-                          <span class="type-badge" [class]="'tt-' + p.trackingType">
-                            {{ typeLabel(p.trackingType) }}
-                          </span>
-                        </td>
-                        <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
-                        <td>
-                          <select class="cell-input" name="ep-active" [(ngModel)]="productEdit.active">
-                            <option [ngValue]="true">Active</option>
-                            <option [ngValue]="false">Inactive</option>
-                          </select>
-                        </td>
-                        <td class="actions">
-                          <button class="sm" (click)="saveProduct(p)" [disabled]="saving()">Save</button>
-                          <button class="sm ghost" (click)="editProductId.set(null)">Cancel</button>
-                          <button class="sm danger" (click)="askDeleteProduct(p)" [disabled]="saving()">
-                            Delete
-                          </button>
-                        </td>
-                      } @else {
-                        <td>{{ p.sku }}</td>
-                        <td>{{ p.name }}</td>
-                        <td>
-                          <span class="type-badge" [class]="'tt-' + p.trackingType">
-                            {{ typeLabel(p.trackingType) }}
-                          </span>
-                        </td>
-                        <td class="muted">{{ p.upc || '—' }}</td>
-                        <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
-                        <td class="actions">
-                          <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
-                        </td>
-                      }
-                    </tr>
-                  }
-                </tbody>
-              </table>
-            </div>
-          }
-        </section>
-
-        <!-- Add product modal -->
-        @if (showAddModal()) {
-          <div class="overlay" (click)="closeAddProduct()">
-            <div class="modal" (click)="$event.stopPropagation()">
-              <h2>Add product</h2>
-              @if (modalError()) {
-                <p class="error">{{ modalError() }}</p>
-              }
-              <form class="stacked-form" (ngSubmit)="createProduct()">
-                <label>
-                  SKU <span class="req">*</span>
-                  <input name="m-sku" [(ngModel)]="productDraft.sku" required />
-                </label>
-                <label>
-                  Name <span class="req">*</span>
-                  <input name="m-name" [(ngModel)]="productDraft.name" required />
-                </label>
-                <label>
-                  Tracking type <span class="req">*</span>
-                  <select name="m-tracking" [(ngModel)]="productDraft.trackingType" required>
-                    <option value="SERIALIZED">Serialized</option>
-                    <option value="QUANTITY">UPC</option>
-                  </select>
-                </label>
-                <label>
-                  UPC
-                  <input name="m-upc" [(ngModel)]="productDraft.upc" />
-                </label>
-                <label>
-                  Description
-                  <input name="m-desc" [(ngModel)]="productDraft.description" />
-                </label>
-                <div class="modal-actions">
-                  <button class="ghost" type="button" (click)="closeAddProduct()">Cancel</button>
-                  <button type="submit" [disabled]="saving()">Confirm</button>
-                </div>
-              </form>
-            </div>
+                }
+              </tbody>
+            </table>
           </div>
         }
+      </section>
 
-        <!-- Delete confirmation -->
-        @if (deleteTarget(); as target) {
-          <div class="overlay" (click)="cancelDeleteProduct()">
-            <div class="modal" (click)="$event.stopPropagation()">
-              <h2>Delete product</h2>
-              @if (deleteError()) {
-                <!-- The delete was refused (usually: the product still has
-                     inventory). Stay open so the reason is read where it happened. -->
-                <p class="error">{{ deleteError() }}</p>
-                <div class="modal-actions">
-                  <button class="ghost" type="button" (click)="cancelDeleteProduct()">Close</button>
-                </div>
-              } @else {
-                <p>Delete product {{ target.sku }}? This can't be undone.</p>
-                <div class="modal-actions">
-                  <button class="ghost" type="button" (click)="cancelDeleteProduct()">Cancel</button>
-                  <button class="danger" type="button" (click)="confirmDeleteProduct()" [disabled]="saving()">
-                    {{ saving() ? 'Deleting…' : 'Delete' }}
-                  </button>
-                </div>
-              }
-            </div>
+      <!-- Add product modal -->
+      @if (showAddModal()) {
+        <div class="overlay" (click)="closeAddProduct()">
+          <div class="modal" (click)="$event.stopPropagation()">
+            <h2>Add product</h2>
+            @if (modalError()) {
+              <p class="error">{{ modalError() }}</p>
+            }
+            <form class="stacked-form" (ngSubmit)="createProduct()">
+              <label>
+                SKU <span class="req">*</span>
+                <input name="m-sku" [(ngModel)]="productDraft.sku" required />
+              </label>
+              <label>
+                Name <span class="req">*</span>
+                <input name="m-name" [(ngModel)]="productDraft.name" required />
+              </label>
+              <label>
+                Tracking type <span class="req">*</span>
+                <select name="m-tracking" [(ngModel)]="productDraft.trackingType" required>
+                  <option value="SERIALIZED">Serialized</option>
+                  <option value="QUANTITY">UPC</option>
+                </select>
+              </label>
+              <label>
+                UPC
+                <input name="m-upc" [(ngModel)]="productDraft.upc" />
+              </label>
+              <label>
+                Description
+                <input name="m-desc" [(ngModel)]="productDraft.description" />
+              </label>
+              <div class="modal-actions">
+                <button class="ghost" type="button" (click)="closeAddProduct()">Cancel</button>
+                <button type="submit" [disabled]="saving()">Confirm</button>
+              </div>
+            </form>
           </div>
-        }
+        </div>
       }
 
-      <!-- REVIEW -->
-      @if (tab() === 'review') {
-        <app-needs-review />
+      <!-- Delete confirmation -->
+      @if (deleteTarget(); as target) {
+        <div class="overlay" (click)="cancelDeleteProduct()">
+          <div class="modal" (click)="$event.stopPropagation()">
+            <h2>Delete product</h2>
+            @if (deleteError()) {
+              <!-- The delete was refused (usually: the product still has
+                   inventory). Stay open so the reason is read where it happened. -->
+              <p class="error">{{ deleteError() }}</p>
+              <div class="modal-actions">
+                <button class="ghost" type="button" (click)="cancelDeleteProduct()">Close</button>
+              </div>
+            } @else {
+              <p>Delete product {{ target.sku }}? This can't be undone.</p>
+              <div class="modal-actions">
+                <button class="ghost" type="button" (click)="cancelDeleteProduct()">Cancel</button>
+                <button class="danger" type="button" (click)="confirmDeleteProduct()" [disabled]="saving()">
+                  {{ saving() ? 'Deleting…' : 'Delete' }}
+                </button>
+              </div>
+            }
+          </div>
+        </div>
       }
+    
     </main>
   `,
   styles: [
@@ -463,7 +452,6 @@ type SubTab = 'catalog' | 'review';
 export class ProductsComponent implements OnInit {
   private readonly api = inject(ApiService);
 
-  readonly tab = signal<SubTab>('catalog');
   readonly loading = signal(false);
   readonly saving = signal(false);
   readonly error = signal<string | null>(null);
@@ -534,12 +522,6 @@ export class ProductsComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadProducts();
-  }
-
-  select(tab: SubTab): void {
-    this.tab.set(tab);
-    this.error.set(null);
-    if (tab === 'catalog') this.loadProducts();
   }
 
   loadProducts(): void {

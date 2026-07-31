@@ -3,6 +3,7 @@ import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
+import { CountNeedsReviewComponent } from './needs-review';
 import { messageFor } from '../../core/http-error';
 import {
   CycleCount,
@@ -22,9 +23,23 @@ interface ResolutionGroup {
 
 @Component({
   selector: 'app-cycle-counts',
-  imports: [DatePipe, FormsModule],
+  imports: [DatePipe, FormsModule, CountNeedsReviewComponent],
   template: `
     <main class="container">
+      @if (isCompanyAdmin) {
+        <div class="subtabs">
+          <button [class.active]="tab() === 'counts'" (click)="tab.set('counts')">
+            Counts
+          </button>
+          <button [class.active]="tab() === 'review'" (click)="tab.set('review')">
+            Needs review
+          </button>
+        </div>
+      }
+
+      @if (tab() === 'review') {
+        <app-count-needs-review />
+      } @else {
       <section class="card">
         <h2>Cycle counts</h2>
 
@@ -120,7 +135,7 @@ interface ResolutionGroup {
         }
       </section>
 
-      @if (selectedId() !== null) {
+      @if (selectedId() !== null && tab() === 'counts') {
         <section class="card">
           <div class="row-between">
             <h2>Count #{{ selectedId() }}</h2>
@@ -231,6 +246,7 @@ interface ResolutionGroup {
           }
         </section>
       }
+      }
     </main>
   `,
   styles: [
@@ -303,6 +319,25 @@ interface ResolutionGroup {
         font-size: 0.85rem;
         font-family: inherit;
         border-radius: 8px;
+      }
+      .subtabs {
+        display: flex;
+        gap: 0.35rem;
+        margin-bottom: 0.25rem;
+      }
+      .subtabs button {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        font-family: inherit;
+        font-size: 0.88rem;
+        cursor: pointer;
+      }
+      .subtabs button.active {
+        border-color: var(--brand, var(--accent));
+        color: var(--brand, var(--accent));
+        font-weight: 600;
       }
       .scope {
         margin: 0 0 0.85rem;
@@ -518,6 +553,9 @@ export class CycleCountsComponent implements OnInit {
   readonly offset = signal(0);
   readonly loading = signal(false);
   readonly listError = signal<string | null>(null);
+
+  /** 'counts' is the history/review list; 'review' is the needs-review queue. */
+  readonly tab = signal<'counts' | 'review'>('counts');
 
   readonly reviewBusy = signal(false);
   readonly reviewError = signal<string | null>(null);
