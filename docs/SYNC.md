@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.4
+# Sync Agent Integration Contract — v3.5
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -35,6 +35,54 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.5
+
+**`serial` means the serial. The full barcode has its own field.**
+
+Additive and backward compatible — but read it, because an agent doing the wrong thing
+here produces units the store cannot scan.
+
+A GS1-128 label carries several fields: GTIN `(01)`, weight `(3202)`, dates `(13)`/`(15)`,
+lot `(10)`, and the **serial `(21)`**. A store scans, and expects to identify, the
+**serial alone**. If an agent sends the whole barcode as `serial`, every unit arrives with
+an identity nobody can reproduce at the shelf: the scan says `100000000462`, the cloud has
+only `(01) 90097586111018 (3202) 000082 (13) 240911 (21) 100000000462`, and a unit sitting
+in front of the user is reported as an unknown serial.
+
+So:
+
+| Field | Send | Example |
+|---|---|---|
+| `serial` | the AI **(21)** value alone. Identity key, unique per company | `100000000462` |
+| `barcode` | *(new, optional)* the whole barcode as printed | `(01) 90097586111018 (3202) 000082 (13) 240911 (21) 100000000462` |
+
+`barcode` is stored, shown in the portal beneath the serial, and **matched as a fallback on
+scan** — so a scanner pointed at the whole symbol still resolves to the right unit. It is
+never the identity key, and it is not required to be unique.
+
+`ImportMatch` (§7 results) accepts `barcode` too: a unit created from an unknown-serial
+scan has none, so a match is the first opportunity to record it.
+
+### If your ERP stores whole barcodes
+
+Parsing the serial out is less trivial than it looks, and getting it wrong is silent. From
+14,186 real rows in one ERP:
+
+- **The `(21)` field is not always last.** ~1% put it before the weight or lot, so "take
+  everything after `21`" returns the serial with the next field glued on.
+- **Two dialects coexist in the same column** — parenthesised
+  (`(01) 9009… (21) 1000…`) and raw unseparated digits (`019009…211000…`). Prefer the
+  parenthesised one: it names every field, so order and length stop mattering. A raw
+  string has no field separators, so a variable-length field is only readable when nothing
+  follows it.
+- **Some items have no serial at all** — GTIN, weight and lot only. Those are not
+  scannable units. Report them; do not invent a serial.
+- **A serial is at most 20 characters.** Longer means fields got glued together.
+
+When the serial cannot be read, leave the line unsent and surface the reason. A parked row
+with an explanation costs somebody a minute; a wrong serial creates a unit that is
+untraceable at the shelf and blocks the return path later.
 
 ## What's new in v3.4
 
@@ -250,7 +298,8 @@ Content-Type: application/json
   "handoffs": [
     {
       "kind": "unit",
-      "serial": "SN-1001",
+      "serial": "100000000462",
+      "barcode": "(01) 90097586111018 (3202) 000082 (13) 240911 (21) 100000000462",
       "sku": "TS-BLK-M",
       "name": "T-Shirt Black M",
       "price": 19.99,
@@ -275,9 +324,12 @@ Content-Type: application/json
 **Common fields** (both kinds): `sku`*, `name`*, `storeId`* (a positive integer,
 the cloud store id) are required; `description`, `price`, `upc` are optional.
 
-**`kind: "unit"`** (serialized): also requires `serial`*. `expirationDate` (a
-`YYYY-MM-DD` calendar date) optional. Idempotency key is **(company, serial)** —
-redelivering the same serial never creates a duplicate unit or ledger row.
+**`kind: "unit"`** (serialized): also requires `serial`* — the GS1 AI **(21)** value
+alone, **not** the whole barcode; see v3.5 above. `barcode` (the full label string, max 400
+chars) and `expirationDate` (a `YYYY-MM-DD` calendar date) are optional. Idempotency key is
+**(company, serial)** — redelivering the same serial never creates a duplicate unit or
+ledger row, and re-sending with `barcode` fills it in on a unit handed off before the agent
+knew how.
 
 **`kind: "stock"`** (quantity): also requires `quantity`* (positive integer) and
 `handoffId`* — a **client-generated id, unique per shipment line**. The server
