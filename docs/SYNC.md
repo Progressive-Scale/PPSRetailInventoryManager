@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.6
+# Sync Agent Integration Contract — v3.7
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,7 +10,7 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.4`
+- **Contract version:** `v3.7`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
@@ -35,6 +35,41 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.7
+
+**The cloud reduces a scanned retail-label 2D code to its serial.** Nothing changes for an
+agent; this documents what the shelf actually scans, because it is not the barcode we sync.
+
+A finished retail package carries **two** symbols, and neither is the GS1-128:
+
+| Symbol | Content | Example |
+|---|---|---|
+| 1D UPC-A | number system `2` (variable measure) + 5-digit item number + price | `2 07318 01196 8` → item `07318`, $11.96 |
+| 2D | `R<serial>/<YYYYMMDD>` — serial + pack date | `R1205058450/20260722` |
+
+So the same unit can be identified three ways, and the cloud accepts all three:
+
+1. **the 2D composite** — reduced to the serial before matching (pack date ignored)
+2. **the serial alone** — matched directly
+3. **the ERP's GS1-128** — matched against the stored `barcode`
+
+The reduction is deliberately strict: it requires a single letter, then digits, then a
+slash, then eight digits that form a plausible date. Anything else is passed through
+untouched, because shortening a string we cannot prove the shape of would file the scan
+under an identity that matches nothing — and then report the unit in the counter's hand as
+missing while the real one looks unaccounted for.
+
+Two things worth knowing about the UPC symbol:
+
+- **The price is inside it**, so the same product scans differently on every package. It is
+  not a stable product identifier; only digits 2–6 are.
+- Those digits are the **item number**, which is the ERP `ProductID` — i.e. the `sku` this
+  contract already carries. A UPC scan therefore resolves through `sku`, not through
+  `products.upc`, and never needed to match the 14-digit GTIN in `(01)`.
+
+Resolving a product from a price-embedded UPC is **not implemented** — stores scan the
+serial. It is a small addition if that changes.
 
 ## What's new in v3.6
 
@@ -74,7 +109,7 @@ So:
 
 | Field | Send | Example |
 |---|---|---|
-| `serial` | the AI **(21)** value alone. Identity key, unique per company | `100000000462` |
+| `serial` | the AI **(21)** value alone. Identity key, unique per **sku** (see v3.6) | `100000000462` |
 | `barcode` | *(new, optional)* the whole barcode as printed | `(01) 90097586111018 (3202) 000082 (13) 240911 (21) 100000000462` |
 
 `barcode` is stored, shown in the portal beneath the serial, and **matched as a fallback on

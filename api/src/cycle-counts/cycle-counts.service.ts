@@ -19,7 +19,7 @@ import {
   products,
   storeLocations,
 } from '../db/schema';
-import { scanMatches } from '../db/scan-match';
+import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
 import { DataContext } from '../auth/auth.types';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { resolveOrCreateProduct } from '../products/product-catalog';
@@ -295,11 +295,30 @@ export class CycleCountsService {
         throw new ConflictException('Cycle count was cancelled.');
       }
 
-      const scannedSerials = [...new Set(dto.scannedSerials ?? [])];
-      const reinstate = new Set(dto.reinstateSerials ?? []);
-      const wantImportCheck = new Set(dto.importCheckSerials ?? []);
+      // Normalised at the door, once. A handheld may send the retail label's 2D payload
+      // (`R1205058450/20260722`) rather than the bare serial, and every map, set and
+      // stored line below is keyed on the serial — so reducing here is what keeps a
+      // scanned unit from being filed under a string that matches nothing.
+      // Deduped AFTER normalising: the same unit scanned twice, once from the 2D code and
+      // once from the serial, is one scan.
+      const scannedSerials = [
+        ...new Set((dto.scannedSerials ?? []).map(normalizeScannedSerial)),
+      ];
+      const reinstate = new Set(
+        (dto.reinstateSerials ?? []).map(normalizeScannedSerial),
+      );
+      const wantImportCheck = new Set(
+        (dto.importCheckSerials ?? []).map(normalizeScannedSerial),
+      );
       const quantityCounts = dto.quantityCounts ?? [];
-      const newItems = dto.newItems ?? [];
+      // A new item's value is a serial only when isUpc is false; a UPC must not be
+      // touched. (The 2D pattern could not match one anyway, but saying so is cheaper
+      // than making the next reader prove it.)
+      const newItems = (dto.newItems ?? []).map((ni) =>
+        ni.isUpc
+          ? ni
+          : { ...ni, serialOrUpc: normalizeScannedSerial(ni.serialOrUpc) },
+      );
 
       const scopeProducts = await this.scopeProductIds(tx, ctx, cc.id);
       // Where things the counter is holding get put. A whole-store count has no
@@ -978,7 +997,9 @@ export class CycleCountsService {
    * answer here cannot contradict what submitting will actually do.
    */
   async resolveSerial(ctx: DataContext, id: number, serialRaw: string) {
-    const serial = serialRaw.trim();
+    // The handheld asks "what is this?" with whatever it read off the label, which may be
+    // the 2D composite rather than the serial.
+    const serial = normalizeScannedSerial(serialRaw);
     if (!serial) throw new BadRequestException('A serial is required.');
 
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {

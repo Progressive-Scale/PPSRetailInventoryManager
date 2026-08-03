@@ -18,7 +18,7 @@ import {
   SQL,
 } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
-import { scanMatches } from '../db/scan-match';
+import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
 import {
   InventoryItem,
   inventoryItems,
@@ -1223,9 +1223,11 @@ export class InventoryService {
     const storeId = this.readStoreId(ctx, query.storeId);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       if (query.serial) {
+        // The scan may be the retail label's 2D composite rather than the serial itself.
+        const serial = normalizeScannedSerial(query.serial);
         const conds: SQL[] = [
           eq(inventoryItems.companyId, ctx.companyId),
-          scanMatches(query.serial)!,
+          scanMatches(serial)!,
           eq(inventoryItems.status, 'ON_HAND'),
         ];
         if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
@@ -1254,7 +1256,7 @@ export class InventoryService {
         }
         if (units.length > 1) {
           throw new ConflictException(
-            `Serial '${query.serial}' matches on-hand units of more than one product ` +
+            `Serial '${serial}' matches on-hand units of more than one product ` +
               `(${units.map((u) => u.sku).join(', ')}). Scan the full barcode to pick one.`,
           );
         }
