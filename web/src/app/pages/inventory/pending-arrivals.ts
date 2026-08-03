@@ -107,8 +107,13 @@ const PAGE_SIZE = 200;
             <tbody>
               @for (r of filtered(); track r.id) {
                 <tr [class.stale]="(r.daysPending ?? 0) >= 7">
-                  <td class="mono">{{ r.serial }}</td>
-                  <td>{{ r.sku ?? '—' }}</td>
+                  <td class="mono serial-cell" [title]="serialTitle(r)">
+                    <span class="serial">{{ r.serial }}</span>
+                    @if (r.barcode && r.barcode !== r.serial) {
+                      <span class="barcode">{{ r.barcode }}</span>
+                    }
+                  </td>
+                  <td class="ctext">{{ r.sku ?? '—' }}</td>
                   <td class="ctext" [title]="r.name ?? ''">{{ r.name ?? '—' }}</td>
                   <td class="muted">{{ storeName(r.storeId) }}</td>
                   <td class="muted">{{ r.createdAt | date: 'mediumDate' }}</td>
@@ -372,6 +377,26 @@ const PAGE_SIZE = 200;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 0.85rem;
       }
+      /* Every cell in a fixed-layout table needs its own overflow rule. Without one a
+         long value does not wrap or clip, it paints straight over the next column —
+         which is exactly what a full GS1 barcode used to do to the SKU. */
+      .serial-cell {
+        overflow: hidden;
+      }
+      .serial-cell .serial,
+      .serial-cell .barcode {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* The serial is the identity and what gets scanned, so it leads. The barcode is
+         context: same information, secondary weight. Hover for either in full. */
+      .serial-cell .barcode {
+        font-size: 0.72rem;
+        color: var(--muted, #6b7280);
+        margin-top: 0.1rem;
+      }
       .ctext {
         overflow: hidden;
         text-overflow: ellipsis;
@@ -483,6 +508,12 @@ export class PendingArrivalsComponent implements OnInit {
     if (days == null) return '—';
     if (days === 0) return 'today';
     return days === 1 ? '1 day' : `${days} days`;
+  }
+
+  /** Both values in full on hover, since the cell clips them. */
+  serialTitle(row: ExpiringItem): string {
+    if (!row.barcode || row.barcode === row.serial) return row.serial;
+    return `Serial: ${row.serial}\nBarcode: ${row.barcode}`;
   }
 
   // ---- marking a never-arrived unit lost ---------------------------------

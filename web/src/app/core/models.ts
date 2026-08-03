@@ -251,7 +251,10 @@ export interface ExpiringItem {
   locationId: number | null;
   locationName: string | null;
   locationKind: LocationKind | null;
+  /** GS1 AI (21) — the value a store scans. */
   serial: string;
+  /** The full GS1-128 barcode from the ERP label, when it sent one. */
+  barcode: string | null;
   status: ItemStatus;
   expirationDate: string | null;
   receivedAt: string | null;
