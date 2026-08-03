@@ -541,9 +541,10 @@ export class CycleCountsService {
         });
       }
 
-      // Quantity stock IN SCOPE that nobody counted -> proposed zero. This is the
-      // destructive half of a count and the main reason review exists: unlike a
-      // serialized unit, zeroed stock has no per-unit row to reinstate.
+      // Quantity stock IN SCOPE that nobody counted. Same rule as the serialized sweep
+      // below, and for the same reason: a product the counter never entered a number for
+      // is not evidence that its shelf is empty. Zeroing on that basis is the worse half
+      // of the two — a zeroed stock line has no per-unit row to reinstate afterwards.
       const stockConds: SQL[] = [
         eq(inventoryStock.companyId, ctx.companyId),
         eq(inventoryStock.storeId, cc.storeId),
@@ -560,30 +561,59 @@ export class CycleCountsService {
         })
         .from(inventoryStock)
         .where(and(...stockConds));
+      // Products that got a quantity this count — the evidence the counter worked them.
+      const countedProducts = new Set(quantityCounts.map((qc) => qc.productId));
       for (const s of inScopeStock) {
         if (countedStockKeys.has(`${s.productId}:${s.locationId}`)) continue;
         if (s.quantityOnHand === 0) continue; // nothing to zero
+        // Counted this product at another location but not this one -> the shelf really
+        // was checked and found empty. Never touched the product at all -> not counted.
+        const worked = countedProducts.has(s.productId);
         lines.push({
           productId: s.productId,
           itemId: null,
           serial: null,
-          quantity: 0,
-          resolution: 'COUNTED_BY_UPC',
+          quantity: worked ? 0 : null,
+          resolution: worked ? 'COUNTED_BY_UPC' : 'NOT_COUNTED',
           locationId: s.locationId,
           locationFromId: null,
           importCheckRequested: false,
         });
       }
 
-      // In-scope serialized units nobody scanned -> proposed sold.
+      // Products the counter demonstrably worked: at least one unit of them was
+      // physically scanned in this count, by any route — counted in scope, found here
+      // while recorded elsewhere, received off a delivery, or put back after being sold.
+      const workedProducts = new Set<number>();
+      for (const l of lines) {
+        if (l.productId == null) continue;
+        if (
+          l.resolution === 'SCANNED' ||
+          l.resolution === 'MOVED_IN' ||
+          l.resolution === 'RECEIVED' ||
+          l.resolution === 'REINSTATED'
+        ) {
+          workedProducts.add(l.productId);
+        }
+      }
+
+      // In-scope serialized units nobody scanned.
+      //
+      // Whether that means "sold" depends entirely on whether the counter went near the
+      // product. If they scanned some units of it, the rest are genuinely unaccounted
+      // for and MARKED_SOLD is the honest reading. If they scanned NONE of it, the only
+      // thing established is that they did not reach that shelf — and writing off stock
+      // on that basis is how a half-finished count destroys inventory. Those are
+      // reported as NOT_COUNTED instead, and the review screen offers them to be added.
       for (const u of inScopeUnits) {
         if (accountedInScope.has(u.id)) continue;
+        const worked = u.productId != null && workedProducts.has(u.productId);
         lines.push({
           productId: u.productId,
           itemId: u.id,
           serial: u.serial,
           quantity: null,
-          resolution: 'MARKED_SOLD',
+          resolution: worked ? 'MARKED_SOLD' : 'NOT_COUNTED',
           locationId: u.locationId,
           locationFromId: null,
           importCheckRequested: false,
@@ -843,6 +873,12 @@ export class CycleCountsService {
         });
         return;
       }
+
+      // Deliberately a no-op. The unit stays exactly as it was: in stock, where it was,
+      // untouched. The line exists so the count can report what it did not reach, not so
+      // something can be done about it — nothing was learned about this unit.
+      case 'NOT_COUNTED':
+        return;
 
       case 'COUNTED_BY_UPC': {
         if (line.productId == null || line.locationId == null) return;
@@ -1296,6 +1332,7 @@ export class CycleCountsService {
       PENDING_NOT_RECEIVED: [],
       REINSTATED: [],
       MOVED_IN: [],
+      NOT_COUNTED: [],
     };
     for (const r of rows) byResolution[r.resolution].push(r);
 
@@ -1333,6 +1370,11 @@ export class CycleCountsService {
       linesByResolution: byResolution,
       markedSoldSerials: byResolution.MARKED_SOLD.map((l) => l.serial),
       pendingNotReceived: byResolution.PENDING_NOT_RECEIVED,
+      /**
+       * Units of products the count never touched. Applied as a no-op, surfaced so a
+       * reviewer can see the count's real coverage rather than assuming a clean sweep.
+       */
+      notCounted: byResolution.NOT_COUNTED,
       destructive,
       /** True while the proposals are waiting on an admin. */
       awaitingReview: cc.status === 'AWAITING_REVIEW',

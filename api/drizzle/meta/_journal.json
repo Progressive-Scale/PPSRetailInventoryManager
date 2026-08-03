@@ -169,6 +169,13 @@
       "when": 1785783973665,
       "tag": "0023_serial_unique_per_product",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785790929139,
+      "tag": "0024_not_counted_resolution",
+      "breakpoints": true
     }
   ]
 }
