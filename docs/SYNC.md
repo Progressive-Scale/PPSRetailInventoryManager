@@ -16,6 +16,26 @@ connects into the customer network.
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
 
+## Planned — an unguessable public company identifier
+
+**Agreed, not built** (recorded 2026-08-03). A company is currently identified by a small
+sequential integer. Before real customer rollout, the identifier used to configure an
+installation should be a GUID minted in pps so no one can guess or enumerate another
+company's identifier.
+
+This is hygiene, not a hole: `companyId` is never read from the request — the `X-Api-Key`
+hash resolves it server-side and RLS scopes every row — so knowing another company's int
+gains nothing without their key. What it fixes is a customer seeing that they are company
+`1`, and an int being a poor identifier for anything customer-facing.
+
+Planned shape: keep `companies.id` (it is the FK target everywhere and the RLS predicate)
+and add `companies.public_id uuid unique`. `GET /api/sync/stores` would then also return
+the public id. Agents should ignore unknown fields, per §5, so adding it is additive; a
+version bump will announce it when it lands.
+
+Whether **store** ids need the same treatment is still open — see
+`PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
 ## What's new in v3.4
 
 **One read-only endpoint: the store list.** Handoffs are addressed by cloud `storeId`,
