@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.3
+# Sync Agent Integration Contract — v3.4
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,11 +10,42 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.3`
+- **Contract version:** `v3.4`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
 - **Content type:** `application/json`.
+
+## What's new in v3.4
+
+**One read-only endpoint: the store list.** Handoffs are addressed by cloud `storeId`,
+so an agent has to know those ids — but until now the only way to see them was the
+portal's `GET /stores`, which is JWT + company-admin and unreachable with an API key.
+
+### 6. List stores — `GET /api/sync/stores`
+
+No query parameters; a company has few enough stores to return them all.
+
+```json
+{
+  "count": 2,
+  "stores": [
+    { "id": 1, "companyId": 1, "name": "Downtown", "city": "Springfield", "state": "IL", "isActive": true },
+    { "id": 7, "companyId": 1, "name": "Uptown",   "city": null,          "state": null, "isActive": false }
+  ]
+}
+```
+
+`id` is the value to send as `storeId` on a handoff line. **Inactive stores are
+included** — an agent mirroring these rows needs to know a store went inactive rather
+than watching it silently vanish, and historical handoffs still reference it.
+
+There is deliberately **no store code**: the cloud identifies a store by its integer
+id and has no second identifier. An ERP with its own code column should leave it null
+rather than inventing one.
+
+Read-only. Stores are created and edited in the portal; the cloud mints the ids and
+the ERP links to them.
 
 ## What's new in v3.3
 

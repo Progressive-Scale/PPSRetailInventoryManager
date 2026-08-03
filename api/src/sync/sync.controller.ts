@@ -29,6 +29,15 @@ export class SyncController {
     return this.sync.handoffs(companyId, dto.handoffs);
   }
 
+  /**
+   * The company's stores, so an agent can keep a local mirror of cloud store ids in
+   * step. Read-only: the cloud mints these ids and the ERP links to them.
+   */
+  @Get('stores')
+  stores(@ApiCompany() companyId: number) {
+    return this.sync.listStores(companyId);
+  }
+
   @Get('returns')
   returns(@ApiCompany() companyId: number, @Query('limit') limit?: string) {
     const n = limit ? Number(limit) : undefined;

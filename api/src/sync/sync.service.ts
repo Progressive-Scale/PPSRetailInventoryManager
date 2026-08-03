@@ -269,6 +269,34 @@ export class SyncService {
     return store;
   }
 
+  /**
+   * The company's stores, for an agent that needs to map cloud store ids to its own
+   * records. Deliberately separate from the portal's `GET /stores`: that one is JWT +
+   * COMPANY_ADMIN and returns the full row, while an agent authenticates with an API
+   * key and needs only enough to keep a local mirror in step. Nothing here is
+   * writable — the cloud mints store ids and the ERP links to them.
+   */
+  async listStores(companyId: number) {
+    return this.tenantDb.withCompany(companyId, async (tx) => {
+      const rows = await tx
+        // No store "code": the cloud identifies a store by its integer id and has no
+        // second identifier. An ERP mirroring these rows should leave its own code
+        // column null rather than inventing one.
+        .select({
+          id: stores.id,
+          companyId: stores.companyId,
+          name: stores.name,
+          city: stores.city,
+          state: stores.state,
+          isActive: stores.isActive,
+        })
+        .from(stores)
+        .where(eq(stores.companyId, companyId))
+        .orderBy(asc(stores.id));
+      return { count: rows.length, stores: rows };
+    });
+  }
+
   /** Oldest-first undelivered returns for the agent to pull. */
   async pendingReturns(companyId: number, limit?: number) {
     const take = limit && limit > 0 ? Math.min(limit, 500) : 100;
