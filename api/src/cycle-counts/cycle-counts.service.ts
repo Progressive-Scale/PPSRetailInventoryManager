@@ -19,6 +19,7 @@ import {
   products,
   storeLocations,
 } from '../db/schema';
+import { scanMatches } from '../db/scan-match';
 import { DataContext } from '../auth/auth.types';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { resolveOrCreateProduct } from '../products/product-catalog';
@@ -889,7 +890,7 @@ export class CycleCountsService {
           .where(
             and(
               eq(inventoryItems.companyId, ctx.companyId),
-              eq(inventoryItems.serial, line.serial),
+              scanMatches(line.serial),
             ),
           )
           .limit(1);
@@ -1002,12 +1003,14 @@ export class CycleCountsService {
           and(
             eq(inventoryItems.companyId, ctx.companyId),
             eq(inventoryItems.storeId, cc.storeId),
-            eq(inventoryItems.serial, serial),
+            scanMatches(serial),
           ),
         )
         .limit(1);
 
-      const base = { serial, itemId: unit?.id ?? null };
+      // Report the unit's OWN serial back, not the scanned string: a full-barcode scan
+      // resolves here, and the caller should learn the canonical serial from it.
+      const base = { serial: unit?.serial ?? serial, itemId: unit?.id ?? null };
       if (!unit) return { ...base, classification: 'UNKNOWN' as const };
 
       const shared = {

@@ -225,6 +225,10 @@ export class ImportChecksService {
         productId: product.id,
         needsReview: false,
         expirationDate: m.expirationDate ?? item.expirationDate,
+        // Only ever fills a gap. This unit was created from a bare serial scan, so it has
+        // no barcode; if it somehow does, that one was recorded closer to the label than
+        // this answer is.
+        ...(m.barcode && !item.barcode ? { barcode: m.barcode } : {}),
         importCheckStatus: 'MATCHED',
         importCheckResolvedAt: now,
         importCheckResult: {

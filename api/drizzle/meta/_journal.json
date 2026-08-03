@@ -155,6 +155,13 @@
       "when": 1785532747263,
       "tag": "0021_lost_item_status",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785781499994,
+      "tag": "0022_item_barcode",
+      "breakpoints": true
     }
   ]
 }

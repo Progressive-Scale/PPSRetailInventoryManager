@@ -35,7 +35,13 @@ export class HandoffItemDto {
   @IsInt() @IsPositive() storeId!: number;
 
   // --- unit only ---
+  // The SERIAL alone — the GS1 AI (21) value, e.g. '100000000462'. NOT the whole
+  // barcode: this is the string a store scans and the identity key for the unit.
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128) serial?: string;
+  // The full GS1-128 barcode from the label, if the ERP has one. Optional and purely
+  // additive — it is kept for traceability and matched as a fallback on scan, never
+  // used as the identity key.
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(400) barcode?: string;
   @IsOptional() @IsISO8601() expirationDate?: string;
 
   // --- stock only ---

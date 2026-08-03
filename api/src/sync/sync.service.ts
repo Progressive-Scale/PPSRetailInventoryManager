@@ -7,6 +7,7 @@ import {
   inventoryTransactions,
   outboxReturns,
   Product,
+  products,
   stores,
   syncReceipts,
 } from '../db/schema';
@@ -81,6 +82,50 @@ export class SyncService {
         reason: `unknown store id '${it.storeId}'`,
       };
     }
+    // The existing-serial lookup comes BEFORE resolving the product, and the collision
+    // check compares SKUs rather than product ids. resolveProduct CREATES a catalog row
+    // for an unknown sku, so doing it first left a phantom product behind every time a
+    // line was then rejected — the reject is not rolled back, it is reported.
+    const [existing] = await tx
+      .select({
+        id: inventoryItems.id,
+        productId: inventoryItems.productId,
+        barcode: inventoryItems.barcode,
+        sku: products.sku,
+      })
+      .from(inventoryItems)
+      .leftJoin(products, eq(products.id, inventoryItems.productId))
+      .where(
+        and(
+          eq(inventoryItems.companyId, companyId),
+          eq(inventoryItems.serial, it.serial),
+        ),
+      )
+      .limit(1);
+
+    // A serial already used by a DIFFERENT product is not a redelivery — it is two
+    // physical units competing for one identity. ERP serials are not always globally
+    // unique (in one real database 18 in-stock items share 5 serials across different
+    // GTINs), and (company, serial) is unique here, so relinking would quietly collapse
+    // two units into one row and move the first one's history onto the second's product.
+    // Refusing puts it in front of a human with both skus named.
+    //
+    // A null product is the legitimate case and still adopts: that is an unidentified
+    // scan being given its identity, which is the whole point of the review queue.
+    // Comparing sku strings is exactly what resolveOrCreateProduct keys on, so this is
+    // the same comparison one step earlier.
+    if (existing?.productId != null && existing.sku !== it.sku) {
+      return {
+        kind: 'unit',
+        serial: it.serial,
+        status: 'error',
+        reason:
+          `serial '${it.serial}' already identifies a unit of sku '${existing.sku}' ` +
+          `at this company; it cannot also be sku '${it.sku}'. Serials must be unique per company — ` +
+          `check whether the ERP reuses this serial across products.`,
+      };
+    }
+
     const product = await this.resolveProduct(tx, companyId, it, 'SERIALIZED');
     if (!product) {
       return {
@@ -91,24 +136,16 @@ export class SyncService {
       };
     }
 
-    const [existing] = await tx
-      .select()
-      .from(inventoryItems)
-      .where(
-        and(
-          eq(inventoryItems.companyId, companyId),
-          eq(inventoryItems.serial, it.serial),
-        ),
-      )
-      .limit(1);
-
     if (existing) {
       // Idempotent: relink to the catalog product; refresh expiration if given.
+      // The barcode is backfilled the same way — an agent upgraded to send it should
+      // be able to fill in units it handed off before it knew how.
       await tx
         .update(inventoryItems)
         .set({
           productId: product.id,
           ...(it.expirationDate ? { expirationDate: it.expirationDate } : {}),
+          ...(it.barcode ? { barcode: it.barcode } : {}),
           updatedAt: new Date(),
         })
         .where(eq(inventoryItems.id, existing.id));
@@ -127,6 +164,7 @@ export class SyncService {
         productId: product.id,
         locationId: null,
         serial: it.serial,
+        barcode: it.barcode ?? null,
         status: 'PENDING',
         expirationDate: it.expirationDate ?? null,
       })

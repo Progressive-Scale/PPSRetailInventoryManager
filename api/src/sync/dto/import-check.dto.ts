@@ -29,6 +29,11 @@ export class ImportMatchDto {
   @IsOptional() @IsISO8601() expirationDate?: string;
   /** PPS's own identifier for the product, stored for traceability. */
   @IsOptional() @IsString() @MaxLength(128) ppsProductRef?: string;
+  /**
+   * The full GS1-128 barcode from the label. A unit created from an unknown scan has no
+   * barcode — the store sent only a serial — so a match is the first chance to record it.
+   */
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(400) barcode?: string;
 }
 
 /** Why PPS could not answer cleanly, and what it did see. */

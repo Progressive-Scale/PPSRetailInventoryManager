@@ -486,8 +486,17 @@ export const inventoryItems = pgTable(
     // The area of the store this unit lives in. Null exactly when PENDING: the unit
     // is somewhere in transit, so claiming it sits in a location would be a lie.
     locationId: integer('location_id').references(() => storeLocations.id),
-    // The ERP's serial / GS1 id. Unique per company.
+    // The unit's serial — the GS1 AI (21) value, e.g. '100000000462'. This is what
+    // a store physically scans and what identity/dedupe key on. Unique per company.
     serial: text('serial').notNull(),
+    // The full GS1-128 barcode the ERP printed on the label, when it sent one:
+    // '(01) 90097586111018 (3202) 000082 (13) 240911 (21) 100000000462'. Kept for
+    // traceability back to the label, and matched on scan so a store that scans the
+    // WHOLE barcode instead of just the serial still resolves to this unit.
+    //
+    // Deliberately NOT unique: the same label content can legitimately repeat where
+    // the serial does not, and a uniqueness failure here must never block a handoff.
+    barcode: text('barcode'),
     status: itemStatus('status').notNull().default('ON_HAND'),
     // Set on a unit that needs a human (or the import agent) to identify it.
     // Distinct from products.needs_review, which flags an incomplete CATALOG row;
@@ -526,6 +535,11 @@ export const inventoryItems = pgTable(
     ),
     index('inventory_items_company_product_idx').on(t.companyId, t.productId),
     index('inventory_items_company_location_idx').on(t.companyId, t.locationId),
+    // Scanning the whole barcode has to be as fast as scanning the serial, so the
+    // fallback match is indexed too. Partial: most rows carry no barcode.
+    index('inventory_items_company_barcode_idx')
+      .on(t.companyId, t.barcode)
+      .where(sql`barcode IS NOT NULL`),
     // These two CHECKs are the whole reason the columns above can be nullable
     // without the nulls becoming ambiguous. Enforced in the database rather than
     // in a service, because every write path — sync, cycle count, portal, the

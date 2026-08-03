@@ -1,0 +1,2 @@
+ALTER TABLE "inventory_items" ADD COLUMN "barcode" text;--> statement-breakpoint
+CREATE INDEX "inventory_items_company_barcode_idx" ON "inventory_items" USING btree ("company_id","barcode") WHERE barcode IS NOT NULL;

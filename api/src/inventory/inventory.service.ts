@@ -18,6 +18,7 @@ import {
   SQL,
 } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
+import { scanMatches } from '../db/scan-match';
 import {
   InventoryItem,
   inventoryItems,
@@ -138,7 +139,12 @@ export class InventoryService {
         const like = `%${term}%`;
         const serialConds: SQL[] = [
           eq(inventoryItems.companyId, ctx.companyId),
-          ilike(inventoryItems.serial, like),
+          // Searching the barcode too, so pasting a scanned label into the box finds
+          // the unit rather than nothing.
+          or(
+            ilike(inventoryItems.serial, like),
+            ilike(inventoryItems.barcode, like),
+          )!,
         ];
         if (storeId != null)
           serialConds.push(eq(inventoryItems.storeId, storeId));
@@ -726,6 +732,7 @@ export class InventoryService {
           locationName: storeLocations.name,
           locationKind: storeLocations.kind,
           serial: inventoryItems.serial,
+          barcode: inventoryItems.barcode,
           status: inventoryItems.status,
           expirationDate: inventoryItems.expirationDate,
           receivedAt: inventoryItems.receivedAt,
@@ -1218,7 +1225,7 @@ export class InventoryService {
       if (query.serial) {
         const conds: SQL[] = [
           eq(inventoryItems.companyId, ctx.companyId),
-          eq(inventoryItems.serial, query.serial),
+          scanMatches(query.serial)!,
           eq(inventoryItems.status, 'ON_HAND'),
         ];
         if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
