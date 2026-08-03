@@ -162,6 +162,13 @@
       "when": 1785781499994,
       "tag": "0022_item_barcode",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785783973665,
+      "tag": "0023_serial_unique_per_product",
+      "breakpoints": true
     }
   ]
 }

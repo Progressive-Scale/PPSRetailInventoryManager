@@ -524,10 +524,22 @@ export const inventoryItems = pgTable(
       .defaultNow(),
   },
   (t) => [
-    uniqueIndex('inventory_items_company_serial_uniq').on(
-      t.companyId,
-      t.serial,
-    ),
+    // A serial is unique **per product**, not per company. That is the ERP's own rule:
+    // (sku, serial) is what joins a unit back to Ordersystem8, and the same serial can
+    // legitimately appear under two different SKUs. A company-wide unique index rejected
+    // those as duplicates.
+    //
+    // Two partial indexes rather than one on (company, product, serial), because
+    // product_id is nullable and Postgres treats NULLs as distinct — one index would let
+    // unlimited productless rows pile up for the same serial.
+    uniqueIndex('inventory_items_company_product_serial_uniq')
+      .on(t.companyId, t.productId, t.serial)
+      .where(sql`product_id IS NOT NULL`),
+    // An unidentified scan has no product yet, so it gets one row per serial until a
+    // human or the import agent names it — at which point the index above takes over.
+    uniqueIndex('inventory_items_company_unidentified_serial_uniq')
+      .on(t.companyId, t.serial)
+      .where(sql`product_id IS NULL`),
     index('inventory_items_company_store_status_idx').on(
       t.companyId,
       t.storeId,

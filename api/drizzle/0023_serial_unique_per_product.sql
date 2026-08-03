@@ -1,0 +1,3 @@
+DROP INDEX "inventory_items_company_serial_uniq";--> statement-breakpoint
+CREATE UNIQUE INDEX "inventory_items_company_product_serial_uniq" ON "inventory_items" USING btree ("company_id","product_id","serial") WHERE product_id IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "inventory_items_company_unidentified_serial_uniq" ON "inventory_items" USING btree ("company_id","serial") WHERE product_id IS NULL;

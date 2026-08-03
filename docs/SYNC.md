@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.5
+# Sync Agent Integration Contract — v3.6
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -35,6 +35,26 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.6
+
+**A serial is unique per SKU, not per company.** The idempotency key for a unit handoff is
+now **(company, sku, serial)**.
+
+This matches the ERP's own rule — `(sku, serial)` is what joins a unit back to
+Ordersystem8 — and it means the same serial may legitimately appear under two different
+SKUs. Previously the cloud enforced company-wide uniqueness, so the second SKU's unit was
+treated as a redelivery of the first and silently relinked to the wrong product.
+
+What changes for an agent: **nothing to send**. Redelivering the same `(sku, serial)` is
+still `already_processed`. What changes is that the same serial under a *different* sku now
+creates a second unit instead of colliding with the first.
+
+Consequence worth knowing: a scanned serial is no longer guaranteed to identify one unit.
+Where the cloud cannot tell two candidates apart it returns **409** rather than guessing —
+scanning the whole `barcode` disambiguates, since that carries the GTIN. In practice a
+cycle count's product scope resolves it, so 409 means two units of *different* SKUs share a
+serial *and* both are countable in the same scope.
 
 ## What's new in v3.5
 
@@ -327,9 +347,10 @@ the cloud store id) are required; `description`, `price`, `upc` are optional.
 **`kind: "unit"`** (serialized): also requires `serial`* — the GS1 AI **(21)** value
 alone, **not** the whole barcode; see v3.5 above. `barcode` (the full label string, max 400
 chars) and `expirationDate` (a `YYYY-MM-DD` calendar date) are optional. Idempotency key is
-**(company, serial)** — redelivering the same serial never creates a duplicate unit or
-ledger row, and re-sending with `barcode` fills it in on a unit handed off before the agent
-knew how.
+**(company, sku, serial)** — redelivering the same serial *for the same sku* never creates a
+duplicate unit or ledger row, and re-sending with `barcode` fills it in on a unit handed off
+before the agent knew how. The same serial under a **different** sku is a different physical
+unit and creates a second one; see v3.6.
 
 **`kind: "stock"`** (quantity): also requires `quantity`* (positive integer) and
 `handoffId`* — a **client-generated id, unique per shipment line**. The server

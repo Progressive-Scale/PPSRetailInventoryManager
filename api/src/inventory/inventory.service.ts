@@ -1229,7 +1229,9 @@ export class InventoryService {
           eq(inventoryItems.status, 'ON_HAND'),
         ];
         if (storeId != null) conds.push(eq(inventoryItems.storeId, storeId));
-        const [unit] = await tx
+        // Two rows, not one: a serial is unique per product, so a scan can match units of
+        // two different SKUs. Moving the wrong one is worse than asking.
+        const units = await tx
           .select({
             id: inventoryItems.id,
             storeId: inventoryItems.storeId,
@@ -1246,9 +1248,17 @@ export class InventoryService {
           .innerJoin(products, eq(products.id, inventoryItems.productId))
           .innerJoin(storeLocations, eq(storeLocations.id, inventoryItems.locationId))
           .where(and(...conds))
-          .limit(1);
-        if (!unit) throw new NotFoundException('No on-hand unit for that serial.');
-        return { kind: 'serial' as const, item: unit };
+          .limit(2);
+        if (units.length === 0) {
+          throw new NotFoundException('No on-hand unit for that serial.');
+        }
+        if (units.length > 1) {
+          throw new ConflictException(
+            `Serial '${query.serial}' matches on-hand units of more than one product ` +
+              `(${units.map((u) => u.sku).join(', ')}). Scan the full barcode to pick one.`,
+          );
+        }
+        return { kind: 'serial' as const, item: units[0] };
       }
 
       if (query.upc) {

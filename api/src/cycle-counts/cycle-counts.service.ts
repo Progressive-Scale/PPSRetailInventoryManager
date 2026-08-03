@@ -985,7 +985,9 @@ export class CycleCountsService {
       const cc = await this.loadCount(tx, ctx, id);
       const scopeProducts = await this.scopeProductIds(tx, ctx, cc.id);
 
-      const [unit] = await tx
+      // Deliberately NOT limit(1). A serial is unique per product, not per company, so a
+      // scan can legitimately match two units of different SKUs at the same store.
+      const candidates = await tx
         .select({
           id: inventoryItems.id,
           serial: inventoryItems.serial,
@@ -1005,8 +1007,31 @@ export class CycleCountsService {
             eq(inventoryItems.storeId, cc.storeId),
             scanMatches(serial),
           ),
-        )
-        .limit(1);
+        );
+
+      // The count's own scope is the tie-breaker, and usually a decisive one: a count
+      // covers specific products, so only one candidate is normally countable here.
+      const countable = candidates.filter(
+        (c) =>
+          c.status === 'ON_HAND' &&
+          (cc.locationId == null || c.locationId === cc.locationId) &&
+          (scopeProducts.length === 0 ||
+            (c.productId != null && scopeProducts.includes(c.productId))),
+      );
+
+      // Still more than one and nothing to choose between them. Picking arbitrarily would
+      // count the wrong unit and leave the other looking missing, so say so instead.
+      const pool = countable.length > 0 ? countable : candidates;
+      if (pool.length > 1) {
+        const skus = pool.map((c) => c.sku ?? 'unidentified').join(', ');
+        throw new ConflictException(
+          `Serial '${serial}' matches ${pool.length} units at this store (${skus}). ` +
+            `Serials are unique per product, so this one cannot be resolved from the ` +
+            `serial alone — scan the full barcode, or count these by product.`,
+        );
+      }
+
+      const unit = pool[0];
 
       // Report the unit's OWN serial back, not the scanned string: a full-barcode scan
       // resolves here, and the caller should learn the canonical serial from it.
