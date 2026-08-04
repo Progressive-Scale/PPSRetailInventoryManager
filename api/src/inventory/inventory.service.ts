@@ -865,7 +865,17 @@ export class InventoryService {
 
       const pageRes = await tx.execute(sql`
         ${cte}
-        SELECT c.* FROM combined c${where}
+        SELECT c.*,
+               -- Whether this store already has a live reorder for this product, so the
+               -- grid can badge it and offer Cancel instead of a second request. Joined
+               -- per row rather than in the CTE because it is about (store, product),
+               -- which both branches of the union already carry.
+               EXISTS (SELECT 1 FROM reorder_requests r
+                       WHERE r.company_id = ${ctx.companyId}
+                         AND r.store_id = c.store_id
+                         AND r.product_id = c.product_id
+                         AND r.status = 'OPEN') AS reorder_open
+        FROM combined c${where}
         ORDER BY ${sortCol} ${sortDir} NULLS LAST, c.name ASC, c.serial ASC NULLS FIRST
         LIMIT ${limit} OFFSET ${offset}`);
       const countRes = await tx.execute(sql`
@@ -895,6 +905,7 @@ export class InventoryService {
         createdAt: r.created_at,
         soldAt: r.sold_at,
         status: r.status,
+        reorderOpen: r.reorder_open,
       }));
       return { data, total, limit, offset };
     });

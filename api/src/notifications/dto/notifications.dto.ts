@@ -14,7 +14,11 @@ import {
 import { PaginationQuery } from '../../common/pagination';
 
 const STATUSES = ['UNREAD', 'READ', 'DISMISSED'] as const;
-const TYPES = ['EXPIRATION_WARNING', 'INVITE_ACCEPTED'] as const;
+const TYPES = [
+  'EXPIRATION_WARNING',
+  'INVITE_ACCEPTED',
+  'REORDER_ACKNOWLEDGED',
+] as const;
 
 export class ListNotificationsQuery extends PaginationQuery {
   @IsOptional()

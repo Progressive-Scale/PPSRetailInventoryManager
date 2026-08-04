@@ -2,12 +2,14 @@ import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 const toBool = ({ value }: { value: unknown }) =>
@@ -35,6 +37,13 @@ export class UpdateProductDto {
   @IsOptional() @Transform(toBool) @IsBoolean() active?: boolean;
   // Clearing this completes a review; setting it back is allowed too.
   @IsOptional() @Transform(toBool) @IsBoolean() needsReview?: boolean;
+  /**
+   * Low-stock hint threshold. An explicit null clears it, which is why the type
+   * admits null: the field has to distinguish "leave it alone" (absent) from "no
+   * threshold" (null), and a plain optional number cannot.
+   */
+  @IsOptional() @ValidateIf((_o, v) => v !== null) @IsInt() @Min(0)
+  reorderThreshold?: number | null;
   // Accepted but must match the existing value (tracking_type is immutable);
   // a mismatch is rejected by the controller.
   @IsOptional() @IsEnum(TRACKING_TYPES as unknown as string[])

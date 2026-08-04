@@ -28,6 +28,16 @@ export class NotificationsService {
     return requested ?? null;
   }
 
+  /**
+   * A notification is either broadcast (`user_id` null — everyone in store scope sees
+   * it, which is how every notification behaved before targeting existed) or addressed
+   * at one person. Every read and every write goes through this, so a reorder
+   * acknowledgement cannot show up in a colleague's bell or be dismissed by them.
+   */
+  private audienceCond(ctx: DataContext): SQL {
+    return sql`(${notifications.userId} IS NULL OR ${notifications.userId} = ${ctx.userId})`;
+  }
+
   // ---- notifications -----------------------------------------------------
 
   async list(
@@ -37,7 +47,10 @@ export class NotificationsService {
     const { limit, offset } = resolvePaging(query);
     const storeId = this.storeScope(ctx, query.storeId);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      const conds: SQL[] = [eq(notifications.companyId, ctx.companyId)];
+      const conds: SQL[] = [
+        eq(notifications.companyId, ctx.companyId),
+        this.audienceCond(ctx),
+      ];
       if (storeId != null) conds.push(eq(notifications.storeId, storeId));
       if (query.status) conds.push(eq(notifications.status, query.status));
       if (query.type) conds.push(eq(notifications.type, query.type));
@@ -64,6 +77,7 @@ export class NotificationsService {
       const conds: SQL[] = [
         eq(notifications.companyId, ctx.companyId),
         eq(notifications.status, 'UNREAD'),
+        this.audienceCond(ctx),
       ];
       if (storeId != null) conds.push(eq(notifications.storeId, storeId));
       const [{ count }] = await tx
@@ -83,6 +97,7 @@ export class NotificationsService {
           and(
             eq(notifications.id, id),
             eq(notifications.companyId, ctx.companyId),
+            this.audienceCond(ctx),
           ),
         )
         .limit(1);
@@ -114,6 +129,7 @@ export class NotificationsService {
       const conds: SQL[] = [
         eq(notifications.companyId, ctx.companyId),
         inArray(notifications.id, ids),
+        this.audienceCond(ctx),
       ];
       if (storeId != null) conds.push(eq(notifications.storeId, storeId));
       const rows = await tx
@@ -136,6 +152,7 @@ export class NotificationsService {
       const conds: SQL[] = [
         eq(notifications.companyId, ctx.companyId),
         inArray(notifications.id, ids),
+        this.audienceCond(ctx),
       ];
       // A store user may only clear their own store's alerts; company-wide rows
       // (store_id null) belong to admins.

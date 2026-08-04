@@ -15,6 +15,7 @@ import { AdminModule } from './admin/admin.module';
 import { CycleCountsModule } from './cycle-counts/cycle-counts.module';
 import { LocationsModule } from './locations/locations.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ReordersModule } from './reorders/reorders.module';
 import { MailModule } from './mail/mail.module';
 import { AppThrottlerGuard } from './common/app-throttler.guard';
 
@@ -34,6 +35,7 @@ import { AppThrottlerGuard } from './common/app-throttler.guard';
     CycleCountsModule,
     LocationsModule,
     NotificationsModule,
+    ReordersModule,
     MailModule,
   ],
   controllers: [AppController],
