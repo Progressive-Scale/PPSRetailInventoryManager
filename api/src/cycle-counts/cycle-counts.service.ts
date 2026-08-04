@@ -145,6 +145,22 @@ export class CycleCountsService {
   // ---- open --------------------------------------------------------------
 
   /**
+   * A store's name for a ledger note, falling back to its id.
+   *
+   * Notes are read by a person months later, so they name the store rather than quoting
+   * an id they would then have to go and look up. The row's own store_id column still
+   * carries the id, so nothing is lost by leaving it out of the prose.
+   */
+  private async storeLabel(tx: Tx, storeId: number): Promise<string> {
+    const [row] = await tx
+      .select({ name: stores.name })
+      .from(stores)
+      .where(eq(stores.id, storeId))
+      .limit(1);
+    return row?.name ?? `store #${storeId}`;
+  }
+
+  /**
    * What a counter is expected to find: in-scope serialized units, the store's expected
    * arrivals, and quantity stock lines.
    *
@@ -976,6 +992,13 @@ export class CycleCountsService {
         // Already moved by another route between submit and approval.
         if (before.storeId === cc.storeId) return;
 
+        // Names for the notes. A ledger row is read by a person months later, and
+        // "transferred out to store 3" makes them go and look up what store 3 is.
+        const [fromStore, toStore] = await Promise.all([
+          this.storeLabel(tx, before.storeId),
+          this.storeLabel(tx, cc.storeId),
+        ]);
+
         await tx
           .update(inventoryItems)
           .set({
@@ -999,8 +1022,8 @@ export class CycleCountsService {
           locationFromId: before.locationId,
           locationToId: null,
           note:
-            `Cycle count #${cc.id} — scanned at another store; ` +
-            `transferred out to store ${cc.storeId}`,
+            `Cycle count #${cc.id} — scanned at ${toStore}; ` +
+            `transferred out of ${fromStore} to ${toStore}`,
         });
         await tx.insert(inventoryTransactions).values({
           ...base,
@@ -1012,8 +1035,8 @@ export class CycleCountsService {
           locationToId: line.locationId,
           note:
             before.status === 'PENDING'
-              ? `Cycle count #${cc.id} — arrival routed to store ${before.storeId}, received here instead`
-              : `Cycle count #${cc.id} — transferred in from store ${before.storeId}`,
+              ? `Cycle count #${cc.id} — arrival routed to ${fromStore}, received at ${toStore} instead`
+              : `Cycle count #${cc.id} — transferred in to ${toStore} from ${fromStore}`,
         });
         return;
       }
