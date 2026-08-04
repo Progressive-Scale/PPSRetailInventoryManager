@@ -258,7 +258,15 @@ interface Column {
                          each rolled up over whatever the filters admit. -->
                     <tr class="clickable prod-row" [class.open]="isExpanded(p)" (click)="onProductClick(p)">
                       @if (isCompanyAdmin) {
-                        <td class="sel-col"></td>
+                        <td class="sel-col" (click)="$event.stopPropagation()">
+                          <input
+                            type="checkbox"
+                            [checked]="productAllSelected(p)"
+                            [indeterminate]="productPartlySelected(p)"
+                            (change)="toggleProduct(p)"
+                            [title]="'Select every row under ' + p.sku"
+                          />
+                        </td>
                       }
                       <td class="sku-cell">
                         <span class="chev" [class.open]="isExpanded(p)" aria-hidden="true">›</span>
@@ -1728,11 +1736,61 @@ export class InventoryComponent implements OnInit {
       this.expanded.set(open);
       return;
     }
-    open.add(p.productId);
-    this.expanded.set(open);
+    this.expand(p);
     // Lazy: a product's rows are fetched the first time it is opened and then kept, so
     // closing and reopening costs nothing. A filter change drops the lot (collapseAll).
-    if (!this.units().has(p.productId)) this.loadUnits(p);
+    void this.ensureUnits(p);
+  }
+
+  /** Open a product without closing it if it already is. */
+  private expand(p: ProductStockRow): void {
+    if (this.expanded().has(p.productId)) return;
+    this.expanded.update((open) => new Set(open).add(p.productId));
+  }
+
+  /**
+   * Tick a product = select everything under it.
+   *
+   * It expands as it selects, because a selection you cannot see is one you cannot
+   * check before acting on it — and the bulk bar is about to offer to move or sell it.
+   * The rows have to be loaded to be selected at all, so this awaits them.
+   */
+  async toggleProduct(p: ProductStockRow): Promise<void> {
+    // Leaving filter-scope the same way a single row does: materialise what is on
+    // screen first, so ticking one product cannot silently mean "all N matching".
+    if (this.filterScope()) {
+      const shown = new Map<string, StockRow>();
+      for (const r of this.visibleUnits()) shown.set(r.rowId, r);
+      this.filterScope.set(false);
+      this.selectedRows.set(shown);
+    }
+
+    const deselect = this.productAllSelected(p);
+    this.expand(p);
+    const rows = await this.ensureUnits(p);
+    const next = new Map(this.selectedRows());
+    for (const r of rows) {
+      if (deselect) next.delete(r.rowId);
+      else next.set(r.rowId, r);
+    }
+    this.selectedRows.set(next);
+  }
+
+  /** Every loaded row of this product is selected. False while nothing is loaded. */
+  productAllSelected(p: ProductStockRow): boolean {
+    const rows = this.units().get(p.productId);
+    if (!rows || rows.length === 0) return false;
+    const sel = this.selectedRows();
+    return rows.every((r) => sel.has(r.rowId));
+  }
+
+  /** Some but not all — drives the tri-state box. */
+  productPartlySelected(p: ProductStockRow): boolean {
+    const rows = this.units().get(p.productId);
+    if (!rows || rows.length === 0) return false;
+    const sel = this.selectedRows();
+    const n = rows.reduce((acc, r) => acc + (sel.has(r.rowId) ? 1 : 0), 0);
+    return n > 0 && n < rows.length;
   }
 
   /** Collapse everything and forget the loaded sub-rows. */
@@ -1760,40 +1818,39 @@ export class InventoryComponent implements OnInit {
    * what guarantees they are the rows its On hand counted. rowCount is the limit for
    * the same reason: it is how many the rollup said there would be.
    */
-  private loadUnits(p: ProductStockRow): void {
+  private async ensureUnits(p: ProductStockRow): Promise<StockRow[]> {
+    const cached = this.units().get(p.productId);
+    if (cached) return cached;
+
     this.unitsLoading.update((m) => new Set(m).add(p.productId));
     this.unitsError.update((m) => {
       const next = new Map(m);
       next.delete(p.productId);
       return next;
     });
-    this.api
-      .listStock({
-        ...this.currentFilters(),
-        productId: p.productId,
-        sortBy: 'expiration',
-        sortDir: 'asc',
-        limit: Math.max(p.rowCount, 1),
-        offset: 0,
-      })
-      .subscribe({
-        next: (res) => {
-          this.units.update((m) => new Map(m).set(p.productId, res.data));
-          this.unitsLoading.update((m) => {
-            const next = new Set(m);
-            next.delete(p.productId);
-            return next;
-          });
-        },
-        error: (err) => {
-          this.unitsError.update((m) => new Map(m).set(p.productId, messageFor(err)));
-          this.unitsLoading.update((m) => {
-            const next = new Set(m);
-            next.delete(p.productId);
-            return next;
-          });
-        },
+    try {
+      const res = await firstValueFrom(
+        this.api.listStock({
+          ...this.currentFilters(),
+          productId: p.productId,
+          sortBy: 'expiration',
+          sortDir: 'asc',
+          limit: Math.max(p.rowCount, 1),
+          offset: 0,
+        }),
+      );
+      this.units.update((m) => new Map(m).set(p.productId, res.data));
+      return res.data;
+    } catch (err) {
+      this.unitsError.update((m) => new Map(m).set(p.productId, messageFor(err)));
+      return [];
+    } finally {
+      this.unitsLoading.update((m) => {
+        const next = new Set(m);
+        next.delete(p.productId);
+        return next;
       });
+    }
   }
 
   /** Fetch the single stock row behind a one-location UPC product and open its detail. */
