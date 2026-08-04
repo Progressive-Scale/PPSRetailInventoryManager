@@ -14,6 +14,7 @@ import {
   LoginResponse,
   CycleCount,
   CycleCountDetail,
+  CycleCountSortField,
   CycleCountStatus,
   CreateInvitation,
   CreateStore,
@@ -378,12 +379,17 @@ export class ApiService {
     offset?: number;
     storeId?: number;
     status?: CycleCountStatus;
+    /** Sorted server-side: reordering one page of twenty is not ordering the table. */
+    sortBy?: CycleCountSortField;
+    sortDir?: 'asc' | 'desc';
   }): Observable<Paginated<CycleCount>> {
     let p = new HttpParams();
     if (params?.limit != null) p = p.set('limit', String(params.limit));
     if (params?.offset != null) p = p.set('offset', String(params.offset));
     if (params?.storeId != null) p = p.set('storeId', String(params.storeId));
     if (params?.status) p = p.set('status', params.status);
+    if (params?.sortBy) p = p.set('sortBy', params.sortBy);
+    if (params?.sortDir) p = p.set('sortDir', params.sortDir);
     return this.http.get<Paginated<CycleCount>>('/api/cycle-counts', { params: p });
   }
 

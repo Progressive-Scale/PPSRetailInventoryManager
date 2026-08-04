@@ -130,6 +130,17 @@ const CYCLE_COUNT_STATUSES = [
   'CANCELLED',
 ] as const;
 
+/** Columns the cycle-count list may be ordered by. Whitelisted, not free text. */
+export const CYCLE_COUNT_SORT_FIELDS = [
+  'id',
+  'status',
+  'openedAt',
+  'expectedCount',
+  'scannedCount',
+  'soldGeneratedCount',
+] as const;
+export type CycleCountSortField = (typeof CYCLE_COUNT_SORT_FIELDS)[number];
+
 export class ListCycleCountsQuery extends PaginationQuery {
   @IsOptional() @IsInt() @IsPositive() storeId?: number;
 
@@ -138,6 +149,14 @@ export class ListCycleCountsQuery extends PaginationQuery {
   @IsOptional()
   @IsEnum(CYCLE_COUNT_STATUSES as unknown as string[])
   status?: (typeof CYCLE_COUNT_STATUSES)[number];
+
+  // Sorted server-side for the same reason: reordering the twenty rows that happen to be
+  // on this page would claim to sort the table while sorting a slice of it.
+  @IsOptional()
+  @IsEnum(CYCLE_COUNT_SORT_FIELDS as unknown as string[])
+  sortBy?: CycleCountSortField;
+
+  @IsOptional() @IsEnum(['asc', 'desc']) sortDir?: 'asc' | 'desc';
 }
 
 export class RejectCycleCountDto {

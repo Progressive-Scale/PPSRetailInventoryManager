@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, ne, sql, SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne, sql, SQL } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   CycleCount,
@@ -1205,11 +1205,30 @@ export class CycleCountsService {
       if (storeId != null) conds.push(eq(cycleCounts.storeId, storeId));
       if (query.status) conds.push(eq(cycleCounts.status, query.status));
       const where = and(...conds);
+
+      // Whitelisted column, never the raw string: this reaches an ORDER BY. Newest-first
+      // by id stays the default, and is also the tie-break for every other column so a
+      // page boundary cannot show the same row twice or skip one.
+      const sortable = {
+        id: cycleCounts.id,
+        status: cycleCounts.status,
+        openedAt: cycleCounts.openedAt,
+        expectedCount: cycleCounts.expectedCount,
+        scannedCount: cycleCounts.scannedCount,
+        soldGeneratedCount: cycleCounts.soldGeneratedCount,
+      } as const;
+      const column = sortable[query.sortBy ?? 'id'];
+      const direction = query.sortDir === 'asc' ? asc : desc;
+      const orderBy =
+        query.sortBy && query.sortBy !== 'id'
+          ? [direction(column), desc(cycleCounts.id)]
+          : [direction(cycleCounts.id)];
+
       const data = await tx
         .select()
         .from(cycleCounts)
         .where(where)
-        .orderBy(desc(cycleCounts.id))
+        .orderBy(...orderBy)
         .limit(limit)
         .offset(offset);
       const [{ count }] = await tx

@@ -468,6 +468,15 @@ export type CycleCountStatus =
   | 'CLOSED'
   | 'CANCELLED';
 
+/** Columns the cycle-count list can be ordered by. Must match the API's whitelist. */
+export type CycleCountSortField =
+  | 'id'
+  | 'status'
+  | 'openedAt'
+  | 'expectedCount'
+  | 'scannedCount'
+  | 'soldGeneratedCount';
+
 export type CycleCountResolution =
   | 'SCANNED'
   | 'COUNTED_BY_UPC'

@@ -1,5 +1,12 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import {
+  Component,
+  computed,
+  HostListener,
+  inject,
+  OnInit,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
@@ -10,6 +17,7 @@ import {
   CycleCountDetail,
   CycleCountLine,
   CycleCountResolution,
+  CycleCountSortField,
   CycleCountStatus,
   Store,
 } from '../../core/models';
@@ -94,12 +102,15 @@ interface ResolutionGroup {
             <table>
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Status</th>
-                  <th>Opened</th>
-                  <th class="num">Expected</th>
-                  <th class="num">Scanned</th>
-                  <th class="num">Sold</th>
+                  @for (col of columns; track col.field) {
+                    <th
+                      [class.num]="col.num"
+                      class="sortable"
+                      (click)="sort(col.field)"
+                    >
+                      {{ col.label }}<span class="arrow">{{ sortIcon(col.field) }}</span>
+                    </th>
+                  }
                 </tr>
               </thead>
               <tbody>
@@ -135,8 +146,12 @@ interface ResolutionGroup {
         }
       </section>
 
+      <!-- A dialog rather than a panel below the table: the detail is long enough to
+           push the row you clicked off screen, so you lost your place in the list
+           every time you looked at one. Backdrop click and Escape both dismiss. -->
       @if (selectedId() !== null && tab() === 'counts') {
-        <section class="card">
+        <div class="overlay" (click)="closeDetail()">
+        <section class="card modal" (click)="$event.stopPropagation()">
           <div class="row-between">
             <h2>Count #{{ selectedId() }}</h2>
             <button class="ghost" (click)="closeDetail()">Close</button>
@@ -245,6 +260,7 @@ interface ResolutionGroup {
 
           }
         </section>
+        </div>
       }
       }
     </main>
@@ -264,6 +280,40 @@ interface ResolutionGroup {
         border-radius: 12px;
         background: var(--surface);
         padding: 1.25rem;
+      }
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 1.5rem 1rem;
+        z-index: 50;
+        overflow-y: auto;
+      }
+      /* Wider than the app's form dialogs because this one holds tables of serials,
+         and capped in height so a count with hundreds of lines scrolls inside the
+         dialog instead of stretching the page behind it. */
+      .modal {
+        width: 100%;
+        max-width: 820px;
+        max-height: calc(100vh - 3rem);
+        overflow-y: auto;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      }
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+      th.sortable:hover {
+        color: var(--brand, var(--accent));
+      }
+      .arrow {
+        display: inline-block;
+        width: 1em;
+        color: var(--brand, var(--accent));
       }
       h2 {
         margin: 0 0 0.85rem;
@@ -579,6 +629,20 @@ export class CycleCountsComponent implements OnInit {
   readonly detailLoading = signal(false);
   readonly detailError = signal<string | null>(null);
 
+  /** Column order in the table, and the field each header sorts by. */
+  readonly columns: { field: CycleCountSortField; label: string; num?: boolean }[] = [
+    { field: 'id', label: '#' },
+    { field: 'status', label: 'Status' },
+    { field: 'openedAt', label: 'Opened' },
+    { field: 'expectedCount', label: 'Expected', num: true },
+    { field: 'scannedCount', label: 'Scanned', num: true },
+    { field: 'soldGeneratedCount', label: 'Sold', num: true },
+  ];
+
+  /** Newest first, matching the API's default. */
+  readonly sortBy = signal<CycleCountSortField>('id');
+  readonly sortDir = signal<'asc' | 'desc'>('desc');
+
   readonly hasNext = computed(() => this.offset() + this.counts().length < this.total());
   readonly rangeLabel = computed(() => {
     const start = this.total() === 0 ? 0 : this.offset() + 1;
@@ -638,6 +702,8 @@ export class CycleCountsComponent implements OnInit {
         offset: this.offset(),
         status: this.statusFilter() ?? undefined,
         storeId: this.storeFilter() ?? undefined,
+        sortBy: this.sortBy(),
+        sortDir: this.sortDir(),
       })
       .subscribe({
         next: (res) => {
@@ -676,6 +742,36 @@ export class CycleCountsComponent implements OnInit {
     this.offset.set(0);
     this.closeDetail();
     this.reload();
+  }
+
+  /**
+   * Sort by a column, toggling direction when it is already the active one.
+   *
+   * Back to page one: after reordering, "page 2" describes a different set of rows, and
+   * staying on it would land the user somewhere arbitrary in the new order.
+   */
+  sort(field: CycleCountSortField): void {
+    if (this.sortBy() === field) {
+      this.sortDir.update((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      this.sortBy.set(field);
+      // Ids and dates are most useful newest-first; everything else reads better
+      // ascending on the first click.
+      this.sortDir.set(field === 'id' || field === 'openedAt' ? 'desc' : 'asc');
+    }
+    this.offset.set(0);
+    this.reload();
+  }
+
+  sortIcon(field: CycleCountSortField): string {
+    if (this.sortBy() !== field) return '';
+    return this.sortDir() === 'asc' ? '▲' : '▼';
+  }
+
+  /** Escape closes the detail dialog, matching the rest of the app. */
+  @HostListener('document:keydown.escape')
+  onEsc(): void {
+    if (this.selectedId() !== null) this.closeDetail();
   }
 
   select(c: CycleCount): void {
