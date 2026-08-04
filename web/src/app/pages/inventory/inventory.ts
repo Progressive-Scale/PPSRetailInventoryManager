@@ -166,6 +166,27 @@ interface Column {
                 Refresh
               </button>
             </div>
+            <!-- Which way the same stock is listed. Sticks for the session. -->
+            <div class="f-actions view-toggle">
+              <button
+                type="button"
+                class="ghost"
+                [class.active]="viewMode() === 'byProduct'"
+                (click)="setViewMode('byProduct')"
+                title="One row per product, expandable to its items"
+              >
+                By product
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                [class.active]="viewMode() === 'allItems'"
+                (click)="setViewMode('allItems')"
+                title="One row per item / stock line, ungrouped"
+              >
+                All items
+              </button>
+            </div>
           </form>
 
           @if (isCompanyAdmin && selectionCount() > 0) {
@@ -227,7 +248,7 @@ interface Column {
             <p class="error">{{ listError() }}</p>
           } @else if (loading() && !loaded()) {
             <p class="muted">Loading…</p>
-          } @else if (loaded() && productRows().length === 0) {
+          } @else if (loaded() && shownRowCount() === 0) {
             <p class="muted">No inventory matches.</p>
           } @else {
             <div class="table-scroll" [class.busy]="loading()">
@@ -253,6 +274,54 @@ interface Column {
                   </tr>
                 </thead>
                 <tbody>
+                  @if (viewMode() === 'allItems') {
+                    @for (row of flatRows(); track row.rowId) {
+                      <tr class="clickable" (click)="openRow(row)">
+                        @if (isCompanyAdmin) {
+                          <td class="sel-col" (click)="$event.stopPropagation()">
+                            <input
+                              type="checkbox"
+                              [checked]="isRowSelected(row)"
+                              (change)="toggleRow(row)"
+                            />
+                          </td>
+                        }
+                        <td>
+                          {{ row.sku }}
+                          @if (row.serial) {
+                            <span class="matched">{{ row.serial }}</span>
+                          }
+                        </td>
+                        <td class="muted">{{ row.upc || '—' }}</td>
+                        <td>
+                          {{ row.name }}
+                          @if (row.reorderOpen) {
+                            <span class="ro-badge" title="This store has an open reorder for this product">
+                              Reorder
+                            </span>
+                          }
+                        </td>
+                        <td>
+                          <span class="type-badge" [class]="'tt-' + row.trackingType">{{ typeLabel(row.trackingType) }}</span>
+                        </td>
+                        @if (isCompanyAdmin) {
+                          <td class="muted">{{ storeName(row.storeId) }}</td>
+                        }
+                        <td class="num">{{ row.onHand }}</td>
+                        <td>
+                          <span class="kind-badge" [class]="'k-' + row.locationKind">{{ row.locationName }}</span>
+                        </td>
+                        <td [class]="expClass(row.expirationDate)">
+                          {{ row.expirationDate ? (row.expirationDate | date: 'shortDate') : '—' }}
+                          @if (row.rowKind === 'unit' && row.status !== 'ON_HAND') {
+                            <span class="st">{{ statusLabel(row.status) }}</span>
+                          }
+                        </td>
+                        <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
+                        <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
+                      </tr>
+                    }
+                  } @else {
                   @for (p of productRows(); track p.productId) {
                     <!-- Tier one: the product. The same columns as the rows beneath it,
                          each rolled up over whatever the filters admit. -->
@@ -269,7 +338,11 @@ interface Column {
                         </td>
                       }
                       <td class="sku-cell">
-                        <span class="chev" [class.open]="isExpanded(p)" aria-hidden="true">›</span>
+                        @if (canExpand(p)) {
+                          <span class="chev" [class.open]="isExpanded(p)" aria-hidden="true">›</span>
+                        } @else {
+                          <span class="chev-spacer" aria-hidden="true"></span>
+                        }
                         {{ p.sku }}
                       </td>
                       <td class="muted">{{ p.upc || '—' }}</td>
@@ -356,6 +429,7 @@ interface Column {
                         }
                       }
                     }
+                  }
                   }
                 </tbody>
               </table>
@@ -704,6 +778,27 @@ interface Column {
       td.sku-cell {
         padding-left: 0.25rem;
       }
+      /* Holds the SKU in line with the ones that do have a caret. */
+      .chev-spacer {
+        display: inline-block;
+        width: 0.7rem;
+      }
+      /* Two halves of one control, so it reads as a switch rather than two buttons. */
+      .view-toggle button.active {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .view-toggle button:first-child {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+      }
+      .view-toggle button:last-child {
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+        margin-left: -1px;
+      }
       /* Tier two is still indented — enough to read as belonging to the product above,
          no more. It was 1.9rem, which pushed the serial well clear of its own column. */
       td.sub-sku {
@@ -991,8 +1086,19 @@ export class InventoryComponent implements OnInit {
 
   readonly tab = signal<SubTab>('stock');
 
+  /**
+   * How the same stock is listed: grouped into products (default) or one row per item.
+   * Kept in sessionStorage so it survives navigation without becoming a permanent
+   * preference somebody set once and forgot.
+   */
+  readonly viewMode = signal<'byProduct' | 'allItems'>(
+    sessionStorage.getItem('inv.viewMode') === 'allItems' ? 'allItems' : 'byProduct',
+  );
+
   /** The grid's own rows: one per product. */
   readonly productRows = signal<ProductStockRow[]>([]);
+  /** Ungrouped rows, for the All-items view. */
+  readonly flatRows = signal<StockRow[]>([]);
   /**
    * Sub-rows per expanded product, keyed by productId — the SAME StockRow shape the
    * grid used to list flat, so every existing per-row behaviour (selection, the detail
@@ -1078,6 +1184,8 @@ export class InventoryComponent implements OnInit {
    * all the rows the open expansions are showing.
    */
   readonly visibleUnits = computed(() => {
+    // Ungrouped: every row on the page is selectable in its own right.
+    if (this.viewMode() === 'allItems') return this.flatRows();
     const map = this.units();
     const out: StockRow[] = [];
     for (const id of this.expanded()) {
@@ -1096,10 +1204,7 @@ export class InventoryComponent implements OnInit {
     this.filterScope() ? this.total() : this.selectedRows().size,
   );
   readonly canEscalate = computed(
-    () =>
-      !this.filterScope() &&
-      this.pageAllSelected() &&
-      this.total() > this.productRows().length,
+    () => !this.filterScope() && this.pageAllSelected() && this.total() > this.shownRowCount(),
   );
   /** Any quantity row in scope → expiration edit is not allowed. */
   readonly hasQuantitySelected = computed(() => {
@@ -1132,16 +1237,19 @@ export class InventoryComponent implements OnInit {
   });
 
   /** Header cells including the checkbox column, for a sub-row's colspan. */
+  /** Rows the grid is showing, whichever way it is listing them. */
+  readonly shownRowCount = computed(() =>
+    this.viewMode() === 'allItems' ? this.flatRows().length : this.productRows().length,
+  );
+
   readonly columnCount = computed(
     () => this.columns().length + (this.isCompanyAdmin ? 1 : 0),
   );
 
-  readonly hasNext = computed(
-    () => this.offset() + this.productRows().length < this.total(),
-  );
+  readonly hasNext = computed(() => this.offset() + this.shownRowCount() < this.total());
   readonly rangeLabel = computed(() => {
     const start = this.total() === 0 ? 0 : this.offset() + 1;
-    const end = this.offset() + this.productRows().length;
+    const end = this.offset() + this.shownRowCount();
     return `${start}–${end} of ${this.total()}`;
   });
 
@@ -1194,14 +1302,22 @@ export class InventoryComponent implements OnInit {
             switchMap(() => {
               this.loading.set(true);
               this.listError.set(null);
-              return this.api
-                .listStockByProduct({
-                  ...this.currentFilters(),
-                  sortBy: this.sortBy(),
-                  sortDir: this.sortDir(),
-                  limit: this.limit(),
-                  offset: this.offset(),
-                })
+              const query = {
+                ...this.currentFilters(),
+                sortBy: this.sortBy(),
+                sortDir: this.sortDir(),
+                limit: this.limit(),
+                offset: this.offset(),
+              };
+              // Cast to one observable type: the two reads return different row shapes,
+              // and a union of observables makes .pipe() unresolvable. The subscriber
+              // narrows again by viewMode, which is the only place the shape matters.
+              const source = (
+                this.viewMode() === 'byProduct'
+                  ? this.api.listStockByProduct(query)
+                  : this.api.listStock(query)
+              ) as ReturnType<typeof this.api.listStock>;
+              return source
                 .pipe(
                   catchError((err) => {
                     this.loading.set(false);
@@ -1215,7 +1331,13 @@ export class InventoryComponent implements OnInit {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((res) => {
-        this.productRows.set(res.data);
+        if (this.viewMode() === 'allItems') {
+          this.flatRows.set(res.data as StockRow[]);
+          this.productRows.set([]);
+        } else {
+          this.productRows.set(res.data as unknown as ProductStockRow[]);
+          this.flatRows.set([]);
+        }
         this.total.set(res.total);
         this.loading.set(false);
         this.loaded.set(true);
@@ -1740,6 +1862,27 @@ export class InventoryComponent implements OnInit {
     // Lazy: a product's rows are fetched the first time it is opened and then kept, so
     // closing and reopening costs nothing. A filter change drops the lot (collapseAll).
     void this.ensureUnits(p);
+  }
+
+  /**
+   * Whether a product row has a lower tier at all. A UPC product with a single stock
+   * row has none — a click opens its history instead — so it must not show a caret
+   * promising an expansion that will not happen.
+   */
+  canExpand(p: ProductStockRow): boolean {
+    return p.trackingType === 'SERIALIZED' || p.rowCount > 1;
+  }
+
+  setViewMode(mode: 'byProduct' | 'allItems'): void {
+    if (this.viewMode() === mode) return;
+    this.viewMode.set(mode);
+    sessionStorage.setItem('inv.viewMode', mode);
+    // The two views count different things, so a page offset and a selection made in
+    // one are meaningless in the other.
+    this.collapseAll();
+    this.clearSelection();
+    this.offset.set(0);
+    this.reload();
   }
 
   /** Open a product without closing it if it already is. */
