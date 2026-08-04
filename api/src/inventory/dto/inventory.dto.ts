@@ -154,6 +154,17 @@ export class ListStockQuery extends PaginationQuery {
   @IsPositive()
   locationId?: number;
 
+  /**
+   * Narrow to one product — what an expanded product row asks for. It is the same
+   * query the grid runs, restricted, so the sub-rows are provably the ones that On
+   * hand counted rather than a separately-filtered set that might disagree.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productId?: number;
+
   @IsOptional()
   @IsIn(['SERIALIZED', 'QUANTITY'])
   type?: 'SERIALIZED' | 'QUANTITY';

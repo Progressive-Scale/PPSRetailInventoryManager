@@ -787,8 +787,14 @@ export class InventoryService {
    * type, and a created-date range. A raw UNION keeps pagination + totals exact
    * across both kinds (RLS still applies — these are the base tables).
    */
-  async listStock(ctx: DataContext, query: ListStockQuery): Promise<Paginated<unknown>> {
-    const { limit, offset } = resolvePaging(query);
+  /**
+   * The shared half of both stock reads: the unit ⋃ stock CTE and the WHERE that the
+   * filters build. `listStock` selects rows from it, `listStockByProduct` groups them.
+   * One definition so a filter cannot mean one thing in the grid and another in an
+   * expanded product — the two are shown together and any drift would be visible as a
+   * count that disagrees with the rows beneath it.
+   */
+  private stockQuery(ctx: DataContext, query: ListStockQuery) {
     const storeId = this.readStoreId(ctx, query.storeId);
     const term = query.search?.trim();
     const like = term ? `%${term}%` : null;
@@ -801,6 +807,146 @@ export class InventoryService {
         : statusScope === 'ALL'
           ? sql`TRUE`
           : sql`i.status = 'ON_HAND'`;
+
+    const stockBranch = includeStock
+      ? sql`
+        UNION ALL
+        SELECT 'stock'::text, 'stock:' || s.id::text, NULL::uuid,
+               p.id, p.sku, p.upc, p.name, p.tracking_type::text, s.store_id, s.quantity_on_hand,
+               l.id, l.name, l.kind::text,
+               -- A quantity stock line has no sold date: selling decrements a counter
+               -- rather than retiring an identifiable unit, so there is nothing to date.
+               NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text
+        FROM inventory_stock s
+        JOIN products p ON p.id = s.product_id
+        JOIN store_locations l ON l.id = s.location_id
+        WHERE s.company_id = ${ctx.companyId} AND s.quantity_on_hand > 0`
+      : sql``;
+
+    const cte = sql`
+      WITH combined AS (
+        SELECT 'unit'::text AS row_kind, i.id::text AS row_id, i.id AS item_id,
+               p.id AS product_id, p.sku, p.upc, p.name,
+               p.tracking_type::text AS tracking_type, i.store_id,
+               (CASE WHEN i.status = 'ON_HAND' THEN 1 ELSE 0 END) AS on_hand,
+               l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
+               i.serial, i.expiration_date, i.created_at, i.sold_at,
+               i.status::text AS status
+        FROM inventory_items i
+        JOIN products p ON p.id = i.product_id
+        JOIN store_locations l ON l.id = i.location_id
+        WHERE i.company_id = ${ctx.companyId} AND ${unitStatusCond}
+        ${stockBranch}
+      )`;
+
+    const conds: SQL[] = [];
+    if (storeId != null) conds.push(sql`c.store_id = ${storeId}`);
+    if (query.locationId != null) conds.push(sql`c.location_id = ${query.locationId}`);
+    if (query.productId != null) conds.push(sql`c.product_id = ${query.productId}`);
+    if (query.type) conds.push(sql`c.tracking_type = ${query.type}`);
+    if (query.createdFrom) conds.push(sql`c.created_at >= ${query.createdFrom}::date`);
+    if (query.createdTo)
+      conds.push(sql`c.created_at < (${query.createdTo}::date + interval '1 day')`);
+    if (like)
+      conds.push(
+        sql`(c.name ILIKE ${like} OR c.sku ILIKE ${like} OR c.upc ILIKE ${like} OR c.serial ILIKE ${like})`,
+      );
+    const where = conds.length ? sql` WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+
+    return { cte, where };
+  }
+
+  /**
+   * Product-level rollup of the same rows the grid shows: one row per product, On hand
+   * summed over whatever the filters admit, so the number always equals the rows that
+   * appear when it is expanded.
+   *
+   * Date columns come back as a MIN/MAX pair rather than one value, because a product
+   * has many units and one date would be a lie. Sorting follows suit: ascending orders
+   * by the earliest, descending by the latest — which is what each direction is
+   * actually asking about.
+   */
+  async listStockByProduct(
+    ctx: DataContext,
+    query: ListStockQuery,
+  ): Promise<Paginated<unknown>> {
+    const { limit, offset } = resolvePaging(query);
+    const { cte, where } = this.stockQuery(ctx, query);
+
+    // Whitelisted, and for date columns the expression depends on the direction.
+    const desc = query.sortDir === 'desc';
+    const sortCols: Record<string, SQL> = {
+      sku: sql`c.sku`,
+      barcode: sql`c.upc`,
+      name: sql`c.name`,
+      type: sql`c.tracking_type`,
+      onHand: sql`sum(c.on_hand)`,
+      expiration: desc ? sql`max(c.expiration_date)` : sql`min(c.expiration_date)`,
+      created: desc ? sql`max(c.created_at)` : sql`min(c.created_at)`,
+      sold: desc ? sql`max(c.sold_at)` : sql`min(c.sold_at)`,
+    };
+    const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
+    const sortDir = desc ? sql`DESC` : sql`ASC`;
+
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const pageRes = await tx.execute(sql`
+        ${cte}
+        SELECT c.product_id, c.sku, c.upc, c.name, c.tracking_type,
+               sum(c.on_hand)::int              AS on_hand,
+               count(*)::int                    AS row_count,
+               min(c.expiration_date)           AS expiration_from,
+               max(c.expiration_date)           AS expiration_to,
+               min(c.created_at)                AS created_from,
+               max(c.created_at)                AS created_to,
+               min(c.sold_at)                   AS sold_from,
+               max(c.sold_at)                   AS sold_to,
+               -- Shipped but not yet received. Deliberately counted OUTSIDE the CTE:
+               -- the status filter keeps PENDING out of the rows (and out of On hand),
+               -- yet a shop still needs to know something is on its way.
+               (SELECT count(*)::int FROM inventory_items pi
+                 WHERE pi.company_id = ${ctx.companyId}
+                   AND pi.product_id = c.product_id
+                   AND pi.status = 'PENDING'
+                   ${query.storeId != null ? sql`AND pi.store_id = ${query.storeId}` : sql``}
+               )                                AS pending_count
+        FROM combined c${where}
+        GROUP BY c.product_id, c.sku, c.upc, c.name, c.tracking_type
+        ORDER BY ${sortCol} ${sortDir} NULLS LAST, c.name ASC
+        LIMIT ${limit} OFFSET ${offset}`);
+      const countRes = await tx.execute(sql`
+        ${cte}
+        SELECT count(*)::int AS n FROM (
+          SELECT 1 FROM combined c${where} GROUP BY c.product_id
+        ) g`);
+
+      const rows = (pageRes as unknown as { rows: Record<string, unknown>[] }).rows;
+      const total = Number(
+        (countRes as unknown as { rows: Array<{ n: number }> }).rows[0]?.n ?? 0,
+      );
+      const data = rows.map((r) => ({
+        productId: r.product_id,
+        sku: r.sku,
+        upc: r.upc,
+        name: r.name,
+        trackingType: r.tracking_type,
+        onHand: r.on_hand,
+        // How many rows the expansion will hold: units for a serialized product,
+        // stock-locations for a quantity one.
+        rowCount: r.row_count,
+        expirationFrom: r.expiration_from,
+        expirationTo: r.expiration_to,
+        createdFrom: r.created_from,
+        createdTo: r.created_to,
+        soldFrom: r.sold_from,
+        soldTo: r.sold_to,
+        pendingCount: r.pending_count,
+      }));
+      return { data, total, limit, offset };
+    });
+  }
+
+  async listStock(ctx: DataContext, query: ListStockQuery): Promise<Paginated<unknown>> {
+    const { limit, offset } = resolvePaging(query);
 
     // Whitelisted sort column (never interpolate user input into SQL directly).
     const sortCols: Record<string, SQL> = {
@@ -817,52 +963,9 @@ export class InventoryService {
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = query.sortDir === 'desc' ? sql`DESC` : sql`ASC`;
+    const { cte, where } = this.stockQuery(ctx, query);
 
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
-      const stockBranch = includeStock
-        ? sql`
-          UNION ALL
-          SELECT 'stock'::text, 'stock:' || s.id::text, NULL::uuid,
-                 p.id, p.sku, p.upc, p.name, p.tracking_type::text, s.store_id, s.quantity_on_hand,
-                 l.id, l.name, l.kind::text,
-                 -- A quantity stock line has no sold date: selling decrements a counter
-                 -- rather than retiring an identifiable unit, so there is nothing to date.
-                 NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text
-          FROM inventory_stock s
-          JOIN products p ON p.id = s.product_id
-          JOIN store_locations l ON l.id = s.location_id
-          WHERE s.company_id = ${ctx.companyId} AND s.quantity_on_hand > 0`
-        : sql``;
-
-      const cte = sql`
-        WITH combined AS (
-          SELECT 'unit'::text AS row_kind, i.id::text AS row_id, i.id AS item_id,
-                 p.id AS product_id, p.sku, p.upc, p.name,
-                 p.tracking_type::text AS tracking_type, i.store_id,
-                 (CASE WHEN i.status = 'ON_HAND' THEN 1 ELSE 0 END) AS on_hand,
-                 l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
-                 i.serial, i.expiration_date, i.created_at, i.sold_at,
-                 i.status::text AS status
-          FROM inventory_items i
-          JOIN products p ON p.id = i.product_id
-          JOIN store_locations l ON l.id = i.location_id
-          WHERE i.company_id = ${ctx.companyId} AND ${unitStatusCond}
-          ${stockBranch}
-        )`;
-
-      const conds: SQL[] = [];
-      if (storeId != null) conds.push(sql`c.store_id = ${storeId}`);
-      if (query.locationId != null) conds.push(sql`c.location_id = ${query.locationId}`);
-      if (query.type) conds.push(sql`c.tracking_type = ${query.type}`);
-      if (query.createdFrom) conds.push(sql`c.created_at >= ${query.createdFrom}::date`);
-      if (query.createdTo)
-        conds.push(sql`c.created_at < (${query.createdTo}::date + interval '1 day')`);
-      if (like)
-        conds.push(
-          sql`(c.name ILIKE ${like} OR c.sku ILIKE ${like} OR c.upc ILIKE ${like} OR c.serial ILIKE ${like})`,
-        );
-      const where = conds.length ? sql` WHERE ${sql.join(conds, sql` AND `)}` : sql``;
-
       const pageRes = await tx.execute(sql`
         ${cte}
         SELECT c.*,

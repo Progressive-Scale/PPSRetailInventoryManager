@@ -47,7 +47,19 @@ export class InventoryController {
     return this.svc.list(ctx, query);
   }
 
-  // Combined flat stock grid: one row per unit / per quantity stock-location.
+  /**
+   * Product-level rollup of the stock grid: one row per product, On hand summed over
+   * whatever the filters admit. Shares every query parameter with 'stock' on purpose —
+   * the grid and an expanded row have to be answering the same question, or a count
+   * would disagree with the rows shown beneath it.
+   */
+  @Get('stock/by-product')
+  listStockByProduct(@Ctx() ctx: DataContext, @Query() query: ListStockQuery) {
+    return this.svc.listStockByProduct(ctx, query);
+  }
+
+  // Combined flat stock grid: one row per unit / per quantity stock-location. Given
+  // productId, this is exactly what an expanded product row lists.
   @Get('stock')
   listStock(@Ctx() ctx: DataContext, @Query() query: ListStockQuery) {
     return this.svc.listStock(ctx, query);
