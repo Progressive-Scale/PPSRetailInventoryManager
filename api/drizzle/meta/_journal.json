@@ -176,6 +176,13 @@
       "when": 1785790929139,
       "tag": "0024_not_counted_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785851835745,
+      "tag": "0025_transferred_in_resolution",
+      "breakpoints": true
     }
   ]
 }

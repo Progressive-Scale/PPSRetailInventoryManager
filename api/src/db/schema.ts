@@ -128,6 +128,11 @@ export const cycleCountResolution = pgEnum('cycle_count_resolution', [
   // Found in the counted location while the system had it elsewhere in the store;
   // moved to where it actually is rather than swept as missing.
   'MOVED_IN',
+  // Scanned here while the system had it at a DIFFERENT store — most often an arrival
+  // routed to one store and physically delivered to another. The unit moves to the store
+  // that scanned it, because that is where it demonstrably is. Distinct from MOVED_IN,
+  // which never leaves the store: this changes which store owns the stock.
+  'TRANSFERRED_IN',
   // In scope, unscanned, and belonging to a product NOTHING was scanned for. Reported
   // so the count is honest about what it did not reach, and applied as a no-op: a
   // product the counter never touched is not evidence that its stock is gone. Contrast

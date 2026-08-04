@@ -1,0 +1,1 @@
+ALTER TYPE "public"."cycle_count_resolution" ADD VALUE 'TRANSFERRED_IN' BEFORE 'NOT_COUNTED';

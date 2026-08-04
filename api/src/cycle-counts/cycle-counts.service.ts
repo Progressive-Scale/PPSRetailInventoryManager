@@ -18,6 +18,7 @@ import {
   Product,
   products,
   storeLocations,
+  stores,
 } from '../db/schema';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
 import { DataContext } from '../auth/auth.types';
@@ -391,10 +392,38 @@ export class CycleCountsService {
           ),
         );
 
+      // Units the company owns at a DIFFERENT store. Almost always a delivery routed to
+      // one store and physically dropped at another: the handoff said Downtown, the truck
+      // went to Test. Without this the serial is invisible here and the scan is silently
+      // discarded — the counter believes they received it and nothing anywhere changes.
+      // Scanning it IS the evidence of where the unit is, so it comes to this store.
+      //
+      // Only PENDING and ON_HAND travel. A SOLD unit at another store is that store's
+      // sale to reverse, and dragging it here would move the correction to the wrong
+      // books.
+      const otherStoreUnits = await tx
+        .select({
+          id: inventoryItems.id,
+          serial: inventoryItems.serial,
+          productId: inventoryItems.productId,
+          storeId: inventoryItems.storeId,
+          locationId: inventoryItems.locationId,
+          status: inventoryItems.status,
+        })
+        .from(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.companyId, ctx.companyId),
+            ne(inventoryItems.storeId, cc.storeId),
+            inArray(inventoryItems.status, ['PENDING', 'ON_HAND']),
+          ),
+        );
+
       const byInScope = new Map(inScopeUnits.map((u) => [u.serial, u]));
       const byElsewhere = new Map(elsewhere.map((u) => [u.serial, u]));
       const byPending = new Map(pendingUnits.map((u) => [u.serial, u]));
       const bySold = new Map(soldUnits.map((u) => [u.serial, u]));
+      const byOtherStore = new Map(otherStoreUnits.map((u) => [u.serial, u]));
 
       const lines: ProposedLine[] = [];
       const accountedInScope = new Set<string>();
@@ -459,6 +488,25 @@ export class CycleCountsService {
             quantity: null,
             resolution: 'RECEIVED',
             locationId: contextLocationId,
+            locationFromId: null,
+            importCheckRequested: false,
+          });
+          continue;
+        }
+
+        // Belongs to another store. Checked after this store's own buckets, so a serial
+        // that exists here is never dragged away from where it already is.
+        const away = byOtherStore.get(serial);
+        if (away) {
+          lines.push({
+            productId: away.productId,
+            itemId: away.id,
+            serial,
+            quantity: null,
+            resolution: 'TRANSFERRED_IN',
+            locationId: contextLocationId,
+            // No location to move FROM: the unit is changing store, and its old store's
+            // location means nothing here. The old store is recorded in the ledger row.
             locationFromId: null,
             importCheckRequested: false,
           });
@@ -810,6 +858,69 @@ export class CycleCountsService {
         return;
       }
 
+      // Scanned here, recorded at another store. The scan is the evidence, so the unit
+      // moves — and it lands ON_HAND whether it was PENDING (an arrival delivered to the
+      // wrong store, received here instead) or ON_HAND (physically relocated).
+      case 'TRANSFERRED_IN': {
+        if (!line.itemId || line.locationId == null) return;
+
+        // Read the old store before overwriting it: the ledger needs to show the stock
+        // leaving somewhere, and after the update that information is gone.
+        const [before] = await tx
+          .select({
+            storeId: inventoryItems.storeId,
+            locationId: inventoryItems.locationId,
+            status: inventoryItems.status,
+          })
+          .from(inventoryItems)
+          .where(eq(inventoryItems.id, line.itemId))
+          .limit(1);
+        if (!before) return;
+        // Already moved by another route between submit and approval.
+        if (before.storeId === cc.storeId) return;
+
+        await tx
+          .update(inventoryItems)
+          .set({
+            storeId: cc.storeId,
+            locationId: line.locationId,
+            status: 'ON_HAND',
+            receivedAt: before.status === 'PENDING' ? now : undefined,
+            updatedAt: now,
+          })
+          .where(eq(inventoryItems.id, line.itemId));
+
+        // Two rows, one per store's books. A single row would leave the losing store's
+        // history showing stock that silently evaporated.
+        await tx.insert(inventoryTransactions).values({
+          ...base,
+          storeId: before.storeId,
+          productId: line.productId,
+          itemId: line.itemId,
+          type: 'MOVE',
+          quantityDelta: 0,
+          locationFromId: before.locationId,
+          locationToId: null,
+          note:
+            `Cycle count #${cc.id} — scanned at another store; ` +
+            `transferred out to store ${cc.storeId}`,
+        });
+        await tx.insert(inventoryTransactions).values({
+          ...base,
+          productId: line.productId,
+          itemId: line.itemId,
+          type: before.status === 'PENDING' ? 'RECEIVE' : 'MOVE',
+          quantityDelta: 0,
+          locationFromId: null,
+          locationToId: line.locationId,
+          note:
+            before.status === 'PENDING'
+              ? `Cycle count #${cc.id} — arrival routed to store ${before.storeId}, received here instead`
+              : `Cycle count #${cc.id} — transferred in from store ${before.storeId}`,
+        });
+        return;
+      }
+
       case 'RECEIVED': {
         if (!line.itemId || line.locationId == null) return;
         // Status and location in one statement: the CHECK constraint forbids a
@@ -1044,27 +1155,56 @@ export class CycleCountsService {
 
       // Deliberately NOT limit(1). A serial is unique per product, not per company, so a
       // scan can legitimately match two units of different SKUs at the same store.
-      const candidates = await tx
+      //
+      // Company-wide, not store-scoped: a unit recorded at ANOTHER store is exactly the
+      // case worth answering — a delivery routed to one store and dropped at another.
+      // Store-scoped, the serial looked unknown and the counter was sent down the
+      // new-product path for a unit the company already owned.
+      const allCandidates = await tx
         .select({
           id: inventoryItems.id,
           serial: inventoryItems.serial,
           status: inventoryItems.status,
           productId: inventoryItems.productId,
+          storeId: inventoryItems.storeId,
           locationId: inventoryItems.locationId,
           locationName: storeLocations.name,
+          storeName: stores.name,
           sku: products.sku,
           name: products.name,
         })
         .from(inventoryItems)
         .leftJoin(products, eq(products.id, inventoryItems.productId))
         .leftJoin(storeLocations, eq(storeLocations.id, inventoryItems.locationId))
+        .leftJoin(stores, eq(stores.id, inventoryItems.storeId))
         .where(
-          and(
-            eq(inventoryItems.companyId, ctx.companyId),
-            eq(inventoryItems.storeId, cc.storeId),
-            scanMatches(serial),
-          ),
+          and(eq(inventoryItems.companyId, ctx.companyId), scanMatches(serial)),
         );
+
+      // This store's own units win outright. Only when the serial is nowhere here do the
+      // other stores' units get considered, so nothing is ever dragged away from the
+      // store that already holds it.
+      const here = allCandidates.filter((c) => c.storeId === cc.storeId);
+      const candidates = here.length > 0 ? here : allCandidates;
+
+      // Recorded at another store, and this count is where it actually turned up. Report
+      // it as ELSEWHERE — the same answer as "found at another location", because it is
+      // the same idea one level up, and submit does the moving either way. Reusing the
+      // existing classification also means a handheld build that predates this still
+      // records the scan correctly instead of falling through to the unknown dialog.
+      if (here.length === 0 && candidates.length === 1) {
+        const away = candidates[0];
+        return {
+          serial: away.serial,
+          itemId: away.id,
+          productId: away.productId,
+          sku: away.sku,
+          name: away.name,
+          locationId: away.locationId,
+          locationName: away.storeName ?? `store ${away.storeId}`,
+          classification: 'ELSEWHERE' as const,
+        };
+      }
 
       // The count's own scope is the tie-breaker, and usually a decisive one: a count
       // covers specific products, so only one candidate is normally countable here.
@@ -1333,6 +1473,7 @@ export class CycleCountsService {
       REINSTATED: [],
       MOVED_IN: [],
       NOT_COUNTED: [],
+      TRANSFERRED_IN: [],
     };
     for (const r of rows) byResolution[r.resolution].push(r);
 
@@ -1375,6 +1516,8 @@ export class CycleCountsService {
        * reviewer can see the count's real coverage rather than assuming a clean sweep.
        */
       notCounted: byResolution.NOT_COUNTED,
+      /** Units taken over from another store because they were scanned here. */
+      transferredIn: byResolution.TRANSFERRED_IN,
       destructive,
       /** True while the proposals are waiting on an admin. */
       awaitingReview: cc.status === 'AWAITING_REVIEW',
