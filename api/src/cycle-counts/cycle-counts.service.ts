@@ -1012,13 +1012,18 @@ export class CycleCountsService {
 
         // Two rows, one per store's books. A single row would leave the losing store's
         // history showing stock that silently evaporated.
+        //
+        // -1 / +1, NOT the 0 an intra-store MOVE uses. quantity_delta is the change in
+        // units on hand for the store on that row: a shelf-to-shelf move changes nothing
+        // (hence 0), but a transfer genuinely leaves one store and joins another. With 0
+        // on both, summing a store's ledger put this unit at the store it left.
         await tx.insert(inventoryTransactions).values({
           ...base,
           storeId: before.storeId,
           productId: line.productId,
           itemId: line.itemId,
           type: 'MOVE',
-          quantityDelta: 0,
+          quantityDelta: -1,
           locationFromId: before.locationId,
           locationToId: null,
           note:
@@ -1030,7 +1035,10 @@ export class CycleCountsService {
           productId: line.productId,
           itemId: line.itemId,
           type: before.status === 'PENDING' ? 'RECEIVE' : 'MOVE',
-          quantityDelta: 0,
+          // +1 even for a PENDING arrival. The handoff RECEIPT counted +1 on the store it
+          // was ROUTED to, and the -1 above takes it back off there, so this is the only
+          // row that puts the unit on this store's books.
+          quantityDelta: 1,
           locationFromId: null,
           locationToId: line.locationId,
           note:

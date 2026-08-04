@@ -629,11 +629,22 @@ export const inventoryStock = pgTable(
 // same transaction as the item/stock update. Covers both tracking types:
 // item_id is set for serialized units only; quantity_delta is ±N.
 //
+// quantity_delta is the change in UNITS ON HAND for the store on that row. A serial is
+// one unit, so a serialized row is only ever +1 (arrived, reinstated), -1 (sold) or 0.
+// Quantity rows carry the real amount. Nothing sums this column today — on-hand comes
+// from inventory_items.status and inventory_stock — but it is written to be summable, so
+// a store's rows for one unit must net to 1 while it holds that unit and 0 once it does
+// not.
+//
 // Location context: RECEIPT rows record location_to_id (where stock landed,
 // BACKROOM on intake); SALE/ADJUSTMENT/RETURN record location_from_id (where it
 // left). MOVE rows set BOTH location_from_id and location_to_id; for a MOVE,
 // quantity_delta is 0 for serialized (item_id set) and the moved quantity as a
 // POSITIVE number for quantity products (from/to express the direction).
+//
+// The 0 above is for a move WITHIN a store, where nothing enters or leaves. A move
+// BETWEEN stores is two rows on two stores' books and must be -1 / +1: with 0 on both,
+// summing a store's ledger leaves the unit at the store it left.
 export const inventoryTransactions = pgTable(
   'inventory_transactions',
   {
