@@ -10,8 +10,16 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute } from '@angular/router';
-import { catchError, EMPTY, firstValueFrom, Subject, switchMap, timer } from 'rxjs';
+import { ActivatedRoute, ParamMap } from '@angular/router';
+import {
+  catchError,
+  EMPTY,
+  firstValueFrom,
+  skip,
+  Subject,
+  switchMap,
+  timer,
+} from 'rxjs';
 import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
@@ -966,7 +974,18 @@ export class InventoryComponent implements OnInit {
 
   ngOnInit(): void {
     this.startReloadPipeline();
-    this.applyDeepLink();
+    // The link in the address bar right now.
+    this.applyDeepLink(this.route.snapshot.queryParamMap);
+    // And every later one. Angular REUSES this component when only the query params
+    // change, so ngOnInit does not run again — clicking a notification while already on
+    // Inventory updated the address bar and did nothing else, which is why it appeared to
+    // need a manual Enter (that forces a full page load, which does re-run ngOnInit).
+    // skip(1) because the current value was just handled from the snapshot above.
+    this.route.queryParamMap
+      .pipe(skip(1), takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => {
+        if (this.applyDeepLink(params)) this.reload();
+      });
     if (this.isCompanyAdmin) {
       this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
     } else {
@@ -1051,17 +1070,24 @@ export class InventoryComponent implements OnInit {
    * Opened from a notification: ?itemId=&serial= searches for that unit and opens
    * its detail once the row arrives. The serial drives the search because the stock
    * query has no by-id filter; the id then picks the exact row.
+   *
+   * @returns whether a link was found, so the caller knows if a reload is warranted.
    */
-  private applyDeepLink(): void {
-    const params = this.route.snapshot.queryParamMap;
+  private applyDeepLink(params: ParamMap): boolean {
     const itemId = params.get('itemId');
     const serial = params.get('serial');
-    if (!itemId) return;
+    if (!itemId) return false;
     this.pendingItemId = itemId;
     if (serial) this.searchTerm = serial;
     // Sold units must be reachable too, so do not restrict by status.
     this.statusFilter = 'ALL';
+    // The link points at a unit, which only the stock grid shows. Arriving on Locations
+    // or Pending would land on a page with no sign of the thing that was clicked.
+    this.tab.set('stock');
+    // Any previously open detail belongs to a different unit.
+    this.selectedRow.set(null);
     this.offset.set(0);
+    return true;
   }
 
   /** Select the deep-linked unit once it appears in the loaded rows. */

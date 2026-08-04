@@ -1,5 +1,13 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import {
+  Component,
+  computed,
+  DestroyRef,
+  inject,
+  OnInit,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { ApiService } from '../../core/api.service';
@@ -1277,6 +1285,7 @@ type Tab = 'stores' | 'users' | 'invitations';
 export class ManageComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly tab = signal<Tab>('stores');
   readonly loading = signal(false);
@@ -1539,10 +1548,18 @@ export class ManageComponent implements OnInit {
     // initial tab, so load them once up front.
     this.loadStores();
     // ?tab=users lets a notification link open straight onto the right tab.
-    const wanted = this.route.snapshot.queryParamMap.get('tab');
-    if (wanted === 'users' || wanted === 'invitations' || wanted === 'stores') {
-      this.select(wanted);
-    }
+    //
+    // Subscribed, not read once: Angular reuses this component when only the query params
+    // change, so a notification clicked while already on Manage would update the address
+    // bar and leave the tab where it was. Same fault the Inventory deep link had.
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => {
+        const wanted = params.get('tab');
+        if (wanted === 'users' || wanted === 'invitations' || wanted === 'stores') {
+          this.select(wanted);
+        }
+      });
   }
 
   select(tab: Tab): void {
