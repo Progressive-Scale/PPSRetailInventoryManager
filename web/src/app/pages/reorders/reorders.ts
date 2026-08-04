@@ -8,6 +8,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { messageFor } from '../../core/http-error';
 import { Reorder, ReorderStatus, Store } from '../../core/models';
+import { ReorderNewDialogComponent } from './reorder-new-dialog';
 
 type StatusFilter = ReorderStatus | 'ALL';
 
@@ -22,7 +23,7 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
  */
 @Component({
   selector: 'app-reorders',
-  imports: [DatePipe, FormsModule],
+  imports: [DatePipe, FormsModule, ReorderNewDialogComponent],
   template: `
     <main class="container">
       <section class="card">
@@ -54,6 +55,10 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
             <button type="button" class="ghost" (click)="load()" [disabled]="loading()">
               Refresh
             </button>
+          </div>
+          <!-- Right-aligned: raising a reorder is the page's action, not a filter. -->
+          <div class="f-actions right">
+            <button type="button" (click)="newOpen.set(true)">New reorder</button>
           </div>
         </div>
 
@@ -136,6 +141,10 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
           </div>
         }
       </section>
+
+      @if (newOpen()) {
+        <app-reorder-new-dialog (close)="onNewClosed($event)" />
+      }
     </main>
   `,
   styles: [
@@ -171,6 +180,10 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
       .f-actions {
         display: flex;
         gap: 0.4rem;
+      }
+      /* Keeps New reorder on the right however many filters precede it. */
+      .f-actions.right {
+        margin-left: auto;
       }
       .filters select,
       .filters .f-actions button {
@@ -286,6 +299,7 @@ export class ReordersComponent implements OnInit {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly busyId = signal<number | null>(null);
+  readonly newOpen = signal(false);
 
   readonly statusFilter = signal<StatusFilter>('OPEN');
   readonly storeFilter = signal<number | null>(null);
@@ -372,6 +386,18 @@ export class ReordersComponent implements OnInit {
           this.loading.set(false);
         },
       });
+  }
+
+  onNewClosed(changed: boolean): void {
+    this.newOpen.set(false);
+    if (!changed) return;
+    // A new request is OPEN, so show that filter — otherwise someone looking at
+    // Acknowledged raises one and sees nothing happen.
+    if (this.statusFilter() !== 'OPEN' && this.statusFilter() !== 'ALL') {
+      this.statusFilter.set('OPEN');
+      this.offset.set(0);
+    }
+    this.load();
   }
 
   cancel(row: Reorder): void {

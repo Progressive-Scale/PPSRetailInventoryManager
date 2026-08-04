@@ -35,7 +35,13 @@ import {
 export class ProductsController {
   constructor(private readonly tenantDb: TenantDbService) {}
 
+  /**
+   * Readable by a STORE_USER as well: the reorder picker needs the catalog to search,
+   * and a store user can already see most of it through Inventory. Everything that
+   * WRITES the catalog stays COMPANY_ADMIN via the class-level guard.
+   */
   @Get()
+  @Roles(['COMPANY_ADMIN', 'STORE_USER'])
   list(@Ctx() ctx: DataContext, @Query() query: ListProductsQuery) {
     return this.tenantDb.withCompany(ctx.companyId, (tx) => {
       const conds: SQL[] = [eq(products.companyId, ctx.companyId)];

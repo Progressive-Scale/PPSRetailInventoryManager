@@ -198,8 +198,13 @@ export class ReorderDialogComponent implements OnInit {
   note = '';
   chosenStoreId: number | null = null;
 
+  /**
+   * Only when there is a choice to offer. A store user arrives with no storeId AND no
+   * store list — the API scopes them to their own store — and rendering an empty select
+   * for them would look broken.
+   */
   get needsStorePick(): boolean {
-    return this.storeId == null;
+    return this.storeId == null && this.stores.length > 0;
   }
 
   ngOnInit(): void {

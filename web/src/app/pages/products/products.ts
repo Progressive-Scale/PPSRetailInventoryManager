@@ -3,14 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { ReorderDialogComponent } from '../reorders/reorder-dialog';
-import {
-  CreateProduct,
-  Product,
-  Store,
-  TrackingType,
-  UpdateProduct,
-} from '../../core/models';
+import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
 
 // The Review sub-tab moved to Cycle Counts -> Review: everything in it
 // originates from a count, so it belongs beside the counts, not the catalog.
@@ -21,7 +14,7 @@ import {
 
 @Component({
   selector: 'app-products',
-  imports: [FormsModule, ReorderDialogComponent],
+  imports: [FormsModule],
   template: `
     <main class="container">
       @if (error()) {
@@ -157,7 +150,6 @@ import {
                       <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
                       <td class="actions">
                         <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
-                        <button class="sm ghost" (click)="openReorder(p)">Reorder</button>
                       </td>
                     }
                   </tr>
@@ -232,17 +224,6 @@ import {
             }
           </div>
         </div>
-      }
-
-      <!-- Reorder. The catalog spans stores, so the dialog asks which one. -->
-      @if (reorderTarget(); as target) {
-        <app-reorder-dialog
-          [productId]="target.id"
-          [productName]="target.name"
-          [sku]="target.sku"
-          [stores]="stores()"
-          (close)="onReorderClosed($event)"
-        />
       }
     </main>
   `,
@@ -410,7 +391,7 @@ import {
         width: 13%;
       }
       .col-name {
-        width: 25%;
+        width: 27%;
       }
       .col-type {
         width: 11%;
@@ -425,7 +406,7 @@ import {
         width: 9%;
       }
       .col-actions {
-        width: 13%;
+        width: 11%;
       }
       .num {
         text-align: right;
@@ -613,16 +594,11 @@ export class ProductsComponent implements OnInit {
   readonly modalError = signal<string | null>(null);
   readonly deleteTarget = signal<Product | null>(null);
   readonly deleteError = signal<string | null>(null);
-  /** Product whose reorder dialog is open. */
-  readonly reorderTarget = signal<Product | null>(null);
-  /** For the dialog's store picker: the catalog is company-wide, a reorder is not. */
-  readonly stores = signal<Store[]>([]);
 
   ngOnInit(): void {
     const raw = this.route.snapshot.queryParamMap.get('edit');
     const editId = raw ? Number(raw) : null;
     this.loadProducts(Number.isFinite(editId) ? editId : null);
-    this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
   }
 
   loadProducts(openForEdit: number | null = null): void {
@@ -808,14 +784,7 @@ export class ProductsComponent implements OnInit {
     return p.reorderThreshold != null && p.onHand <= p.reorderThreshold;
   }
 
-  openReorder(p: Product): void {
-    this.reorderTarget.set(p);
-  }
-
-  onReorderClosed(changed: boolean): void {
-    this.reorderTarget.set(null);
-    // Only reload when something actually changed — the badge count came from the
-    // same query, so a plain Close should not cost a round trip.
-    if (changed) this.loadProducts();
-  }
+  // Raising a reorder lives on the Reorders page: this row already carries Edit and,
+  // while editing, Save/Cancel/Delete. The badge and the low-stock colour stay — they
+  // are information, not another button.
 }
