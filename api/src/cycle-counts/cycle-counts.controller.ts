@@ -45,6 +45,16 @@ export class CycleCountsController {
   }
 
   /**
+   * Pick an OPEN count back up on a handheld: returns the same shape as opening a new
+   * one, with a freshly computed snapshot. Used after an admin sends a count back for a
+   * redo, and by any device that did not open the count itself.
+   */
+  @Post(':id/resume')
+  resume(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
+    return this.svc.resume(ctx, id);
+  }
+
+  /**
    * What this count makes of one serial. The scanner calls it for a serial its own
    * snapshot cannot explain, so it can offer the right choice — put a sold unit
    * back, note one found away from where it was recorded, or record an unknown.

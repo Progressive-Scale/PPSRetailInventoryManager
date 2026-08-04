@@ -144,6 +144,151 @@ export class CycleCountsService {
 
   // ---- open --------------------------------------------------------------
 
+  /**
+   * What a counter is expected to find: in-scope serialized units, the store's expected
+   * arrivals, and quantity stock lines.
+   *
+   * Shared by open() and resume() deliberately. A resumed count has to describe the shelf
+   * the same way a new one does, and computing it twice is how the two drift into
+   * disagreeing about what is in scope.
+   */
+  private async buildSnapshot(
+    tx: Tx,
+    ctx: DataContext,
+    storeId: number,
+    locationId: number | null,
+    productIds: number[],
+  ) {
+    // In-scope serialized units — what the counter is expected to find.
+    const units = await tx
+      .select({
+        id: inventoryItems.id,
+        serial: inventoryItems.serial,
+        productId: inventoryItems.productId,
+        locationId: inventoryItems.locationId,
+        sku: products.sku,
+        name: products.name,
+        // So a scanner can tell a serialized product's barcode from a quantity
+        // one and say "scan each serial" instead of asking for a count that the
+        // submit endpoint would reject.
+        upc: products.upc,
+      })
+      .from(inventoryItems)
+      .leftJoin(products, eq(products.id, inventoryItems.productId))
+      .where(and(...this.inScope(ctx, storeId, locationId, productIds)))
+      .orderBy(inventoryItems.serial);
+
+    // Expected arrivals. PENDING units have no location, so they belong to the
+    // STORE rather than to any location's scope: they ride along in every count at
+    // this store, and scanning one receives it into whatever is being counted.
+    const pendingConds: SQL[] = [
+      eq(inventoryItems.companyId, ctx.companyId),
+      eq(inventoryItems.storeId, storeId),
+      eq(inventoryItems.status, 'PENDING'),
+    ];
+    if (productIds.length > 0)
+      pendingConds.push(inArray(inventoryItems.productId, productIds));
+    const pending = await tx
+      .select({
+        id: inventoryItems.id,
+        serial: inventoryItems.serial,
+        productId: inventoryItems.productId,
+        sku: products.sku,
+        name: products.name,
+        handedOffAt: inventoryItems.createdAt,
+      })
+      .from(inventoryItems)
+      .leftJoin(products, eq(products.id, inventoryItems.productId))
+      .where(and(...pendingConds))
+      .orderBy(inventoryItems.createdAt);
+
+    const stockConds: SQL[] = [
+      eq(inventoryStock.companyId, ctx.companyId),
+      eq(inventoryStock.storeId, storeId),
+    ];
+    if (locationId != null)
+      stockConds.push(eq(inventoryStock.locationId, locationId));
+    if (productIds.length > 0)
+      stockConds.push(inArray(inventoryStock.productId, productIds));
+    const stock = await tx
+      .select({
+        productId: inventoryStock.productId,
+        locationId: inventoryStock.locationId,
+        quantityOnHand: inventoryStock.quantityOnHand,
+        sku: products.sku,
+        name: products.name,
+        upc: products.upc,
+      })
+      .from(inventoryStock)
+      .innerJoin(products, eq(products.id, inventoryStock.productId))
+      .where(and(...stockConds))
+      .orderBy(products.sku);
+
+    return { units, pending, stock };
+  }
+
+  /**
+   * Pick an OPEN count back up on a handheld, with a freshly computed snapshot.
+   *
+   * Needed because an admin can send a submitted count back for a redo (see reject()),
+   * which reopens it and deletes its proposals. The device that submitted it has marked
+   * it finished locally, and any OTHER device never had it at all — so without this the
+   * count is reachable only as read-only history, which is exactly the bug: it looked
+   * closed on the handheld while the server had it open again.
+   *
+   * The snapshot is recomputed rather than replayed: stock moves between a submit and a
+   * redo, and counting against a stale expectation would manufacture discrepancies.
+   */
+  async resume(ctx: DataContext, id: number) {
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const cc = await this.loadCount(tx, ctx, id);
+      if (cc.status !== 'OPEN') {
+        throw new ConflictException(
+          `Only an open count can be resumed (this one is ${cc.status}).`,
+        );
+      }
+
+      const productIds = await this.scopeProductIds(tx, ctx, cc.id);
+      let locationName: string | null = null;
+      if (cc.locationId != null) {
+        const [loc] = await tx
+          .select({ name: storeLocations.name })
+          .from(storeLocations)
+          .where(eq(storeLocations.id, cc.locationId))
+          .limit(1);
+        locationName = loc?.name ?? null;
+      }
+
+      const snapshot = await this.buildSnapshot(
+        tx,
+        ctx,
+        cc.storeId,
+        cc.locationId,
+        productIds,
+      );
+
+      // Keep expectedCount honest: the shelf may hold a different number now than when
+      // the count was first opened.
+      const [updated] = await tx
+        .update(cycleCounts)
+        .set({ expectedCount: snapshot.units.length })
+        .where(eq(cycleCounts.id, cc.id))
+        .returning();
+
+      return {
+        id: cc.id,
+        cycleCount: updated,
+        scope: {
+          locationId: cc.locationId,
+          locationName,
+          productIds,
+          wholeStore: cc.locationId == null,
+        },
+        snapshot,
+      };
+    });
+  }
+
   async open(ctx: DataContext, dto: OpenCycleCountDto) {
     const storeId = this.writeStoreId(ctx, dto.storeId);
     const productIds = [...new Set(dto.productIds ?? [])];
@@ -182,70 +327,13 @@ export class CycleCountsService {
         }
       }
 
-      // In-scope serialized units — what the counter is expected to find.
-      const units = await tx
-        .select({
-          id: inventoryItems.id,
-          serial: inventoryItems.serial,
-          productId: inventoryItems.productId,
-          locationId: inventoryItems.locationId,
-          sku: products.sku,
-          name: products.name,
-          // So a scanner can tell a serialized product's barcode from a quantity
-          // one and say "scan each serial" instead of asking for a count that the
-          // submit endpoint would reject.
-          upc: products.upc,
-        })
-        .from(inventoryItems)
-        .leftJoin(products, eq(products.id, inventoryItems.productId))
-        .where(and(...this.inScope(ctx, storeId, dto.locationId ?? null, productIds)))
-        .orderBy(inventoryItems.serial);
-
-      // Expected arrivals. PENDING units have no location, so they belong to the
-      // STORE rather than to any location's scope: they ride along in every count at
-      // this store, and scanning one receives it into whatever is being counted.
-      const pendingConds: SQL[] = [
-        eq(inventoryItems.companyId, ctx.companyId),
-        eq(inventoryItems.storeId, storeId),
-        eq(inventoryItems.status, 'PENDING'),
-      ];
-      if (productIds.length > 0)
-        pendingConds.push(inArray(inventoryItems.productId, productIds));
-      const pending = await tx
-        .select({
-          id: inventoryItems.id,
-          serial: inventoryItems.serial,
-          productId: inventoryItems.productId,
-          sku: products.sku,
-          name: products.name,
-          handedOffAt: inventoryItems.createdAt,
-        })
-        .from(inventoryItems)
-        .leftJoin(products, eq(products.id, inventoryItems.productId))
-        .where(and(...pendingConds))
-        .orderBy(inventoryItems.createdAt);
-
-      const stockConds: SQL[] = [
-        eq(inventoryStock.companyId, ctx.companyId),
-        eq(inventoryStock.storeId, storeId),
-      ];
-      if (dto.locationId != null)
-        stockConds.push(eq(inventoryStock.locationId, dto.locationId));
-      if (productIds.length > 0)
-        stockConds.push(inArray(inventoryStock.productId, productIds));
-      const stock = await tx
-        .select({
-          productId: inventoryStock.productId,
-          locationId: inventoryStock.locationId,
-          quantityOnHand: inventoryStock.quantityOnHand,
-          sku: products.sku,
-          name: products.name,
-          upc: products.upc,
-        })
-        .from(inventoryStock)
-        .innerJoin(products, eq(products.id, inventoryStock.productId))
-        .where(and(...stockConds))
-        .orderBy(products.sku);
+      const { units, pending, stock } = await this.buildSnapshot(
+        tx,
+        ctx,
+        storeId,
+        dto.locationId ?? null,
+        productIds,
+      );
 
       const [cc] = await tx
         .insert(cycleCounts)
