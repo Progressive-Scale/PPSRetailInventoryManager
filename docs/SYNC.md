@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.7
+# Sync Agent Integration Contract — v3.8
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,7 +10,7 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.7`
+- **Contract version:** `v3.8`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
@@ -35,6 +35,49 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.8
+
+**Reorders: the first thing that flows store → ERP as a request rather than a fact.**
+
+Every earlier endpoint reports something that already happened — an item was handed
+over, a unit came back, a serial was scanned. A reorder is different: a shop is *asking*
+for stock, and the answer is whatever the consuming system does about it.
+
+Two endpoints (§7, §8) and a deliberate design rule:
+
+> **The cloud does not know what an ERP is.** It publishes open requests with enough
+> product identity to match against a foreign catalog, and takes back one opaque string
+> — whatever that system calls the order it raised. There is no pps-shaped field
+> anywhere in this contract, no assumption that the consumer creates *orders* at all,
+> and no fulfilment tracking. Any system able to read a queue and hand back a reference
+> can consume it.
+
+The PPS Retail Sync Agent is the first consumer, not the interface's owner.
+
+*(The task that specified this called it v2.4; this document was already at v3.7, so it
+lands as v3.8. Same contract — the same thing happened at v3.3.)*
+
+### The lifecycle, and what "done" means
+
+```
+                     ┌──────────────► CANCELLED   (the store changed its mind)
+                     │
+        OPEN ────────┴──────────────► ACKNOWLEDGED  (a consumer raised order X)
+```
+
+`ACKNOWLEDGED` is terminal. The cloud tracks **no** partial shipment, back-order or
+receipt against a reorder, because at that point the order exists in the other system
+and that system is the authority on it. Stock arriving later shows up the way stock
+always does — as a handoff (§1). If you find yourself wanting a `FULFILLED` status,
+what you want is the handoff.
+
+`quantityRequested` may be **null**, meaning "some, you decide". A shop-floor user
+often knows the shelf is empty without knowing a case quantity, and demanding a number
+would only produce a fictional one. **Treat null as 1** unless you have a better rule.
+
+For a **serialized** product the quantity is *advisory*: the request says "about this
+many", and which specific units ship is decided later by whoever picks them.
 
 ## What's new in v3.7
 
@@ -527,6 +570,83 @@ replay returns a smaller number or `0`).
 
 ---
 
+## 7. Pull reorders — `GET /api/sync/reorders`
+
+Query: `status` (`OPEN` | `ACKNOWLEDGED` | `CANCELLED`, default **`OPEN`**), `limit`
+(default 100, max 500), `offset`.
+
+```json
+{
+  "data": [
+    { "reorderId": 12, "retailStoreId": 1,
+      "product": { "sku": "GLOVE-BLK", "upc": "0002220002",
+                   "name": "Work Gloves Black", "trackingType": "QUANTITY" },
+      "quantityRequested": 24,
+      "note": "Down to the last box on the floor.",
+      "createdAt": "2026-08-04T16:15:55.237Z" }
+  ],
+  "total": 4, "limit": 100, "offset": 0
+}
+```
+
+**Oldest first**, by `createdAt` then `reorderId`, so a backlog is worked in the order
+the shops asked and a trickle of new requests cannot starve an old one.
+
+| Field | Meaning |
+|---|---|
+| `reorderId` | The cloud's id. The only thing §8 needs. |
+| `retailStoreId` | Cloud store id — the same value §1 addresses a handoff to and §6 lists. Map it to your own site/customer on your side; the cloud holds no ERP identifiers. |
+| `product.sku` | Match on this **first**. It is the cloud's product key and, where an ERP fed the catalog, it came from that ERP. |
+| `product.upc` | Fall back to this when the sku is unknown locally. Nullable. |
+| `product.name` | For logs and for a human reading them. Never match on it. |
+| `product.trackingType` | `SERIALIZED` or `QUANTITY`. Tells you whether quantity is a count of identifiable units or of stock. |
+| `quantityRequested` | May be null — see above. |
+| `note` | Free text from the person who asked. Worth carrying onto whatever you create; it is often the only explanation of *why*. |
+
+A product your catalog does not contain is a **line-level** problem, not a batch-level
+one: skip that line, leave the request unacknowledged (it stays `OPEN` and will be
+offered again), and surface it to an operator. Do **not** invent a local product.
+
+## 8. Acknowledge a reorder — `POST /api/sync/reorders/:id/ack`
+
+```json
+{ "externalOrderRef": "1284" }
+```
+
+`externalOrderRef` (1–128 chars, required) is **opaque to the cloud**. It is displayed
+verbatim to store staff, so send whatever a human would recognise in your system — an
+order number, a document id, a URL.
+
+### Response `200`
+
+```json
+{ "status": "acknowledged", "reorderId": 12, "externalOrderRef": "1284" }
+```
+
+| `status` | When |
+|---|---|
+| `acknowledged` | It was `OPEN`; it is now `ACKNOWLEDGED` with your reference, and the person who raised it gets a notification. |
+| `already_acknowledged` | It already carried **this same** reference. Nothing changed. |
+
+### Errors
+
+| HTTP | When | What to do |
+|---|---|---|
+| `404` | No such request for your company. | Log and drop it. |
+| `409` | Already acknowledged with a **different** reference. | **Stop and escalate.** Two orders now exist for one request; the cloud refuses to overwrite because that would silently lose the first order number. A human decides which is real. |
+| `410` | The store cancelled the request. | Log and skip. Terminal — never retry, and cancel your order if you already raised one. |
+
+**Idempotency is by reference, and it is the point.** Follow the same rule as everywhere
+else in this contract: *create locally first, acknowledge second* (§4). If your order is
+created and the ack then fails — network drop, process restart — repeat the ack with the
+**same** reference next sweep and it is a no-op. That is why a differing reference is an
+error rather than an update: it is the one case that cannot be a retry.
+
+Partial success is normal and per-request: acknowledge each reorder you actually
+included, and leave the rest `OPEN`.
+
+---
+
 ## 4. The agent loop (reference)
 
 ```
@@ -547,7 +667,27 @@ every N seconds:
     try: local.applyReturn(ret.payload); applied.push(ret.id)
     except: pass   # will be re-served next cycle
   if applied: POST /sync/returns/ack { ids: applied }
+
+every M seconds (M is usually larger — reorders are not urgent):
+  # reorders: one local document per store per sweep
+  resp = GET /sync/reorders?status=OPEN
+  for storeId, lines in groupBy(resp.data, 'retailStoreId'):
+    site = local.resolveSite(storeId)
+    if not site: warn("store %s is not mapped" % storeId); continue   # stays OPEN
+
+    usable = [l for l in lines if local.findProduct(l.product.sku, l.product.upc)]
+    for l in lines - usable: warn("unknown product %s" % l.product.sku)  # stays OPEN
+    if not usable: continue
+
+    ref = local.createOrder(site, usable)        # ONE transaction, commits first
+    for l in usable:
+      POST /sync/reorders/%s/ack % l.reorderId { externalOrderRef: ref }
 ```
+
+Note the ordering in the reorder block: the local document is committed **before** any
+ack. If the process dies between the two, the next sweep re-serves those requests, the
+consumer must recognise it already has an order for them, and re-acking with the same
+reference is a no-op (§8).
 
 ---
 
@@ -557,15 +697,19 @@ every N seconds:
 | ----- | ------------------------------ | ---------------------------------------- |
 | `401` | Missing/invalid/revoked key.   | Stop; alert operator to rotate the key.  |
 | `400` | Malformed body / validation.   | Fix payload; do not blindly retry.       |
+| `409` | Conflict with existing state.  | Do **not** retry. Only §8 returns this; it means two orders exist for one reorder and a human must decide. |
+| `410` | The thing is gone for good.    | Log and skip; never retry. Only §8 returns this, for a cancelled reorder. |
 | `429` | Rate limited.                  | Back off (exponential) and retry.        |
 | `5xx` | Transient server error.        | Retry with backoff. Operations are safe to retry (idempotent). |
 
 Guidance:
 
 - **Always retry on network failure/timeout** — handoffs and acks are idempotent
-  (units key on `serial`, stock keys on `handoffId`, acks on outbox `id`).
+  (units key on `serial`, stock keys on `handoffId`, return acks on outbox `id`, and a
+  reorder ack on the `externalOrderRef` you sent).
 - Never key off array position.
 - Rate limiting is per API key; keep batches reasonable and back off on `429`.
+- `409` and `410` are **not** retryable — they are answers, not failures. See §8.
 - This is contract **v3**. Additive fields may appear; ignore unknown fields.
   Breaking changes will bump the version and be announced.
 ```
