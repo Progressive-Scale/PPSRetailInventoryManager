@@ -260,7 +260,7 @@ interface Column {
                       @if (isCompanyAdmin) {
                         <td class="sel-col"></td>
                       }
-                      <td>
+                      <td class="sku-cell">
                         <span class="chev" [class.open]="isExpanded(p)" aria-hidden="true">›</span>
                         {{ p.sku }}
                       </td>
@@ -310,7 +310,7 @@ interface Column {
                                 />
                               </td>
                             }
-                            <td class="indent">
+                            <td class="sku-cell sub-sku">
                               @if (row.serial) {
                                 <span class="matched">{{ row.serial }}</span>
                               } @else {
@@ -675,7 +675,7 @@ interface Column {
       }
       .chev {
         display: inline-block;
-        width: 0.9rem;
+        width: 0.7rem;
         color: var(--muted);
         transition: transform 0.12s ease;
       }
@@ -690,8 +690,21 @@ interface Column {
       tr.sub-row > td {
         background: color-mix(in srgb, var(--border) 18%, transparent);
       }
-      td.indent {
-        padding-left: 1.9rem;
+      /* The chevron lives in the cell's own left padding rather than after it, so the
+         SKU starts almost at the table edge and the row gains width for the columns
+         that need it. */
+      td.sku-cell {
+        padding-left: 0.25rem;
+      }
+      /* Tier two is still indented — enough to read as belonging to the product above,
+         no more. It was 1.9rem, which pushed the serial well clear of its own column. */
+      td.sub-sku {
+        padding-left: 0.95rem;
+      }
+      /* The serial's left margin exists for when it TRAILS a SKU on one line. Here it
+         leads the cell, so the margin would only undo the tightening above. */
+      td.sku-cell .matched {
+        margin-left: 0;
       }
       .pending-badge {
         display: inline-block;
