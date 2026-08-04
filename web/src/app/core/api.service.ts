@@ -2,7 +2,10 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  AdminInvite,
+  AdminPasswordReset,
+  AdminUpdateUser,
+  AdminUser,
+  AdminUserQuery,
   ApiKey,
   AppNotification,
   BulkExpirationResult,
@@ -572,9 +575,57 @@ export class ApiService {
     return this.http.delete(`/api/admin/api-keys/${id}`);
   }
 
-  // ---- platform admin: admin invite ----
-  adminInvite(companyId: number, email: string): Observable<AdminInvite> {
-    return this.http.post<AdminInvite>(`/api/admin/companies/${companyId}/admin-invite`, { email });
+  // ---- platform admin: users across every company ----
+  adminListUsers(query: AdminUserQuery = {}): Observable<Paginated<AdminUser>> {
+    let params = new HttpParams();
+    if (query.companyId != null) params = params.set('companyId', query.companyId);
+    if (query.role) params = params.set('role', query.role);
+    if (query.status) params = params.set('status', query.status);
+    if (query.q) params = params.set('q', query.q);
+    if (query.limit != null) params = params.set('limit', query.limit);
+    if (query.offset != null) params = params.set('offset', query.offset);
+    return this.http.get<Paginated<AdminUser>>('/api/admin/users', { params });
+  }
+
+  adminUpdateUser(id: number, dto: AdminUpdateUser): Observable<User> {
+    return this.http.patch<User>(`/api/admin/users/${id}`, dto);
+  }
+
+  /** Issues a reset link for a tenant user and returns it (also emailed). */
+  adminPasswordReset(id: number): Observable<AdminPasswordReset> {
+    return this.http.post<AdminPasswordReset>(
+      `/api/admin/users/${id}/password-reset`,
+      {},
+    );
+  }
+
+  adminListCompanyStores(companyId: number): Observable<Store[]> {
+    return this.http.get<Store[]>(`/api/admin/companies/${companyId}/stores`);
+  }
+
+  // ---- platform admin: invitations into any company ----
+  adminListInvitations(companyId: number): Observable<Invitation[]> {
+    return this.http.get<Invitation[]>(
+      `/api/admin/companies/${companyId}/invitations`,
+    );
+  }
+
+  adminCreateInvitation(
+    companyId: number,
+    dto: CreateInvitation,
+  ): Observable<Invitation> {
+    return this.http.post<Invitation>(
+      `/api/admin/companies/${companyId}/invitations`,
+      dto,
+    );
+  }
+
+  adminResendInvitation(id: number): Observable<Invitation> {
+    return this.http.post<Invitation>(`/api/admin/invitations/${id}/resend`, {});
+  }
+
+  adminRevokeInvitation(id: number): Observable<unknown> {
+    return this.http.post(`/api/admin/invitations/${id}/revoke`, {});
   }
 
   // ---- platform admin: health ----

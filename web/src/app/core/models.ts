@@ -474,14 +474,40 @@ export interface ApiKey {
   key?: string;
 }
 
-export interface AdminInvite {
-  id: number;
-  companyId: number;
+/** A user as the platform panel lists them: which tenant, and which stores. */
+export interface AdminUser extends User {
+  companyName: string | null;
+  companySlug: string | null;
+  /** Names of the permitted stores, in the same order as storeIds. */
+  storeNames: string[];
+}
+
+/** Filters for the cross-company user list. */
+export interface AdminUserQuery {
+  companyId?: number;
+  role?: Role;
+  status?: 'ACTIVE' | 'SUSPENDED';
+  /** Substring of username or email. */
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminUpdateUser {
+  role?: 'COMPANY_ADMIN' | 'STORE_USER';
+  status?: 'ACTIVE' | 'SUSPENDED';
+  storeIds?: number[];
+}
+
+/** A reset link issued on a user's behalf — returned once, to the platform admin. */
+export interface AdminPasswordReset {
+  userId: number;
   email: string;
-  token: string;
-  acceptPath: string;
-  expiresAt?: string;
-  createdAt?: string;
+  username: string;
+  resetUrl: string;
+  expiresAt: string;
+  emailSent: boolean;
+  emailError: string | null;
 }
 
 export interface HealthRow {

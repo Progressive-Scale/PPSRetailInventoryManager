@@ -3,12 +3,13 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { companyAcceptUrl } from '../../core/tenant';
 import { ApiKey, Company, CreateCompany, HealthRow } from '../../core/models';
+import { PlatformInvitesComponent } from './platform-invites';
+import { PlatformUsersComponent } from './platform-users';
 
 @Component({
   selector: 'app-platform',
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, PlatformInvitesComponent, PlatformUsersComponent],
   template: `
     <main class="container">
       @if (error()) {
@@ -115,27 +116,10 @@ import { ApiKey, Company, CreateCompany, HealthRow } from '../../core/models';
           }
         </section>
 
-        <section class="card">
-          <h2>{{ c.name }} — First admin invite</h2>
-          <form class="inline-form" (ngSubmit)="sendAdminInvite()">
-            <input
-              placeholder="Admin email"
-              name="ai-email"
-              type="email"
-              [(ngModel)]="adminEmail"
-              required
-            />
-            <button type="submit" [disabled]="saving()">Invite admin</button>
-          </form>
-          @if (adminInviteUrl()) {
-            <div class="link-box">
-              <span class="muted">Accept link:</span>
-              <code>{{ adminInviteUrl() }}</code>
-              <button class="sm ghost" (click)="copy(adminInviteUrl()!)">Copy</button>
-            </div>
-          }
-        </section>
+        <app-platform-invites [company]="c" />
       }
+
+      <app-platform-users [companies]="companies()" />
 
       <section class="card">
         <div class="row-between">
@@ -312,8 +296,6 @@ export class PlatformComponent implements OnInit {
   readonly keys = signal<ApiKey[]>([]);
   readonly newKey = signal<string | null>(null);
   keyName = '';
-  adminEmail = '';
-  readonly adminInviteUrl = signal<string | null>(null);
 
   readonly health = signal<HealthRow[]>([]);
   readonly healthLoading = signal(false);
@@ -384,9 +366,7 @@ export class PlatformComponent implements OnInit {
   selectCompany(c: Company): void {
     this.selected.set(c);
     this.newKey.set(null);
-    this.adminInviteUrl.set(null);
     this.keyName = '';
-    this.adminEmail = '';
     this.loadKeys(c.id);
   }
 
@@ -427,24 +407,6 @@ export class PlatformComponent implements OnInit {
       next: () => {
         this.saving.set(false);
         this.loadKeys(c.id);
-      },
-      error: (err) => {
-        this.saving.set(false);
-        this.error.set(messageFor(err));
-      },
-    });
-  }
-
-  sendAdminInvite(): void {
-    const c = this.selected();
-    if (!c || !this.adminEmail) return;
-    this.saving.set(true);
-    this.error.set(null);
-    this.api.adminInvite(c.id, this.adminEmail).subscribe({
-      next: (inv) => {
-        this.saving.set(false);
-        this.adminInviteUrl.set(companyAcceptUrl(c.slug, inv.token));
-        this.adminEmail = '';
       },
       error: (err) => {
         this.saving.set(false);
