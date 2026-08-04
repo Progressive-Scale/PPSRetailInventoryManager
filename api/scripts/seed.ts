@@ -32,6 +32,7 @@ const {
   storeLocations,
   notificationSettings,
   userStores,
+  reorderRequests,
 } = schema;
 
 /** YYYY-MM-DD, `n` days from `base` (negative = past). */
@@ -54,6 +55,8 @@ interface ProductSeed {
   upc: string | null;
   trackingType: TrackingType;
   needsReview?: boolean;
+  /** Low-stock hint threshold. Only some products carry one, which is the point. */
+  reorderThreshold?: number;
 }
 type LocationSlot = 'BACKROOM' | 'ONFLOOR';
 interface UnitSeed {
@@ -227,6 +230,7 @@ async function ensureProducts(db: Db, companyId: number, list: ProductSeed[]) {
         upc: p.upc,
         trackingType: p.trackingType,
         needsReview: p.needsReview ?? false,
+        reorderThreshold: p.reorderThreshold ?? null,
         active: true,
       })
       .onConflictDoNothing({ target: [products.companyId, products.sku] });
@@ -285,8 +289,11 @@ async function main(): Promise<void> {
     { sku: 'TS-BLK-M', name: 'T-Shirt Black M', price: '19.99', upc: '0001110001', trackingType: 'SERIALIZED' },
     { sku: 'HD-GRY-L', name: 'Hoodie Grey L', price: '49.00', upc: '0001110003', trackingType: 'SERIALIZED' },
     { sku: 'CAP-RED', name: 'Cap Red', price: '14.50', upc: '0001110004', trackingType: 'SERIALIZED' },
-    { sku: 'SOCK-WHT', name: 'Socks White 6-pack', price: '9.99', upc: '0002220001', trackingType: 'QUANTITY' },
-    { sku: 'GLOVE-BLK', name: 'Work Gloves Black', price: '12.00', upc: '0002220002', trackingType: 'QUANTITY' },
+    // Thresholds on the two quantity products so the low-stock hint has something to
+    // fire on: GLOVE-BLK holds 12 against a threshold of 15 (low), SOCK-WHT holds 47
+    // against 20 (fine). The serialized products deliberately have none.
+    { sku: 'SOCK-WHT', name: 'Socks White 6-pack', price: '9.99', upc: '0002220001', trackingType: 'QUANTITY', reorderThreshold: 20 },
+    { sku: 'GLOVE-BLK', name: 'Work Gloves Black', price: '12.00', upc: '0002220002', trackingType: 'QUANTITY', reorderThreshold: 15 },
     { sku: 'REVIEW-SN-UNKNOWN', name: 'Unknown scan (needs review)', price: '0', upc: null, trackingType: 'SERIALIZED', needsReview: true },
   ];
   const demoBySku = await ensureProducts(db, demo.id, demoProducts);
@@ -517,6 +524,28 @@ async function main(): Promise<void> {
         resolution: 'COUNTED_BY_UPC',
       });
     }
+  }
+
+  // --- One OPEN reorder, so the badge and the consumer contract both have data ---
+  // Raised by the store user against the low-stock product, which is the realistic
+  // pairing: the threshold hint is what prompts somebody to press Reorder.
+  {
+    const glove = demoBySku.get('GLOVE-BLK')!;
+    await db
+      .insert(reorderRequests)
+      .values({
+        companyId: demo.id,
+        storeId: store.id,
+        productId: glove.id,
+        status: 'OPEN',
+        quantityRequested: 24,
+        note: 'Down to the last box on the floor.',
+        requestedByUserId: storeUser?.id ?? null,
+      })
+      // No conflict target on purpose: a bare ON CONFLICT DO NOTHING covers any unique
+      // violation, including the partial OPEN-only index, which a target list cannot
+      // name. Re-running the seed therefore leaves an existing request alone.
+      .onConflictDoNothing();
   }
 
   // --- Company-default notification settings (30-day expiration window) ---

@@ -79,9 +79,12 @@ export const locationKind = pgEnum('location_kind', [
 ]);
 // EXPIRATION_WARNING is per-store (an item on a shop floor); INVITE_ACCEPTED is
 // company-wide and addressed at admins, so its notification has no store.
+// REORDER_ACKNOWLEDGED is per-store AND per-user: it answers a specific person's
+// request, so it carries a user_id and only that person sees it.
 export const notificationType = pgEnum('notification_type', [
   'EXPIRATION_WARNING',
   'INVITE_ACCEPTED',
+  'REORDER_ACKNOWLEDGED',
 ]);
 export const invitationEmailStatus = pgEnum('invitation_email_status', [
   'PENDING',
@@ -404,6 +407,16 @@ export const products = pgTable(
     // Set when an unknown scan/handoff created this product and an admin must
     // review/complete it (rename, price, etc.). Moved here from inventory_items.
     needsReview: boolean('needs_review').notNull().default(false),
+    /**
+     * On-hand level at or below which this product is "low" and wants reordering.
+     * Null = no opinion, and no hint is shown.
+     *
+     * Currently a HINT ONLY: it colours the product row so staff notice, and nothing
+     * raises a reorder automatically. An automatic sweep is deliberately future work —
+     * it needs a per-store threshold (a flagship and a kiosk do not want the same
+     * number) and a notion of stock already on the way, neither of which exists yet.
+     */
+    reorderThreshold: integer('reorder_threshold'),
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -785,6 +798,13 @@ export const notifications = pgTable(
       .references(() => companies.id),
     // Null for company-wide notifications (e.g. INVITE_ACCEPTED).
     storeId: integer('store_id').references(() => stores.id),
+    /**
+     * Addressed at ONE person when set (a reorder acknowledgement answers whoever
+     * asked); null means "anyone in scope", which is how every notification behaved
+     * before this column existed. Reads must therefore filter
+     * `user_id IS NULL OR user_id = me` — a null here is broadcast, not unassigned.
+     */
+    userId: integer('user_id').references(() => users.id),
     type: notificationType('type').notNull(),
     payload: jsonb('payload').notNull(),
     status: notificationStatus('status').notNull().default('UNREAD'),
@@ -795,6 +815,73 @@ export const notifications = pgTable(
   (t) => [
     index('notifications_company_status_idx').on(t.companyId, t.status),
     index('notifications_company_store_idx').on(t.companyId, t.storeId),
+    index('notifications_company_user_idx').on(t.companyId, t.userId),
+  ],
+);
+
+/**
+ * A store asking for more of a product.
+ *
+ * The lifecycle is deliberately thin — OPEN, then ACKNOWLEDGED or CANCELLED, and
+ * nothing after that. The cloud does not model fulfilment: once an ERP says "I raised
+ * order 1234 for this", the order is the ERP's business and the request has done its
+ * job. Anything more (partially shipped, back-ordered) would be this system guessing
+ * at another system's state.
+ *
+ * `external_order_ref` is intentionally opaque text. The cloud has no idea what an
+ * order identifier looks like in whatever system consumed the request — see the
+ * consumer contract in docs/SYNC.md, which is ERP-agnostic on purpose.
+ */
+export const reorderStatus = pgEnum('reorder_status', [
+  'OPEN',
+  'ACKNOWLEDGED',
+  'CANCELLED',
+]);
+
+export const reorderRequests = pgTable(
+  'reorder_requests',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
+    status: reorderStatus('status').notNull().default('OPEN'),
+    /**
+     * How many the store wants. Null = "some, you decide": a shop-floor user often
+     * knows the shelf is bare without knowing a case quantity, and forcing a number
+     * would get a made-up one. Consumers treat null as 1.
+     */
+    quantityRequested: integer('quantity_requested'),
+    note: text('note'),
+    requestedByUserId: integer('requested_by_user_id').references(
+      () => users.id,
+    ),
+    /** The consuming system's own order identifier, verbatim. Set on ack. */
+    externalOrderRef: text('external_order_ref'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('reorder_requests_company_status_idx').on(t.companyId, t.status),
+    index('reorder_requests_company_store_idx').on(t.companyId, t.storeId),
+    /**
+     * One live request per product per store. Pressing Reorder twice is not two
+     * requests, it is one impatient user — the create endpoint returns the existing
+     * row rather than an error. Partial so history is unconstrained: the same product
+     * can be reordered again and again once each request is closed out.
+     */
+    uniqueIndex('reorder_requests_open_uniq')
+      .on(t.companyId, t.storeId, t.productId)
+      .where(sql`status = 'OPEN'`),
   ],
 );
 
@@ -1076,8 +1163,10 @@ export type Notification = typeof notifications.$inferSelect;
 export type NotificationSetting = typeof notificationSettings.$inferSelect;
 export type UserStore = typeof userStores.$inferSelect;
 export type ItemAudit = typeof itemAudit.$inferSelect;
+export type ReorderRequest = typeof reorderRequests.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
+export type ReorderStatus = (typeof reorderStatus.enumValues)[number];
 export type TrackingType = (typeof trackingType.enumValues)[number];
 export type ItemStatus = (typeof itemStatus.enumValues)[number];
 export type LocationKind = (typeof locationKind.enumValues)[number];
@@ -1106,4 +1195,5 @@ export const TENANT_TABLES = [
   'invitation_stores',
   'password_resets',
   'cycle_count_products',
+  'reorder_requests',
 ] as const;
