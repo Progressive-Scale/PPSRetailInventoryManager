@@ -840,7 +840,20 @@ export class CycleCountsService {
         newItemUnits +
         lines.filter((l) => PLACED_RESOLUTIONS.includes(l.resolution)).length;
       const scannedInScope = lines.filter((l) => l.resolution === 'SCANNED').length;
-      const scanned = scannedInScope + placedUnits;
+
+      // Quantity shelves are units too. The books say a shelf holds N; the counter says
+      // it holds M. N is expected, M is accounted for — including the shelves nobody
+      // counted, whose N is still expected and is exactly what the sweep would zero.
+      //
+      // This is the one place scanned CAN exceed expected: finding twenty where fifteen
+      // were recorded is a real outcome, and a tally that hid it would be the wrong kind
+      // of tidy. The handheld's progress bar clamps for that reason.
+      const recordedStockUnits = inScopeStock.reduce((n, s) => n + s.quantityOnHand, 0);
+      const countedStockUnits = lines
+        .filter((l) => l.resolution === 'COUNTED_BY_UPC')
+        .reduce((n, l) => n + Math.max(0, l.quantity ?? 0), 0);
+
+      const scanned = scannedInScope + placedUnits + countedStockUnits;
       const [updated] = await tx
         .update(cycleCounts)
         .set({
@@ -851,7 +864,7 @@ export class CycleCountsService {
           // and can be resubmitted later, by which time stock may have changed; the
           // sweep is computed live, so a frozen expectedCount would contradict the
           // proposals sitting next to it on the review screen.
-          expectedCount: inScopeUnits.length + placedUnits,
+          expectedCount: inScopeUnits.length + placedUnits + recordedStockUnits,
           scannedCount: scanned,
           soldGeneratedCount: lines.filter((l) => l.resolution === 'MARKED_SOLD')
             .length,
