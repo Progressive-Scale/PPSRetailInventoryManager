@@ -23,6 +23,11 @@ import { ReorderDialogComponent } from './reorder-dialog';
  * many are different questions — and only the first one needs a search box. Step two is
  * the same {@link ReorderDialogComponent} the Inventory popup uses, so the duplicate
  * guard, the note field and the create call have exactly one implementation.
+ *
+ * The list shows catalog identity only — no stock figure. It is fed by the products
+ * endpoint, and that endpoint deliberately holds no inventory data; asking Inventory as
+ * well, per product, to decorate a picker would be a lot of queries for a number the
+ * person pressing Reorder is usually looking at a shelf to judge.
  */
 @Component({
   selector: 'app-reorder-new-dialog',
@@ -97,12 +102,7 @@ import { ReorderDialogComponent } from './reorder-dialog';
                     <span class="pright">
                       @if (openProductIds().has(p.id)) {
                         <span class="ro-badge">Already open</span>
-                      } @else if (isLow(p)) {
-                        <span class="low-badge">Low</span>
                       }
-                      <span class="onhand" title="Units on hand across all stores">
-                        {{ p.onHand }}
-                      </span>
                     </span>
                   </button>
                 </li>
@@ -245,15 +245,7 @@ import { ReorderDialogComponent } from './reorder-dialog';
         gap: 0.4rem;
         flex-shrink: 0;
       }
-      .onhand {
-        font-variant-numeric: tabular-nums;
-        font-size: 0.85rem;
-        color: var(--muted);
-        min-width: 2ch;
-        text-align: right;
-      }
-      .ro-badge,
-      .low-badge {
+      .ro-badge {
         font-size: 0.66rem;
         font-weight: 600;
         padding: 0.05rem 0.4rem;
@@ -262,11 +254,6 @@ import { ReorderDialogComponent } from './reorder-dialog';
         border: 1px solid #fed7aa;
         background: #fff7ed;
         color: #9a3412;
-      }
-      .low-badge {
-        border-color: #fde68a;
-        background: #fffbeb;
-        color: #92400e;
       }
       .modal-actions {
         display: flex;
@@ -366,10 +353,6 @@ export class ReorderNewDialogComponent implements OnInit {
         next: (page) => this.openProductIds.set(new Set(page.data.map((r) => r.productId))),
         error: () => this.openProductIds.set(new Set()),
       });
-  }
-
-  isLow(p: Product): boolean {
-    return p.reorderThreshold != null && p.onHand <= p.reorderThreshold;
   }
 
   choose(p: Product): void {

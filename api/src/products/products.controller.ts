@@ -64,30 +64,6 @@ export class ProductsController {
           active: products.active,
           createdAt: products.createdAt,
           updatedAt: products.updatedAt,
-          /**
-           * Company-wide units on hand: serialized units still ON_HAND plus every
-           * quantity counter. This is a catalog screen, so the figure is deliberately
-           * company-wide rather than per store — it is what the low-stock hint compares
-           * against reorder_threshold, and a threshold is a catalog-level number.
-           */
-          // The outer column is written out in full on purpose: interpolating
-          // `products.id` here emits a BARE "id", which each subquery's own FROM then
-          // shadows (inventory_items.id is a uuid, so it fails outright rather than
-          // returning a wrong number).
-          onHand: sql<number>`(
-            (SELECT count(*) FROM inventory_items i
-              WHERE i.company_id = ${ctx.companyId}
-                AND i.product_id = "products"."id"
-                AND i.status = 'ON_HAND')
-            + COALESCE((SELECT sum(s.quantity_on_hand) FROM inventory_stock s
-              WHERE s.company_id = ${ctx.companyId}
-                AND s.product_id = "products"."id"), 0)
-          )::int`,
-          /** Live reorder requests across all stores — drives the row badge. */
-          openReorders: sql<number>`(SELECT count(*)::int FROM reorder_requests r
-            WHERE r.company_id = ${ctx.companyId}
-              AND r.product_id = "products"."id"
-              AND r.status = 'OPEN')`,
         })
         .from(products)
         .where(and(...conds))

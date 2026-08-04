@@ -77,7 +77,6 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                   <th class="col-name">Name</th>
                   <th class="col-type">Type</th>
                   <th class="col-upc">UPC</th>
-                  <th class="col-num num">On hand</th>
                   <th class="col-num num" title="Flag the product as low at or below this level">
                     Low at
                   </th>
@@ -97,7 +96,6 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                         </span>
                       </td>
                       <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
-                      <td class="num muted">{{ p.onHand }}</td>
                       <td>
                         <input
                           class="cell-input num"
@@ -123,33 +121,24 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                       </td>
                     } @else {
                       <td>{{ p.sku }}</td>
-                      <td>
-                        {{ p.name }}
-                        @if (p.openReorders > 0) {
-                          <span
-                            class="ro-badge"
-                            [title]="
-                              p.openReorders === 1
-                                ? 'One store has an open reorder'
-                                : p.openReorders + ' stores have open reorders'
-                            "
-                            >Reorder{{ p.openReorders > 1 ? ' ×' + p.openReorders : '' }}</span
-                          >
-                        }
-                      </td>
+                      <td>{{ p.name }}</td>
                       <td>
                         <span class="type-badge" [class]="'tt-' + p.trackingType">
                           {{ typeLabel(p.trackingType) }}
                         </span>
                       </td>
                       <td class="muted">{{ p.upc || '—' }}</td>
-                      <td class="num" [class.low]="isLow(p)" [title]="isLow(p) ? 'At or below the low-stock level' : ''">
-                        {{ p.onHand }}
-                      </td>
                       <td class="num muted">{{ p.reorderThreshold ?? '—' }}</td>
                       <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
                       <td class="actions">
                         <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
+                        <button
+                          class="sm ghost"
+                          (click)="viewInventory(p)"
+                          title="Show this product's stock in Inventory"
+                        >
+                          View inventory
+                        </button>
                       </td>
                     }
                   </tr>
@@ -395,44 +384,25 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
         width: 12%;
       }
       .col-name {
-        width: 23%;
+        width: 24%;
       }
       .col-type {
         width: 10%;
       }
       .col-upc {
-        width: 12%;
+        width: 13%;
       }
       .col-num {
-        width: 8%;
+        width: 7%;
       }
       .col-active {
         width: 9%;
       }
       .col-actions {
-        width: 18%;
+        width: 25%;
       }
       .num {
         text-align: right;
-      }
-      /* On hand at or below the product's low-stock level. Amber, not red: it is a
-         hint to reorder, not a fault. */
-      td.low {
-        background: #fffbeb;
-        color: #92400e;
-        font-weight: 600;
-      }
-      .ro-badge {
-        display: inline-block;
-        margin-left: 0.35rem;
-        font-size: 0.68rem;
-        font-weight: 600;
-        padding: 0.05rem 0.4rem;
-        border-radius: 999px;
-        background: #fff7ed;
-        color: #9a3412;
-        border: 1px solid #fed7aa;
-        white-space: nowrap;
       }
       .type-badge {
         display: inline-block;
@@ -783,17 +753,14 @@ export class ProductsComponent implements OnInit {
     return Number.isFinite(n) ? n.toFixed(2) : price;
   }
 
-  // ---- reorders ----
-
   /**
-   * Low-stock hint. Only products that carry a threshold have an opinion; everything
-   * else is neither low nor fine, it is simply unmanaged.
+   * Send the user to this product's stock. The catalog deliberately holds NO inventory
+   * data now — not a count, not a rollup — so the honest answer to "how many?" is a
+   * link to the place that knows, filtered to the product they asked about.
    */
-  isLow(p: Product): boolean {
-    return p.reorderThreshold != null && p.onHand <= p.reorderThreshold;
+  viewInventory(p: Product): void {
+    void this.router.navigate(['/inventory'], {
+      queryParams: { productId: p.id, tab: 'stock' },
+    });
   }
-
-  // Raising a reorder lives on the Reorders page: this row already carries Edit and,
-  // while editing, Save/Cancel/Delete. The badge and the low-stock colour stay — they
-  // are information, not another button.
 }

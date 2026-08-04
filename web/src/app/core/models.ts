@@ -420,10 +420,6 @@ export interface Product {
   active: boolean;
   createdAt: string;
   updatedAt: string;
-  /** Company-wide units on hand (serialized ON_HAND + quantity counters). */
-  onHand: number;
-  /** Live reorder requests for this product across all stores. */
-  openReorders: number;
 }
 
 export interface Company {

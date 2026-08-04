@@ -131,6 +131,8 @@ export class ApiService {
     storeId?: number;
     search?: string;
     locationId?: number;
+    /** Narrow to one product — the Products catalog's "View inventory" link. */
+    productId?: number;
     type?: TrackingType;
     status?: StockStatusFilter;
     createdFrom?: string;
@@ -144,6 +146,7 @@ export class ApiService {
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
     if (opts.search) params = params.set('search', opts.search);
     if (opts.locationId != null) params = params.set('locationId', String(opts.locationId));
+    if (opts.productId != null) params = params.set('productId', String(opts.productId));
     if (opts.type) params = params.set('type', opts.type);
     if (opts.status) params = params.set('status', opts.status);
     if (opts.createdFrom) params = params.set('createdFrom', opts.createdFrom);

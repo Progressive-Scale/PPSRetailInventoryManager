@@ -895,6 +895,12 @@ export class InventoryComponent implements OnInit {
   readonly storeFilter = signal<number | null>(null);
   searchTerm = '';
   locationFilter: number | null = null;
+  /**
+   * Set only by the Products catalog's "View inventory" link. Not a visible control —
+   * it is cleared by Clear like any other filter, and the search box remains the way a
+   * person narrows to a product by hand.
+   */
+  productFilter: number | null = null;
   typeFilter: TrackingType | null = null;
   statusFilter: StockStatusFilter = 'ON_HAND';
   createdFrom = '';
@@ -1047,6 +1053,7 @@ export class InventoryComponent implements OnInit {
                   storeId: this.storeFilter() ?? undefined,
                   search: this.searchTerm.trim() || undefined,
                   locationId: this.locationFilter ?? undefined,
+                  productId: this.productFilter ?? undefined,
                   type: this.typeFilter ?? undefined,
                   status: this.statusFilter,
                   createdFrom: this.createdFrom || undefined,
@@ -1095,6 +1102,25 @@ export class InventoryComponent implements OnInit {
    * @returns whether a link was found, so the caller knows if a reload is warranted.
    */
   private applyDeepLink(params: ParamMap): boolean {
+    // ?productId= is the Products catalog's "View inventory" link: the catalog holds no
+    // stock data at all, so it answers "how many?" by sending you here, narrowed to the
+    // product asked about. Handled before itemId because it carries no unit to open.
+    const productParam = params.get('productId');
+    if (productParam) {
+      const id = Number(productParam);
+      if (Number.isFinite(id) && id > 0) {
+        this.productFilter = id;
+        // Show everything for that product, not just what is on hand — the question
+        // being asked is "what stock do we have", and a sold-out product answering with
+        // an empty table looks like a broken link.
+        this.statusFilter = 'ALL';
+        this.tab.set('stock');
+        this.selectedRow.set(null);
+        this.offset.set(0);
+        return true;
+      }
+    }
+
     const itemId = params.get('itemId');
     const serial = params.get('serial');
     if (!itemId) return false;
@@ -1162,6 +1188,7 @@ export class InventoryComponent implements OnInit {
     return (
       this.searchTerm.trim().length > 0 ||
       this.locationFilter !== null ||
+      this.productFilter !== null ||
       this.typeFilter !== null ||
       this.statusFilter !== 'ON_HAND' ||
       this.createdFrom !== '' ||
@@ -1178,6 +1205,7 @@ export class InventoryComponent implements OnInit {
   clearFilters(): void {
     this.searchTerm = '';
     this.locationFilter = null;
+    this.productFilter = null;
     this.typeFilter = null;
     this.statusFilter = 'ON_HAND';
     this.createdFrom = '';
@@ -1288,6 +1316,9 @@ export class InventoryComponent implements OnInit {
       storeId: this.storeFilter() ?? undefined,
       search: this.searchTerm.trim() || undefined,
       locationId: this.locationFilter ?? undefined,
+      // Included so "select all matching current filters" means the same set the grid
+      // is showing — a product-narrowed grid must not escalate to the whole catalog.
+      productId: this.productFilter ?? undefined,
       type: this.typeFilter ?? undefined,
       status: this.statusFilter,
       createdFrom: this.createdFrom || undefined,
