@@ -17,25 +17,9 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PlatformAdminGuard } from './platform-admin.guard';
 import { TenantDbService } from '../db/tenant-db.service';
-import { apiKeys, companies, invitations } from '../db/schema';
+import { apiKeys, companies } from '../db/schema';
 import { generateApiKey, hashApiKey } from '../common/crypto.util';
-import { ConfigService } from '@nestjs/config';
-import { MailService } from '../mail/mail.service';
-import {
-  assertEmailNotTaken,
-  buildAcceptUrl,
-  generateInviteToken,
-  hashInviteToken,
-  inviteExpiry,
-  normaliseEmail,
-  supersedeLiveInvitations,
-} from '../company/invitation.util';
-import {
-  AdminInviteDto,
-  CreateApiKeyDto,
-  CreateCompanyDto,
-  UpdateCompanyDto,
-} from './admin.dto';
+import { CreateApiKeyDto, CreateCompanyDto, UpdateCompanyDto } from './admin.dto';
 
 const apiKeyPublic = {
   id: apiKeys.id,
@@ -49,11 +33,7 @@ const apiKeyPublic = {
 @UseGuards(JwtAuthGuard, PlatformAdminGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(
-    private readonly tenantDb: TenantDbService,
-    private readonly mail: MailService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly tenantDb: TenantDbService) {}
 
   // ---- companies ---------------------------------------------------------
 
@@ -174,72 +154,8 @@ export class AdminController {
     });
   }
 
-  // ---- first company admin invitation ------------------------------------
-
-  @Post('companies/:id/admin-invite')
-  adminInvite(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: AdminInviteDto,
-  ) {
-    const token = generateInviteToken();
-    const expiresAt = inviteExpiry();
-    return this.tenantDb.withBypass(async (tx) => {
-      const [company] = await tx
-        .select()
-        .from(companies)
-        .where(eq(companies.id, id))
-        .limit(1);
-      if (!company) throw new NotFoundException('Company not found.');
-      // Same rules as a company-admin invite: never invite an existing user, and
-      // keep at most one live invitation per address.
-      await assertEmailNotTaken(tx, id, dto.email);
-      await supersedeLiveInvitations(tx, id, dto.email, null);
-      const [row] = await tx
-        .insert(invitations)
-        .values({
-          companyId: id,
-          email: normaliseEmail(dto.email),
-          role: 'COMPANY_ADMIN',
-          tokenHash: hashInviteToken(token),
-          expiresAt,
-        })
-        .returning();
-
-      // Email the accept link on the company's own subdomain. A send failure
-      // never fails creation — the row records it so the link can be copied.
-      const acceptUrl = buildAcceptUrl({
-        slug: company.slug,
-        rootDomain: this.config.get<string>('ROOT_DOMAIN') ?? 'yourapp.local',
-        token,
-        baseUrlOverride: this.config.get<string>('APP_BASE_URL') || undefined,
-      });
-      const result = await this.mail.sendInvitationEmail(row.email, {
-        companyName: company.name,
-        inviterName: 'Platform admin',
-        role: row.role,
-        acceptUrl,
-        expiresAt,
-      });
-      const [updated] = await tx
-        .update(invitations)
-        .set(
-          result.ok
-            ? { emailStatus: 'SENT', emailSentAt: new Date(), emailError: null }
-            : { emailStatus: 'FAILED', emailError: result.error ?? 'send failed' },
-        )
-        .where(eq(invitations.id, row.id))
-        .returning();
-
-      return {
-        ...updated,
-        acceptUrl,
-        acceptPath: `/accept-invite?token=${encodeURIComponent(token)}`,
-        emailWarning: result.ok
-          ? null
-          : 'Invitation created but the email failed to send — resend or copy the link.',
-      };
-    });
-  }
+  // Inviting into a company (including its first admin) lives in
+  // AdminInvitationsController, which shares the tenant invitation service.
 
   // ---- health dashboard --------------------------------------------------
 

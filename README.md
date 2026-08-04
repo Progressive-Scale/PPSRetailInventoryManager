@@ -272,8 +272,26 @@ source of truth for the DB shape.
 - **Sync (X-Api-Key):** `POST /sync/handoffs`, `GET /sync/returns`,
   `POST /sync/returns/ack` — see [`docs/SYNC.md`](docs/SYNC.md).
 - **Platform admin (admin host, PLATFORM_ADMIN):** `/admin/companies` CRUD,
-  `/admin/companies/:id/api-keys`, `/admin/companies/:id/admin-invite`,
-  `GET /admin/health`.
+  `/admin/companies/:id/api-keys`, `GET /admin/health`, plus support access for when
+  a tenant cannot help themselves:
+  - `GET /admin/users` — every user in every company, filterable by `companyId`,
+    `role`, `status` and `q` (username/email substring), paginated.
+  - `PATCH /admin/users/:id` — role, status and permitted stores. Refuses
+    `PLATFORM_ADMIN` rows (400): they have no company to scope to, and demoting one
+    from a list of all users is how you lock yourself out of the panel.
+  - `POST /admin/users/:id/password-reset` — issues a reset link on the user's own
+    company host, emails it, **and returns it** so it can be handed over when the
+    mailbox is the problem. Refused for suspended accounts.
+  - `GET /admin/companies/:id/stores`, `GET`/`POST /admin/companies/:id/invitations`,
+    `POST /admin/invitations/:id/resend|revoke` — invitations into any company, with
+    role and stores.
+
+  The invitation and user-patch rules are not reimplemented here: these endpoints
+  call the same `InvitationService` and `updateCompanyUser` the tenants' own screens
+  use, so "no inviting an existing user", "one live link per address", and "the
+  active store stays inside the permitted set" cannot drift between the two entry
+  points. Every handler runs under `withBypass` (RLS off), so both gates —
+  admin host **and** `PLATFORM_ADMIN` token — are required.
 
 Cross-tenant token replay is rejected (the JWT's `companyId` must match the
 host-resolved company). Lists are paginated; requests are rate-limited

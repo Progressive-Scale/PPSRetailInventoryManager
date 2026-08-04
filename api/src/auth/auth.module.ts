@@ -30,6 +30,8 @@ import { RolesGuard } from './roles.guard';
     JwtAuthGuard,
     RolesGuard,
   ],
-  exports: [JwtAuthGuard, RolesGuard, JwtModule],
+  // PasswordResetService is exported for the platform-admin module, which issues
+  // reset links on a tenant user's behalf through the same code path.
+  exports: [JwtAuthGuard, RolesGuard, JwtModule, PasswordResetService],
 })
 export class AuthModule {}

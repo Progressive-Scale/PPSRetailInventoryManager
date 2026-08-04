@@ -123,6 +123,99 @@ export class PasswordResetService {
     });
   }
 
+  /**
+   * Platform-admin variant: issue a reset link FOR a named tenant user, when they
+   * cannot use the self-service flow (wrong address on file, no access to the
+   * mailbox, tenant admin unavailable). Runs under bypass because the caller has
+   * no company of their own.
+   *
+   * Unlike `request`, this returns the link to the CALLER. That is deliberate — the
+   * point is to be able to read it out to someone whose email is the problem — and
+   * it is why the endpoint behind it is platform-admin only. The email still goes
+   * out, so the ordinary path works when the mailbox does.
+   */
+  async issueForUser(userId: number): Promise<{
+    userId: number;
+    email: string;
+    username: string;
+    resetUrl: string;
+    expiresAt: Date;
+    emailSent: boolean;
+    emailError: string | null;
+  }> {
+    return this.tenantDb.withBypass(async (tx) => {
+      const [user] = await tx
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (!user) throw new NotFoundException('User not found.');
+      if (user.role === 'PLATFORM_ADMIN' || user.companyId == null) {
+        throw new BadRequestException(
+          'Platform-admin accounts reset their own password from the admin host.',
+        );
+      }
+      // A suspended account cannot log in, so a working link would be misleading —
+      // reactivate first, then reset.
+      if (user.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          'This account is suspended. Reactivate it before issuing a reset link.',
+        );
+      }
+
+      const [company] = await tx
+        .select({ name: companies.name, slug: companies.slug })
+        .from(companies)
+        .where(eq(companies.id, user.companyId))
+        .limit(1);
+      if (!company) throw new NotFoundException('Company not found.');
+
+      // Only the newest link may work, exactly as in the self-service flow.
+      await this.supersedeOutstanding(tx, user.id);
+
+      const token = generateResetToken();
+      const expiresAt = resetExpiry();
+      await tx.insert(passwordResets).values({
+        companyId: user.companyId,
+        userId: user.id,
+        tokenHash: hashResetToken(token),
+        expiresAt,
+      });
+
+      // The link lands on the USER's company host, not the admin host — that is
+      // where their account lives and where the reset page can find the token.
+      const resetUrl = buildResetUrl({
+        slug: company.slug,
+        rootDomain: this.config.get<string>('ROOT_DOMAIN') ?? 'yourapp.local',
+        token,
+        baseUrlOverride: this.config.get<string>('APP_BASE_URL') || undefined,
+      });
+
+      const result = await this.mail.sendPasswordResetEmail(user.email, {
+        companyName: company.name,
+        username: user.username,
+        resetUrl,
+        expiresAt,
+        ttlMinutes: RESET_TTL_MINUTES,
+      });
+      if (!result.ok) {
+        this.logger.error(
+          `Admin-issued reset email to ${user.email} failed — ${result.error ?? 'unknown'}`,
+        );
+      }
+
+      return {
+        userId: user.id,
+        email: user.email,
+        username: user.username,
+        resetUrl,
+        expiresAt,
+        emailSent: result.ok,
+        emailError: result.ok ? null : (result.error ?? 'send failed'),
+      };
+    });
+  }
+
   /** Lifecycle of a presented token, for the reset page to render before asking. */
   async status(
     host: HostContext,
