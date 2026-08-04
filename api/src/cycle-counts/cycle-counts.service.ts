@@ -799,8 +799,17 @@ export class CycleCountsService {
         );
       }
 
-      const scanned = lines.filter((l) =>
-        ['SCANNED', 'MOVED_IN', 'RECEIVED', 'REINSTATED'].includes(l.resolution),
+      // Every line that came from somebody physically scanning a unit. TRANSFERRED_IN
+      // belongs here: the counter scanned a real unit and the count is moving it to this
+      // store, so reporting "0 scanned" made the review screen contradict the change it
+      // was being asked to approve. A serial-bearing NEW_ITEM counts for the same reason —
+      // an unrecognised serial was still read off a real thing. A NEW_ITEM with no serial
+      // is a keyed-in UPC quantity, which is a tally rather than a scan.
+      const scanned = lines.filter(
+        (l) =>
+          ['SCANNED', 'MOVED_IN', 'RECEIVED', 'REINSTATED', 'TRANSFERRED_IN'].includes(
+            l.resolution,
+          ) || (l.resolution === 'NEW_ITEM' && l.serial != null),
       ).length;
       const [updated] = await tx
         .update(cycleCounts)
