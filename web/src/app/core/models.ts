@@ -209,6 +209,39 @@ export interface StockRow {
   status: ItemStatus | null;
 }
 
+/**
+ * A product row in the stock grid: the rollup of every {@link StockRow} the current
+ * filters admit for that product, from GET /api/inventory/stock/by-product.
+ *
+ * Dates arrive as From/To pairs because a product holds many units — one date would be
+ * a lie. They collapse to a single value when the range is a point.
+ */
+export interface ProductStockRow {
+  productId: number;
+  sku: string;
+  upc: string | null;
+  name: string;
+  trackingType: TrackingType;
+  /** Summed over the filtered rows, so it equals what the expansion shows. */
+  onHand: number;
+  /** How many rows the expansion will hold. */
+  rowCount: number;
+  /** 1 → storeId names the single store; more → "N stores". */
+  storeCount: number;
+  storeId: number;
+  /** 1 → locationName names it; more → "N locations". */
+  locationCount: number;
+  locationName: string | null;
+  expirationFrom: string | null;
+  expirationTo: string | null;
+  createdFrom: string;
+  createdTo: string;
+  soldFrom: string | null;
+  soldTo: string | null;
+  /** Shipped, not yet received. Excluded from onHand by design. */
+  pendingCount: number;
+}
+
 export type StockSortField =
   | 'sku'
   | 'barcode'

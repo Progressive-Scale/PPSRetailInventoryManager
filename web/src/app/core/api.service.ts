@@ -37,6 +37,7 @@ import {
   NotificationType,
   Paginated,
   Product,
+  ProductStockRow,
   Profile,
   Reorder,
   ReorderStatus,
@@ -58,6 +59,26 @@ import {
   UpdateUser,
   User,
 } from './models';
+
+/**
+ * Everything the stock grid filters by. One type for both reads, because a product row
+ * and its expanded sub-rows have to be asking the same question.
+ */
+export interface StockQuery {
+  storeId?: number;
+  search?: string;
+  locationId?: number;
+  /** Narrow to one product — an expanded row, or the catalog's View-inventory link. */
+  productId?: number;
+  type?: TrackingType;
+  status?: StockStatusFilter;
+  createdFrom?: string;
+  createdTo?: string;
+  sortBy?: StockSortField;
+  sortDir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -126,22 +147,25 @@ export class ApiService {
     return this.http.get<InventoryProductDetail>(`/api/inventory/${productId}`);
   }
 
+  /**
+   * Product-level rollup of the stock grid. Takes the SAME options as listStock on
+   * purpose: a product row and the sub-rows it expands to must be answering one
+   * question, so the caller passes one filter object to both.
+   */
+  listStockByProduct(opts: StockQuery): Observable<Paginated<ProductStockRow>> {
+    return this.http.get<Paginated<ProductStockRow>>('/api/inventory/stock/by-product', {
+      params: this.stockParams(opts),
+    });
+  }
+
   /** Combined flat stock grid (one row per unit / per quantity stock-location). */
-  listStock(opts: {
-    storeId?: number;
-    search?: string;
-    locationId?: number;
-    /** Narrow to one product — the Products catalog's "View inventory" link. */
-    productId?: number;
-    type?: TrackingType;
-    status?: StockStatusFilter;
-    createdFrom?: string;
-    createdTo?: string;
-    sortBy?: StockSortField;
-    sortDir?: 'asc' | 'desc';
-    limit?: number;
-    offset?: number;
-  }): Observable<Paginated<StockRow>> {
+  listStock(opts: StockQuery): Observable<Paginated<StockRow>> {
+    return this.http.get<Paginated<StockRow>>('/api/inventory/stock', {
+      params: this.stockParams(opts),
+    });
+  }
+
+  private stockParams(opts: StockQuery): HttpParams {
     let params = new HttpParams();
     if (opts.storeId != null) params = params.set('storeId', String(opts.storeId));
     if (opts.search) params = params.set('search', opts.search);
@@ -155,7 +179,7 @@ export class ApiService {
     if (opts.sortDir) params = params.set('sortDir', opts.sortDir);
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
     if (opts.offset != null) params = params.set('offset', String(opts.offset));
-    return this.http.get<Paginated<StockRow>>('/api/inventory/stock', { params });
+    return params;
   }
 
   /**

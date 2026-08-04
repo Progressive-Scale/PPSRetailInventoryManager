@@ -24,6 +24,7 @@ import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import {
+  ProductStockRow,
   Store,
   StoreLocation,
   StockRow,
@@ -193,7 +194,7 @@ interface Column {
               <span class="bulk-count">{{ selectionCount() }} selected</span>
               @if (canEscalate()) {
                 <span class="bulk-escalate">
-                  All {{ rows().length }} on this page selected —
+                  All {{ visibleUnits().length }} shown selected —
                   <button type="button" class="linkbtn" (click)="escalate()">
                     Select all {{ total() }} matching current filters
                   </button>
@@ -226,7 +227,7 @@ interface Column {
             <p class="error">{{ listError() }}</p>
           } @else if (loading() && !loaded()) {
             <p class="muted">Loading…</p>
-          } @else if (loaded() && rows().length === 0) {
+          } @else if (loaded() && productRows().length === 0) {
             <p class="muted">No inventory matches.</p>
           } @else {
             <div class="table-scroll" [class.busy]="loading()">
@@ -252,51 +253,101 @@ interface Column {
                   </tr>
                 </thead>
                 <tbody>
-                  @for (row of rows(); track row.rowId) {
-                    <tr class="clickable" (click)="openRow(row)">
+                  @for (p of productRows(); track p.productId) {
+                    <!-- Tier one: the product. The same columns as the rows beneath it,
+                         each rolled up over whatever the filters admit. -->
+                    <tr class="clickable prod-row" [class.open]="isExpanded(p)" (click)="onProductClick(p)">
                       @if (isCompanyAdmin) {
-                        <td class="sel-col" (click)="$event.stopPropagation()">
-                          <input
-                            type="checkbox"
-                            [checked]="isRowSelected(row)"
-                            (change)="toggleRow(row)"
-                          />
-                        </td>
+                        <td class="sel-col"></td>
                       }
                       <td>
-                        {{ row.sku }}
-                        @if (row.serial) {
-                          <span class="matched">{{ row.serial }}</span>
-                        }
+                        <span class="chev" [class.open]="isExpanded(p)" aria-hidden="true">›</span>
+                        {{ p.sku }}
                       </td>
-                      <td class="muted">{{ row.upc || '—' }}</td>
+                      <td class="muted">{{ p.upc || '—' }}</td>
                       <td>
-                        {{ row.name }}
-                        @if (row.reorderOpen) {
-                          <span class="ro-badge" title="This store has an open reorder for this product">
-                            Reorder
+                        {{ p.name }}
+                        @if (p.pendingCount > 0) {
+                          <span class="pending-badge" [title]="p.pendingCount + ' unit(s) shipped but not yet received'">
+                            +{{ p.pendingCount }} pending
                           </span>
                         }
                       </td>
                       <td>
-                        <span class="type-badge" [class]="'tt-' + row.trackingType">{{ typeLabel(row.trackingType) }}</span>
+                        <span class="type-badge" [class]="'tt-' + p.trackingType">{{ typeLabel(p.trackingType) }}</span>
                       </td>
                       @if (isCompanyAdmin) {
-                        <td class="muted">{{ storeName(row.storeId) }}</td>
+                        <td class="muted">{{ productStoreLabel(p) }}</td>
                       }
-                      <td class="num">{{ row.onHand }}</td>
-                      <td>
-                        <span class="kind-badge" [class]="'k-' + row.locationKind">{{ row.locationName }}</span>
+                      <td class="num strong">{{ p.onHand }}</td>
+                      <td class="muted">{{ productLocationLabel(p) }}</td>
+                      <td [class]="expClass(p.expirationFrom)">
+                        {{ dateRange(p.expirationFrom, p.expirationTo) }}
                       </td>
-                      <td [class]="expClass(row.expirationDate)">
-                        {{ row.expirationDate ? (row.expirationDate | date: 'shortDate') : '—' }}
-                        @if (row.rowKind === 'unit' && row.status !== 'ON_HAND') {
-                          <span class="st">{{ statusLabel(row.status) }}</span>
-                        }
-                      </td>
-                      <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
-                      <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
+                      <td class="muted">{{ dateRange(p.createdFrom, p.createdTo) }}</td>
+                      <td class="muted">{{ dateRange(p.soldFrom, p.soldTo, true) }}</td>
                     </tr>
+
+                    <!-- Tier two: the actual rows, in the same columns. -->
+                    @if (isExpanded(p)) {
+                      @if (isUnitsLoading(p)) {
+                        <tr class="sub-row">
+                          <td [attr.colspan]="columnCount()" class="muted">Loading…</td>
+                        </tr>
+                      } @else if (unitsErrorFor(p); as err) {
+                        <tr class="sub-row">
+                          <td [attr.colspan]="columnCount()" class="error">{{ err }}</td>
+                        </tr>
+                      } @else {
+                        @for (row of unitsFor(p); track row.rowId) {
+                          <tr class="clickable sub-row" (click)="openRow(row)">
+                            @if (isCompanyAdmin) {
+                              <td class="sel-col" (click)="$event.stopPropagation()">
+                                <input
+                                  type="checkbox"
+                                  [checked]="isRowSelected(row)"
+                                  (change)="toggleRow(row)"
+                                />
+                              </td>
+                            }
+                            <td class="indent">
+                              @if (row.serial) {
+                                <span class="matched">{{ row.serial }}</span>
+                              } @else {
+                                <span class="muted">stock</span>
+                              }
+                            </td>
+                            <td class="muted">{{ row.upc || '—' }}</td>
+                            <td>
+                              {{ row.name }}
+                              @if (row.reorderOpen) {
+                                <span class="ro-badge" title="This store has an open reorder for this product">
+                                  Reorder
+                                </span>
+                              }
+                            </td>
+                            <td>
+                              <span class="type-badge" [class]="'tt-' + row.trackingType">{{ typeLabel(row.trackingType) }}</span>
+                            </td>
+                            @if (isCompanyAdmin) {
+                              <td class="muted">{{ storeName(row.storeId) }}</td>
+                            }
+                            <td class="num">{{ row.onHand }}</td>
+                            <td>
+                              <span class="kind-badge" [class]="'k-' + row.locationKind">{{ row.locationName }}</span>
+                            </td>
+                            <td [class]="expClass(row.expirationDate)">
+                              {{ row.expirationDate ? (row.expirationDate | date: 'shortDate') : '—' }}
+                              @if (row.rowKind === 'unit' && row.status !== 'ON_HAND') {
+                                <span class="st">{{ statusLabel(row.status) }}</span>
+                              }
+                            </td>
+                            <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
+                            <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
+                          </tr>
+                        }
+                      }
+                    }
                   }
                 </tbody>
               </table>
@@ -614,6 +665,46 @@ interface Column {
         color: #52525b;
         border-color: #e4e4e7;
       }
+      /* Tier one. Slightly heavier than a sub-row so the eye finds the products, with
+         the chevron rotating on open — no new colours, just weight and a caret. */
+      tr.prod-row > td {
+        font-weight: 500;
+      }
+      tr.prod-row.open > td {
+        border-bottom-color: transparent;
+      }
+      .chev {
+        display: inline-block;
+        width: 0.9rem;
+        color: var(--muted);
+        transition: transform 0.12s ease;
+      }
+      .chev.open {
+        transform: rotate(90deg);
+      }
+      td.num.strong {
+        font-weight: 600;
+      }
+      /* Tier two. Tinted and indented so a run of sub-rows reads as belonging to the
+         product above it rather than as more products. */
+      tr.sub-row > td {
+        background: color-mix(in srgb, var(--border) 18%, transparent);
+      }
+      td.indent {
+        padding-left: 1.9rem;
+      }
+      .pending-badge {
+        display: inline-block;
+        margin-left: 0.35rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+        white-space: nowrap;
+      }
       .matched {
         margin-left: 0.4rem;
         font-size: 0.72rem;
@@ -879,7 +970,17 @@ export class InventoryComponent implements OnInit {
 
   readonly tab = signal<SubTab>('stock');
 
-  readonly rows = signal<StockRow[]>([]);
+  /** The grid's own rows: one per product. */
+  readonly productRows = signal<ProductStockRow[]>([]);
+  /**
+   * Sub-rows per expanded product, keyed by productId — the SAME StockRow shape the
+   * grid used to list flat, so every existing per-row behaviour (selection, the detail
+   * popup, the bulk actions) works on them untouched.
+   */
+  readonly units = signal<Map<number, StockRow[]>>(new Map());
+  readonly expanded = signal<Set<number>>(new Set());
+  readonly unitsLoading = signal<Set<number>>(new Set());
+  readonly unitsError = signal<Map<number, string>>(new Map());
   readonly total = signal(0);
   readonly limit = signal(25);
   readonly offset = signal(0);
@@ -950,8 +1051,22 @@ export class InventoryComponent implements OnInit {
   readonly someSelected = computed(
     () => this.filterScope() || this.selectedRows().size > 0,
   );
+  /**
+   * Every sub-row currently on screen, flattened. Selection and the bulk actions work
+   * on units, and units only exist inside an expansion — so "all on this page" means
+   * all the rows the open expansions are showing.
+   */
+  readonly visibleUnits = computed(() => {
+    const map = this.units();
+    const out: StockRow[] = [];
+    for (const id of this.expanded()) {
+      const rows = map.get(id);
+      if (rows) out.push(...rows);
+    }
+    return out;
+  });
   readonly pageAllSelected = computed(() => {
-    const rows = this.rows();
+    const rows = this.visibleUnits();
     if (rows.length === 0) return false;
     const sel = this.selectedRows();
     return rows.every((r) => sel.has(r.rowId));
@@ -960,7 +1075,10 @@ export class InventoryComponent implements OnInit {
     this.filterScope() ? this.total() : this.selectedRows().size,
   );
   readonly canEscalate = computed(
-    () => !this.filterScope() && this.pageAllSelected() && this.total() > this.rows().length,
+    () =>
+      !this.filterScope() &&
+      this.pageAllSelected() &&
+      this.total() > this.productRows().length,
   );
   /** Any quantity row in scope → expiration edit is not allowed. */
   readonly hasQuantitySelected = computed(() => {
@@ -992,10 +1110,17 @@ export class InventoryComponent implements OnInit {
     return cols;
   });
 
-  readonly hasNext = computed(() => this.offset() + this.rows().length < this.total());
+  /** Header cells including the checkbox column, for a sub-row's colspan. */
+  readonly columnCount = computed(
+    () => this.columns().length + (this.isCompanyAdmin ? 1 : 0),
+  );
+
+  readonly hasNext = computed(
+    () => this.offset() + this.productRows().length < this.total(),
+  );
   readonly rangeLabel = computed(() => {
     const start = this.total() === 0 ? 0 : this.offset() + 1;
-    const end = this.offset() + this.rows().length;
+    const end = this.offset() + this.productRows().length;
     return `${start}–${end} of ${this.total()}`;
   });
 
@@ -1049,15 +1174,8 @@ export class InventoryComponent implements OnInit {
               this.loading.set(true);
               this.listError.set(null);
               return this.api
-                .listStock({
-                  storeId: this.storeFilter() ?? undefined,
-                  search: this.searchTerm.trim() || undefined,
-                  locationId: this.locationFilter ?? undefined,
-                  productId: this.productFilter ?? undefined,
-                  type: this.typeFilter ?? undefined,
-                  status: this.statusFilter,
-                  createdFrom: this.createdFrom || undefined,
-                  createdTo: this.createdTo || undefined,
+                .listStockByProduct({
+                  ...this.currentFilters(),
                   sortBy: this.sortBy(),
                   sortDir: this.sortDir(),
                   limit: this.limit(),
@@ -1076,10 +1194,14 @@ export class InventoryComponent implements OnInit {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((res) => {
-        this.rows.set(res.data);
+        this.productRows.set(res.data);
         this.total.set(res.total);
         this.loading.set(false);
         this.loaded.set(true);
+        // A new page of products invalidates every open expansion: the rows beneath a
+        // product were loaded under the previous filters, and keeping them would show
+        // sub-rows that the product's own On hand no longer counts.
+        this.collapseAll();
         this.openPendingItem();
       });
   }
@@ -1137,15 +1259,26 @@ export class InventoryComponent implements OnInit {
     return true;
   }
 
-  /** Select the deep-linked unit once it appears in the loaded rows. */
+  /**
+   * Open the deep-linked unit once it is loaded. A unit now lives inside a product's
+   * expansion, so this expands the product that owns it first and finishes the job when
+   * its sub-rows arrive — the notification link has to end on the unit, not on a
+   * collapsed row that merely contains it.
+   */
   private openPendingItem(): void {
     const wanted = this.pendingItemId;
     if (!wanted) return;
-    const row = this.rows().find((r) => r.itemId === wanted);
-    if (row) {
+
+    const loaded = this.visibleUnits().find((r) => r.itemId === wanted);
+    if (loaded) {
       this.pendingItemId = null;
-      this.selectedRow.set(row);
+      this.openRow(loaded);
+      return;
     }
+    // Not loaded yet. The search brought back the owning product (the query matches a
+    // serial), so expand the first product row and wait for its units.
+    const first = this.productRows()[0];
+    if (first && !this.expanded().has(first.productId)) this.toggleExpanded(first);
   }
 
   /**
@@ -1263,7 +1396,7 @@ export class InventoryComponent implements OnInit {
     if (this.filterScope()) {
       // Drop out of filter-scope: materialize the current page, minus this row.
       const m = new Map<string, StockRow>();
-      for (const r of this.rows()) m.set(r.rowId, r);
+      for (const r of this.visibleUnits()) m.set(r.rowId, r);
       m.delete(row.rowId);
       this.filterScope.set(false);
       this.selectedRows.set(m);
@@ -1281,7 +1414,7 @@ export class InventoryComponent implements OnInit {
       return;
     }
     const m = new Map(this.selectedRows());
-    for (const r of this.rows()) m.set(r.rowId, r);
+    for (const r of this.visibleUnits()) m.set(r.rowId, r);
     this.selectedRows.set(m);
   }
 
@@ -1549,6 +1682,152 @@ export class InventoryComponent implements OnInit {
       this.busy.set(false);
       this.dialogError.set(messageFor(e));
     }
+  }
+
+  // ---- product rows and their expansions --------------------------------
+
+  /**
+   * What clicking a product row does, which depends on what the product IS.
+   *
+   * A serialized product expands: its units are individually identifiable, so there is
+   * a lower tier worth showing. A UPC product has no units — selling one decrements a
+   * counter — so there is nothing to expand TO, and the useful answer is its history.
+   * When such a product sits in several locations there is no single history to open,
+   * so it expands to those locations instead and each one opens its own.
+   */
+  onProductClick(p: ProductStockRow): void {
+    if (p.trackingType === 'SERIALIZED' || p.rowCount > 1) {
+      this.toggleExpanded(p);
+      return;
+    }
+    // Exactly one stock row: open it straight away, which is the "goes to history" case.
+    void this.openSoleStockRow(p);
+  }
+
+  isExpanded(p: ProductStockRow): boolean {
+    return this.expanded().has(p.productId);
+  }
+
+  toggleExpanded(p: ProductStockRow): void {
+    const open = new Set(this.expanded());
+    if (open.has(p.productId)) {
+      open.delete(p.productId);
+      this.expanded.set(open);
+      return;
+    }
+    open.add(p.productId);
+    this.expanded.set(open);
+    // Lazy: a product's rows are fetched the first time it is opened and then kept, so
+    // closing and reopening costs nothing. A filter change drops the lot (collapseAll).
+    if (!this.units().has(p.productId)) this.loadUnits(p);
+  }
+
+  /** Collapse everything and forget the loaded sub-rows. */
+  private collapseAll(): void {
+    this.expanded.set(new Set());
+    this.units.set(new Map());
+    this.unitsLoading.set(new Set());
+    this.unitsError.set(new Map());
+  }
+
+  unitsFor(p: ProductStockRow): StockRow[] {
+    return this.units().get(p.productId) ?? [];
+  }
+
+  isUnitsLoading(p: ProductStockRow): boolean {
+    return this.unitsLoading().has(p.productId);
+  }
+
+  unitsErrorFor(p: ProductStockRow): string | null {
+    return this.unitsError().get(p.productId) ?? null;
+  }
+
+  /**
+   * The sub-rows are the SAME query the grid ran, narrowed to this product — which is
+   * what guarantees they are the rows its On hand counted. rowCount is the limit for
+   * the same reason: it is how many the rollup said there would be.
+   */
+  private loadUnits(p: ProductStockRow): void {
+    this.unitsLoading.update((m) => new Set(m).add(p.productId));
+    this.unitsError.update((m) => {
+      const next = new Map(m);
+      next.delete(p.productId);
+      return next;
+    });
+    this.api
+      .listStock({
+        ...this.currentFilters(),
+        productId: p.productId,
+        sortBy: 'expiration',
+        sortDir: 'asc',
+        limit: Math.max(p.rowCount, 1),
+        offset: 0,
+      })
+      .subscribe({
+        next: (res) => {
+          this.units.update((m) => new Map(m).set(p.productId, res.data));
+          this.unitsLoading.update((m) => {
+            const next = new Set(m);
+            next.delete(p.productId);
+            return next;
+          });
+        },
+        error: (err) => {
+          this.unitsError.update((m) => new Map(m).set(p.productId, messageFor(err)));
+          this.unitsLoading.update((m) => {
+            const next = new Set(m);
+            next.delete(p.productId);
+            return next;
+          });
+        },
+      });
+  }
+
+  /** Fetch the single stock row behind a one-location UPC product and open its detail. */
+  private async openSoleStockRow(p: ProductStockRow): Promise<void> {
+    try {
+      const res = await firstValueFrom(
+        this.api.listStock({ ...this.currentFilters(), productId: p.productId, limit: 1 }),
+      );
+      const row = res.data[0];
+      if (row) this.openRow(row);
+    } catch (err) {
+      this.listError.set(messageFor(err));
+    }
+  }
+
+  /** "N stores" / the store's name — the product row's rollup of a per-unit column. */
+  productStoreLabel(p: ProductStockRow): string {
+    return p.storeCount === 1 ? this.storeName(p.storeId) : `${p.storeCount} stores`;
+  }
+
+  productLocationLabel(p: ProductStockRow): string {
+    if (p.locationCount === 1) return p.locationName ?? '—';
+    return `${p.locationCount} locations`;
+  }
+
+  /**
+   * A date column on a product row: one value when the range collapses, "a – b" when it
+   * does not, so the row never implies a single date it does not have.
+   */
+  dateRange(from: string | null, to: string | null, withTime = false): string {
+    if (!from && !to) return '—';
+    const fmt = (v: string) => {
+      // A date-only value (expiration) must be read as LOCAL, not UTC midnight:
+      // new Date('2026-08-04') is UTC, so rendering it west of Greenwich showed the
+      // 3rd. Angular's date pipe gets this right, which is why the unit rows were
+      // correct while this helper was a day out.
+      const dateOnly = /^\d{4}-\d{2}-\d{2}$/.exec(v);
+      const d = dateOnly
+        ? new Date(Number(v.slice(0, 4)), Number(v.slice(5, 7)) - 1, Number(v.slice(8, 10)))
+        : new Date(v);
+      return withTime ? d.toLocaleString() : d.toLocaleDateString();
+    };
+    if (!to || from === to) return fmt(from!);
+    if (!from) return fmt(to);
+    const a = fmt(from);
+    const b = fmt(to);
+    return a === b ? a : `${a} – ${b}`;
   }
 
   openRow(row: StockRow): void {
