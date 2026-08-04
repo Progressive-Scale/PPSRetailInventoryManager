@@ -22,10 +22,17 @@ import {
   Store,
 } from '../../core/models';
 
+/** One rendered line: what it says, plus an optional badge for what kind it is. */
+interface GroupItem {
+  text: string;
+  /** e.g. "New product" — a line that creates stock rather than confirming it. */
+  tag?: string;
+}
+
 interface ResolutionGroup {
   key: CycleCountResolution;
   label: string;
-  items: string[];
+  items: GroupItem[];
   prominent: boolean;
 }
 
@@ -250,7 +257,12 @@ interface ResolutionGroup {
                 } @else {
                   <ul class="serials">
                     @for (s of g.items; track $index) {
-                      <li>{{ s }}</li>
+                      <li>
+                        {{ s.text }}
+                        @if (s.tag) {
+                          <span class="line-tag">{{ s.tag }}</span>
+                        }
+                      </li>
                     }
                   </ul>
                 }
@@ -582,6 +594,19 @@ interface ResolutionGroup {
       .serials li {
         min-width: 120px;
       }
+      /* Says what a line will DO, next to the line itself rather than as a heading
+         over a separate list. */
+      .line-tag {
+        font-family: system-ui, sans-serif;
+        font-size: 0.7rem;
+        font-weight: 600;
+        margin-left: 0.4rem;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--brand, var(--accent));
+        white-space: nowrap;
+      }
     `,
   ],
 })
@@ -594,7 +619,9 @@ export class CycleCountsComponent implements OnInit {
     { key: 'MOVED_IN', label: 'Found here (moved in)' },
     { key: 'RECEIVED', label: 'Received (shipped units scanned in)' },
     { key: 'REINSTATED', label: 'Reinstated (found after being sold)' },
-    { key: 'NEW_ITEM', label: 'New / unidentified' },
+    // NEW_ITEM has no group of its own: a code the counter found IS something they
+    // counted, so it belongs in Scanned, badged for what it will create. A separate
+    // "New / unidentified" list read like a side note about work that had not happened.
     { key: 'COUNTED_BY_UPC', label: 'Counted by UPC' },
     { key: 'MARKED_SOLD', label: 'Missing — would be marked sold' },
     { key: 'PENDING_NOT_RECEIVED', label: 'Shipped, not yet received' },
@@ -653,21 +680,31 @@ export class CycleCountsComponent implements OnInit {
   readonly groups = computed<ResolutionGroup[]>(() => {
     const d = this.detail();
     if (!d) return [];
-    return CycleCountsComponent.ORDER.map(({ key, label }) => ({
-      key,
-      label,
-      items: (d.linesByResolution?.[key] ?? []).map((l) => this.formatLine(l)),
-      // Highlighted because these are the lines that REMOVE stock.
-      prominent: key === 'MARKED_SOLD',
+    // Unrecognised codes join Scanned, badged. They were counted like everything else,
+    // and the tally above now counts them, so a separate list would say otherwise.
+    const newItems = (d.linesByResolution?.NEW_ITEM ?? []).map((l) => ({
+      text: this.formatLine(l),
+      tag: l.serial == null ? 'New product' : 'New serial',
     }));
+    return CycleCountsComponent.ORDER.map(({ key, label }) => {
+      const items: GroupItem[] = (d.linesByResolution?.[key] ?? []).map((l) => ({
+        text: this.formatLine(l),
+      }));
+      return {
+        key,
+        label,
+        items: key === 'SCANNED' ? [...items, ...newItems] : items,
+        // Highlighted because these are the lines that REMOVE stock.
+        prominent: key === 'MARKED_SOLD',
+      };
+    });
   });
 
   private formatLine(line: CycleCountLine): string {
-    // An unidentified unit has no product, so lead with the serial and say so.
+    // A serial with no product behind it. The badge says it is new, so the text does
+    // not repeat it — it carries the one thing the badge cannot: who is identifying it.
     if (line.productId == null && line.serial) {
-      return `${line.serial} — unidentified${
-        line.importCheckRequested ? ', PPS check requested' : ''
-      }`;
+      return `${line.serial}${line.importCheckRequested ? ' — PPS check requested' : ''}`;
     }
     if (line.resolution === 'MOVED_IN' && line.serial) {
       return `${line.serial} — ${line.sku ?? ''} (moved to ${line.locationName ?? 'here'})`;
@@ -677,9 +714,10 @@ export class CycleCountsComponent implements OnInit {
       return `${line.sku ?? ''} ${line.name ?? ''}${where} — counted ${line.quantity ?? 0}`;
     }
     if (line.resolution === 'NEW_ITEM' && line.serial == null && line.quantity != null) {
-      // A quantity product newly seen this cycle.
+      // A quantity product newly seen this cycle. Worded like COUNTED_BY_UPC because it
+      // is the same act — somebody counted a shelf — and the badge carries the difference.
       const where = line.locationName ? ` at ${line.locationName}` : '';
-      return `${line.sku ?? ''}${where} — +${line.quantity}`;
+      return `${line.sku ?? ''} ${line.name ?? ''}${where} — counted ${line.quantity}`;
     }
     // Serialized lines (SCANNED / MARKED_SOLD / RECEIVED / REINSTATED / …).
     if (line.serial) return `${line.serial} — ${line.sku ?? 'unidentified'}`;
