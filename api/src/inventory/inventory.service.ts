@@ -873,17 +873,26 @@ export class InventoryService {
     const { limit, offset } = resolvePaging(query);
     const { cte, where } = this.stockQuery(ctx, query);
 
-    // Whitelisted, and for date columns the expression depends on the direction.
+    /**
+     * Every column the flat grid sorts by, so both tiers keep one header row. Where a
+     * product spans several values the direction picks the end: ascending by the
+     * lowest, descending by the highest. That is the rule for the dates, and it reads
+     * the same way for a store or a location.
+     */
     const desc = query.sortDir === 'desc';
+    const ends = (col: SQL) => (desc ? sql`max(${col})` : sql`min(${col})`);
     const sortCols: Record<string, SQL> = {
       sku: sql`c.sku`,
       barcode: sql`c.upc`,
       name: sql`c.name`,
       type: sql`c.tracking_type`,
       onHand: sql`sum(c.on_hand)`,
-      expiration: desc ? sql`max(c.expiration_date)` : sql`min(c.expiration_date)`,
-      created: desc ? sql`max(c.created_at)` : sql`min(c.created_at)`,
-      sold: desc ? sql`max(c.sold_at)` : sql`min(c.sold_at)`,
+      // store_id, not the name — matching what the flat grid already sorts store by.
+      store: ends(sql`c.store_id`),
+      location: ends(sql`c.location_name`),
+      expiration: ends(sql`c.expiration_date`),
+      created: ends(sql`c.created_at`),
+      sold: ends(sql`c.sold_at`),
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = desc ? sql`DESC` : sql`ASC`;
@@ -894,6 +903,11 @@ export class InventoryService {
         SELECT c.product_id, c.sku, c.upc, c.name, c.tracking_type,
                sum(c.on_hand)::int              AS on_hand,
                count(*)::int                    AS row_count,
+               -- One store/location gets named on the product row; several get counted.
+               count(DISTINCT c.store_id)::int   AS store_count,
+               min(c.store_id)                   AS store_id,
+               count(DISTINCT c.location_id)::int AS location_count,
+               min(c.location_name)              AS location_name,
                min(c.expiration_date)           AS expiration_from,
                max(c.expiration_date)           AS expiration_to,
                min(c.created_at)                AS created_from,
@@ -933,6 +947,12 @@ export class InventoryService {
         // How many rows the expansion will hold: units for a serialized product,
         // stock-locations for a quantity one.
         rowCount: r.row_count,
+        // When the count is 1 these name the single store/location the product sits in;
+        // above 1 the UI says "N stores" and the expansion shows which.
+        storeCount: r.store_count,
+        storeId: r.store_id,
+        locationCount: r.location_count,
+        locationName: r.location_name,
         expirationFrom: r.expiration_from,
         expirationTo: r.expiration_to,
         createdFrom: r.created_from,
