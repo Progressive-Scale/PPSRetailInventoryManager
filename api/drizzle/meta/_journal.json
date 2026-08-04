@@ -183,6 +183,13 @@
       "when": 1785851835745,
       "tag": "0025_transferred_in_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785858057606,
+      "tag": "0026_sold_at",
+      "breakpoints": true
     }
   ]
 }

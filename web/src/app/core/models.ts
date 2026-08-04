@@ -201,6 +201,8 @@ export interface StockRow {
   serial: string | null;
   expirationDate: string | null;
   createdAt: string;
+  // When this unit was sold; null while on hand and always null for quantity rows.
+  soldAt: string | null;
   // Serialized unit status (ON_HAND / SOLD / …); null for quantity rows.
   status: ItemStatus | null;
 }
@@ -214,7 +216,8 @@ export type StockSortField =
   | 'onHand'
   | 'location'
   | 'expiration'
-  | 'created';
+  | 'created'
+  | 'sold';
 
 export type StockStatusFilter = 'ON_HAND' | 'SOLD' | 'ALL';
 

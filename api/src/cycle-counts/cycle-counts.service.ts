@@ -1079,7 +1079,14 @@ export class CycleCountsService {
         if (!line.itemId || line.locationId == null) return;
         await tx
           .update(inventoryItems)
-          .set({ status: 'ON_HAND', locationId: line.locationId, updatedAt: now })
+          .set({
+            status: 'ON_HAND',
+            locationId: line.locationId,
+            // Cleared: the unit is on the shelf again, so a sold date would misreport it
+            // in any sold listing. The SALE row stays in the ledger as history.
+            soldAt: null,
+            updatedAt: now,
+          })
           .where(eq(inventoryItems.id, line.itemId));
         // A compensating entry. The original SALE row is never touched — the ledger is
         // append-only — so the history reads sold, then found, then reinstated.
@@ -1099,7 +1106,9 @@ export class CycleCountsService {
         if (!line.itemId) return;
         await tx
           .update(inventoryItems)
-          .set({ status: 'SOLD', updatedAt: now })
+          // Sold date is the approval, not the count: that is when the sale was accepted
+          // as fact, and it is also when the SALE ledger row is written.
+          .set({ status: 'SOLD', soldAt: now, updatedAt: now })
           .where(eq(inventoryItems.id, line.itemId));
         await tx.insert(inventoryTransactions).values({
           ...base,

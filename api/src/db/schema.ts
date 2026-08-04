@@ -525,6 +525,15 @@ export const inventoryItems = pgTable(
     // Expiration date (calendar date, nullable). Per physical unit.
     expirationDate: date('expiration_date'),
     receivedAt: timestamp('received_at', { withTimezone: true }),
+    /**
+     * When this unit was sold. Set on every transition into SOLD and CLEARED on
+     * reinstate, so it always describes the CURRENT status rather than "was sold once".
+     *
+     * Denormalised from the SALE ledger row on purpose: the stock grid sorts by it, and a
+     * correlated max(created_at) subquery per row would be paid on every page of every
+     * listing to recover something a column can hold.
+     */
+    soldAt: timestamp('sold_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow()

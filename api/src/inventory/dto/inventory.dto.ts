@@ -128,6 +128,8 @@ const STOCK_SORT_FIELDS = [
   'location',
   'expiration',
   'created',
+  // Serialized units only; quantity stock lines have no sold date and sort last.
+  'sold',
 ] as const;
 
 // Combined flat stock listing: one row per serialized unit + one row per

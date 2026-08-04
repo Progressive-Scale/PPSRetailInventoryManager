@@ -813,6 +813,7 @@ export class InventoryService {
       location: sql`c.location_name`,
       expiration: sql`c.expiration_date`,
       created: sql`c.created_at`,
+      sold: sql`c.sold_at`,
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = query.sortDir === 'desc' ? sql`DESC` : sql`ASC`;
@@ -824,7 +825,9 @@ export class InventoryService {
           SELECT 'stock'::text, 'stock:' || s.id::text, NULL::uuid,
                  p.id, p.sku, p.upc, p.name, p.tracking_type::text, s.store_id, s.quantity_on_hand,
                  l.id, l.name, l.kind::text,
-                 NULL::text, NULL::date, s.created_at, NULL::text
+                 -- A quantity stock line has no sold date: selling decrements a counter
+                 -- rather than retiring an identifiable unit, so there is nothing to date.
+                 NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text
           FROM inventory_stock s
           JOIN products p ON p.id = s.product_id
           JOIN store_locations l ON l.id = s.location_id
@@ -838,7 +841,8 @@ export class InventoryService {
                  p.tracking_type::text AS tracking_type, i.store_id,
                  (CASE WHEN i.status = 'ON_HAND' THEN 1 ELSE 0 END) AS on_hand,
                  l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
-                 i.serial, i.expiration_date, i.created_at, i.status::text AS status
+                 i.serial, i.expiration_date, i.created_at, i.sold_at,
+                 i.status::text AS status
           FROM inventory_items i
           JOIN products p ON p.id = i.product_id
           JOIN store_locations l ON l.id = i.location_id
@@ -889,6 +893,7 @@ export class InventoryService {
         serial: r.serial,
         expirationDate: r.expiration_date,
         createdAt: r.created_at,
+        soldAt: r.sold_at,
         status: r.status,
       }));
       return { data, total, limit, offset };
@@ -1091,9 +1096,10 @@ export class InventoryService {
           });
           continue;
         }
+        const soldNow = new Date();
         await tx
           .update(inventoryItems)
-          .set({ status: 'SOLD', updatedAt: new Date() })
+          .set({ status: 'SOLD', soldAt: soldNow, updatedAt: soldNow })
           .where(eq(inventoryItems.id, it.id));
         await tx.insert(inventoryTransactions).values({
           companyId: ctx.companyId,
@@ -1337,9 +1343,20 @@ export class InventoryService {
         `Cannot ${type.toLowerCase()} a unit that is ${current.status}.`,
       );
     }
+    const now = new Date();
     const [item] = await tx
       .update(inventoryItems)
-      .set({ status: to, updatedAt: new Date() })
+      .set({
+        status: to,
+        // soldAt tracks the CURRENT status, so it is stamped going into SOLD and cleared
+        // coming out of it. Left untouched for transitions that are not about selling.
+        ...(to === 'SOLD'
+          ? { soldAt: now }
+          : current.status === 'SOLD'
+            ? { soldAt: null }
+            : {}),
+        updatedAt: now,
+      })
       .where(eq(inventoryItems.id, itemId))
       .returning();
     await tx.insert(inventoryTransactions).values({

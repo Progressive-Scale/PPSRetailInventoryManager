@@ -288,6 +288,7 @@ interface Column {
                         }
                       </td>
                       <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
+                      <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
                     </tr>
                   }
                 </tbody>
@@ -961,6 +962,7 @@ export class InventoryComponent implements OnInit {
       { label: 'Location', field: 'location' },
       { label: 'Expiration', field: 'expiration' },
       { label: 'Created', field: 'created' },
+      { label: 'Sold', field: 'sold' },
     );
     return cols;
   });

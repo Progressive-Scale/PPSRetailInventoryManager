@@ -327,6 +327,7 @@ async function main(): Promise<void> {
         status: u.status,
         expirationDate: u.expirationDate ?? null,
         receivedAt: now,
+        soldAt: u.status === 'SOLD' ? now : null,
       })
       .onConflictDoNothing({
         target: [inventoryItems.companyId, inventoryItems.serial],
@@ -461,7 +462,7 @@ async function main(): Promise<void> {
       // Unscanned serialized unit -> swept SOLD.
       await db
         .update(inventoryItems)
-        .set({ status: 'SOLD', updatedAt: now })
+        .set({ status: 'SOLD', soldAt: now, updatedAt: now })
         .where(eq(inventoryItems.id, sn1005.id));
       await db.insert(inventoryTransactions).values({
         companyId: demo.id,
