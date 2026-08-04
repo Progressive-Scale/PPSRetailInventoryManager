@@ -815,18 +815,32 @@ export class CycleCountsService {
         );
       }
 
-      // Every line that came from somebody physically scanning a unit. TRANSFERRED_IN
-      // belongs here: the counter scanned a real unit and the count is moving it to this
-      // store, so reporting "0 scanned" made the review screen contradict the change it
-      // was being asked to approve. A serial-bearing NEW_ITEM counts for the same reason —
-      // an unrecognised serial was still read off a real thing. A NEW_ITEM with no serial
-      // is a keyed-in UPC quantity, which is a tally rather than a scan.
-      const scanned = lines.filter(
-        (l) =>
-          ['SCANNED', 'MOVED_IN', 'RECEIVED', 'REINSTATED', 'TRANSFERRED_IN'].includes(
-            l.resolution,
-          ) || (l.resolution === 'NEW_ITEM' && l.serial != null),
-      ).length;
+      // The two numbers every review screen leads with, derived the way the handheld
+      // derives its own so the counter is not shown one figure at the shelf and a
+      // different one after handing in.
+      //
+      // "Placed" units are the ones this count puts in the store that the opening
+      // snapshot could not know about: created here (NEW_ITEM), received off a delivery,
+      // moved in from another location or another store, or put back after the system had
+      // sold them. Each is a unit that ends up here, and each was scanned to say so, so
+      // each counts toward BOTH numbers. Counting them in both is also what keeps
+      // scanned <= expected: a SCANNED line can only ever be an in-scope unit.
+      //
+      // A UPC new item is a QUANTITY, not a unit — entering 5 means five things are on
+      // that shelf, so it contributes 5. A serialized new item is exactly one thing. An
+      // explicit 0 contributes nothing, because that is what it says.
+      const PLACED_RESOLUTIONS = ['RECEIVED', 'MOVED_IN', 'TRANSFERRED_IN', 'REINSTATED'];
+      const newItemUnits = lines
+        .filter((l) => l.resolution === 'NEW_ITEM')
+        .reduce(
+          (n, l) => n + (l.serial != null ? 1 : Math.max(0, l.quantity ?? 1)),
+          0,
+        );
+      const placedUnits =
+        newItemUnits +
+        lines.filter((l) => PLACED_RESOLUTIONS.includes(l.resolution)).length;
+      const scannedInScope = lines.filter((l) => l.resolution === 'SCANNED').length;
+      const scanned = scannedInScope + placedUnits;
       const [updated] = await tx
         .update(cycleCounts)
         .set({
@@ -837,7 +851,7 @@ export class CycleCountsService {
           // and can be resubmitted later, by which time stock may have changed; the
           // sweep is computed live, so a frozen expectedCount would contradict the
           // proposals sitting next to it on the review screen.
-          expectedCount: inScopeUnits.length,
+          expectedCount: inScopeUnits.length + placedUnits,
           scannedCount: scanned,
           soldGeneratedCount: lines.filter((l) => l.resolution === 'MARKED_SOLD')
             .length,
