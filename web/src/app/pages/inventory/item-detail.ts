@@ -41,6 +41,11 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
             @if (row.rowKind === 'unit') {
               <div><dt>Serial</dt><dd class="mono">{{ row.serial }}</dd></div>
               <div><dt>Status</dt><dd>{{ statusLabel(row.status) }}</dd></div>
+              <!-- Only when there is one: on an on-hand unit the Status field above
+                   already says "not sold", so an empty Sold row would just be noise. -->
+              @if (row.soldAt) {
+                <div><dt>Sold on</dt><dd>{{ row.soldAt | date: 'medium' }}</dd></div>
+              }
               <div><dt>Expiration</dt><dd [class]="expClass(row.expirationDate)">{{ row.expirationDate ? (row.expirationDate | date: 'mediumDate') : '—' }}</dd></div>
             }
             <div><dt>Created</dt><dd>{{ row.createdAt | date: 'medium' }}</dd></div>
