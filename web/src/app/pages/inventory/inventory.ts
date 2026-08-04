@@ -270,7 +270,14 @@ interface Column {
                         }
                       </td>
                       <td class="muted">{{ row.upc || '—' }}</td>
-                      <td>{{ row.name }}</td>
+                      <td>
+                        {{ row.name }}
+                        @if (row.reorderOpen) {
+                          <span class="ro-badge" title="This store has an open reorder for this product">
+                            Reorder
+                          </span>
+                        }
+                      </td>
                       <td>
                         <span class="type-badge" [class]="'tt-' + row.trackingType">{{ typeLabel(row.trackingType) }}</span>
                       </td>
@@ -612,6 +619,18 @@ interface Column {
         font-size: 0.72rem;
         color: var(--muted);
         font-family: ui-monospace, monospace;
+      }
+      .ro-badge {
+        display: inline-block;
+        margin-left: 0.35rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        background: #fff7ed;
+        color: #9a3412;
+        border: 1px solid #fed7aa;
+        white-space: nowrap;
       }
       .st {
         margin-left: 0.4rem;

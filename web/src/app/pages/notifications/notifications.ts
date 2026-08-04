@@ -49,6 +49,7 @@ const PAGE_SIZE = 200;
               <option [ngValue]="null">All</option>
               <option [ngValue]="'EXPIRATION_WARNING'">Expiration</option>
               <option [ngValue]="'INVITE_ACCEPTED'">Invite accepted</option>
+              <option [ngValue]="'REORDER_ACKNOWLEDGED'">Reorder acknowledged</option>
             </select>
           </label>
           <label class="f">
@@ -382,6 +383,11 @@ const PAGE_SIZE = 200;
         background: #fef3c7;
         color: #92400e;
       }
+      .nt-REORDER_ACKNOWLEDGED {
+        background: #ecfdf5;
+        color: #065f46;
+        border-color: #a7f3d0;
+      }
       .nt-INVITE_ACCEPTED {
         background: #e0e7ff;
         color: #3730a3;
@@ -707,7 +713,14 @@ export class NotificationsComponent implements OnInit {
   // ---- display -----------------------------------------------------------
 
   typeLabel(n: AppNotification): string {
-    return n.type === 'INVITE_ACCEPTED' ? 'Invite' : 'Expiration';
+    switch (n.type) {
+      case 'INVITE_ACCEPTED':
+        return 'Invite';
+      case 'REORDER_ACKNOWLEDGED':
+        return 'Reorder';
+      default:
+        return 'Expiration';
+    }
   }
 
   statusLabel(s: NotificationStatus): string {
@@ -716,6 +729,10 @@ export class NotificationsComponent implements OnInit {
   }
 
   describe(n: AppNotification): string {
+    if (n.type === 'REORDER_ACKNOWLEDGED') {
+      const what = n.payload.productName ?? `product #${n.payload.productId}`;
+      return `Reorder for ${what} acknowledged — order ${n.payload.externalOrderRef}`;
+    }
     if (n.type === 'INVITE_ACCEPTED') {
       const role = n.payload.role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User';
       return `${n.payload.email} accepted their invitation as ${role}`;
@@ -735,6 +752,11 @@ export class NotificationsComponent implements OnInit {
     if (n.status === 'UNREAD') this.store.markRead(n.id);
     if (n.type === 'INVITE_ACCEPTED') {
       this.router.navigate(['/manage'], { queryParams: { tab: 'users' } });
+      return;
+    }
+    if (n.type === 'REORDER_ACKNOWLEDGED') {
+      // Straight to the request, where the order reference is shown in context.
+      this.router.navigate(['/reorders'], { queryParams: { status: 'ACKNOWLEDGED' } });
       return;
     }
     this.router.navigate(['/inventory'], {

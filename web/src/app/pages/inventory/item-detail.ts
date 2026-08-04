@@ -11,13 +11,14 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
+import { ReorderDialogComponent } from '../reorders/reorder-dialog';
 import { ItemAudit, StockRow, StoreLocation, Transaction } from '../../core/models';
 
 type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
 
 @Component({
   selector: 'app-item-detail',
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, ReorderDialogComponent],
   template: `
     <div class="overlay" (click)="close.emit()">
       <div class="modal" (click)="$event.stopPropagation()">
@@ -26,9 +27,27 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
             <h2>{{ row.name }}</h2>
             <span class="muted">{{ row.sku }}</span>
             <span class="type-badge" [class]="'tt-' + row.trackingType">{{ row.trackingType === 'QUANTITY' ? 'UPC' : 'SERIALIZED' }}</span>
+            @if (row.reorderOpen) {
+              <span class="ro-badge" title="This store already has an open reorder">Reorder open</span>
+            }
           </div>
-          <button class="ghost" (click)="close.emit()">Close</button>
+          <div class="head-actions">
+            <!-- Every role: flagging an empty shelf is shop-floor work, and the Manage
+                 block below is admin-only. -->
+            <button class="ghost" (click)="reorderOpen.set(true)">Reorder</button>
+            <button class="ghost" (click)="close.emit()">Close</button>
+          </div>
         </div>
+
+        @if (reorderOpen()) {
+          <app-reorder-dialog
+            [productId]="row.productId"
+            [productName]="row.name"
+            [sku]="row.sku"
+            [storeId]="row.storeId"
+            (close)="onReorderClosed($event)"
+          />
+        }
 
         <!-- INFO -->
         <section class="block">
@@ -184,6 +203,23 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
         align-items: flex-start;
         gap: 1rem;
         margin-bottom: 0.5rem;
+      }
+      .head-actions {
+        display: flex;
+        gap: 0.4rem;
+        flex-shrink: 0;
+      }
+      .ro-badge {
+        display: inline-block;
+        margin-left: 0.35rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        background: #fff7ed;
+        color: #9a3412;
+        border: 1px solid #fed7aa;
+        white-space: nowrap;
       }
       h2 {
         margin: 0;
@@ -376,6 +412,7 @@ export class ItemDetailComponent implements OnInit {
   readonly historyLoading = signal(false);
 
   readonly mgmt = signal<Mgmt>(null);
+  readonly reorderOpen = signal(false);
   readonly saving = signal(false);
   readonly mgmtError = signal<string | null>(null);
 
@@ -436,6 +473,19 @@ export class ItemDetailComponent implements OnInit {
     this.qty = this.row.rowKind === 'stock' ? this.row.onHand : null;
     this.expirationDate = this.row.expirationDate ?? '';
     this.mgmt.set(m);
+  }
+
+  /**
+   * A raised or cancelled reorder changes the row's badge, so the grid behind has to
+   * reload — but this popup closes with it, because `row` is an immutable snapshot and
+   * leaving it open would keep showing the stale badge.
+   */
+  onReorderClosed(changed: boolean): void {
+    this.reorderOpen.set(false);
+    if (changed) {
+      this.changed.emit();
+      this.close.emit();
+    }
   }
 
   private done(): void {

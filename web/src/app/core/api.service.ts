@@ -38,6 +38,10 @@ import {
   Paginated,
   Product,
   Profile,
+  Reorder,
+  ReorderStatus,
+  CreateReorder,
+  CreateReorderResult,
   ResetStatusResponse,
   CreateProduct,
   PutNotificationSettings,
@@ -371,6 +375,32 @@ export class ApiService {
 
   putNotificationSettings(dto: PutNotificationSettings): Observable<unknown> {
     return this.http.put('/api/notification-settings', dto);
+  }
+
+  // ---- reorders ----
+  listReorders(opts?: {
+    status?: ReorderStatus;
+    storeId?: number;
+    productId?: number;
+    limit?: number;
+    offset?: number;
+  }): Observable<Paginated<Reorder>> {
+    let params = new HttpParams();
+    if (opts?.status) params = params.set('status', opts.status);
+    if (opts?.storeId != null) params = params.set('storeId', String(opts.storeId));
+    if (opts?.productId != null) params = params.set('productId', String(opts.productId));
+    if (opts?.limit != null) params = params.set('limit', String(opts.limit));
+    if (opts?.offset != null) params = params.set('offset', String(opts.offset));
+    return this.http.get<Paginated<Reorder>>('/api/reorders', { params });
+  }
+
+  /** Returns `created: false` with the live request when one is already open. */
+  createReorder(dto: CreateReorder): Observable<CreateReorderResult> {
+    return this.http.post<CreateReorderResult>('/api/reorders', dto);
+  }
+
+  cancelReorder(id: number): Observable<Reorder> {
+    return this.http.post<Reorder>(`/api/reorders/${id}/cancel`, {});
   }
 
   // ---- cycle counts ----

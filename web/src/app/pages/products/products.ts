@@ -3,7 +3,14 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
+import { ReorderDialogComponent } from '../reorders/reorder-dialog';
+import {
+  CreateProduct,
+  Product,
+  Store,
+  TrackingType,
+  UpdateProduct,
+} from '../../core/models';
 
 // The Review sub-tab moved to Cycle Counts -> Review: everything in it
 // originates from a count, so it belongs beside the counts, not the catalog.
@@ -14,7 +21,7 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
 
 @Component({
   selector: 'app-products',
-  imports: [FormsModule],
+  imports: [FormsModule, ReorderDialogComponent],
   template: `
     <main class="container">
       @if (error()) {
@@ -77,6 +84,10 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                   <th class="col-name">Name</th>
                   <th class="col-type">Type</th>
                   <th class="col-upc">UPC</th>
+                  <th class="col-num num">On hand</th>
+                  <th class="col-num num" title="Flag the product as low at or below this level">
+                    Low at
+                  </th>
                   <th class="col-active">Active</th>
                   <th class="actions col-actions"></th>
                 </tr>
@@ -93,6 +104,17 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                         </span>
                       </td>
                       <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
+                      <td class="num muted">{{ p.onHand }}</td>
+                      <td>
+                        <input
+                          class="cell-input num"
+                          type="number"
+                          min="0"
+                          name="ep-threshold"
+                          placeholder="none"
+                          [(ngModel)]="productEdit.reorderThreshold"
+                        />
+                      </td>
                       <td>
                         <select class="cell-input" name="ep-active" [(ngModel)]="productEdit.active">
                           <option [ngValue]="true">Active</option>
@@ -108,16 +130,34 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                       </td>
                     } @else {
                       <td>{{ p.sku }}</td>
-                      <td>{{ p.name }}</td>
+                      <td>
+                        {{ p.name }}
+                        @if (p.openReorders > 0) {
+                          <span
+                            class="ro-badge"
+                            [title]="
+                              p.openReorders === 1
+                                ? 'One store has an open reorder'
+                                : p.openReorders + ' stores have open reorders'
+                            "
+                            >Reorder{{ p.openReorders > 1 ? ' ×' + p.openReorders : '' }}</span
+                          >
+                        }
+                      </td>
                       <td>
                         <span class="type-badge" [class]="'tt-' + p.trackingType">
                           {{ typeLabel(p.trackingType) }}
                         </span>
                       </td>
                       <td class="muted">{{ p.upc || '—' }}</td>
+                      <td class="num" [class.low]="isLow(p)" [title]="isLow(p) ? 'At or below the low-stock level' : ''">
+                        {{ p.onHand }}
+                      </td>
+                      <td class="num muted">{{ p.reorderThreshold ?? '—' }}</td>
                       <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
                       <td class="actions">
                         <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
+                        <button class="sm ghost" (click)="openReorder(p)">Reorder</button>
                       </td>
                     }
                   </tr>
@@ -193,7 +233,17 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
           </div>
         </div>
       }
-    
+
+      <!-- Reorder. The catalog spans stores, so the dialog asks which one. -->
+      @if (reorderTarget(); as target) {
+        <app-reorder-dialog
+          [productId]="target.id"
+          [productName]="target.name"
+          [sku]="target.sku"
+          [stores]="stores()"
+          (close)="onReorderClosed($event)"
+        />
+      }
     </main>
   `,
   styles: [
@@ -355,24 +405,49 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      /* Widths must sum to 100% across every column — Price was removed. */
+      /* Widths must sum to 100% across every column. */
       .col-sku {
-        width: 15%;
+        width: 13%;
       }
       .col-name {
-        width: 28%;
+        width: 25%;
       }
       .col-type {
-        width: 14%;
+        width: 11%;
       }
       .col-upc {
-        width: 15%;
+        width: 13%;
+      }
+      .col-num {
+        width: 8%;
       }
       .col-active {
-        width: 10%;
+        width: 9%;
       }
       .col-actions {
-        width: 18%;
+        width: 13%;
+      }
+      .num {
+        text-align: right;
+      }
+      /* On hand at or below the product's low-stock level. Amber, not red: it is a
+         hint to reorder, not a fault. */
+      td.low {
+        background: #fffbeb;
+        color: #92400e;
+        font-weight: 600;
+      }
+      .ro-badge {
+        display: inline-block;
+        margin-left: 0.35rem;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        background: #fff7ed;
+        color: #9a3412;
+        border: 1px solid #fed7aa;
+        white-space: nowrap;
       }
       .type-badge {
         display: inline-block;
@@ -523,16 +598,31 @@ export class ProductsComponent implements OnInit {
     upc: string;
     description: string;
     active: boolean;
-  } = { sku: '', name: '', price: null, upc: '', description: '', active: true };
+    /** null clears the threshold; the number input yields null when emptied. */
+    reorderThreshold: number | null;
+  } = {
+    sku: '',
+    name: '',
+    price: null,
+    upc: '',
+    description: '',
+    active: true,
+    reorderThreshold: null,
+  };
   readonly showAddModal = signal(false);
   readonly modalError = signal<string | null>(null);
   readonly deleteTarget = signal<Product | null>(null);
   readonly deleteError = signal<string | null>(null);
+  /** Product whose reorder dialog is open. */
+  readonly reorderTarget = signal<Product | null>(null);
+  /** For the dialog's store picker: the catalog is company-wide, a reorder is not. */
+  readonly stores = signal<Store[]>([]);
 
   ngOnInit(): void {
     const raw = this.route.snapshot.queryParamMap.get('edit');
     const editId = raw ? Number(raw) : null;
     this.loadProducts(Number.isFinite(editId) ? editId : null);
+    this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
   }
 
   loadProducts(openForEdit: number | null = null): void {
@@ -665,6 +755,7 @@ export class ProductsComponent implements OnInit {
       upc: p.upc ?? '',
       description: p.description ?? '',
       active: p.active,
+      reorderThreshold: p.reorderThreshold,
     };
   }
 
@@ -675,6 +766,12 @@ export class ProductsComponent implements OnInit {
       description: this.productEdit.description,
       upc: this.productEdit.upc,
       active: this.productEdit.active,
+      // Sent every save, including as null: the field is how a threshold is cleared,
+      // and omitting null would make clearing impossible.
+      reorderThreshold:
+        this.productEdit.reorderThreshold == null
+          ? null
+          : Number(this.productEdit.reorderThreshold),
     };
     if (this.productEdit.price != null) dto.price = Number(this.productEdit.price);
     // Only when this row was opened from the Review queue — a normal catalog edit
@@ -699,5 +796,26 @@ export class ProductsComponent implements OnInit {
   formatPrice(price: string): string {
     const n = Number(price);
     return Number.isFinite(n) ? n.toFixed(2) : price;
+  }
+
+  // ---- reorders ----
+
+  /**
+   * Low-stock hint. Only products that carry a threshold have an opinion; everything
+   * else is neither low nor fine, it is simply unmanaged.
+   */
+  isLow(p: Product): boolean {
+    return p.reorderThreshold != null && p.onHand <= p.reorderThreshold;
+  }
+
+  openReorder(p: Product): void {
+    this.reorderTarget.set(p);
+  }
+
+  onReorderClosed(changed: boolean): void {
+    this.reorderTarget.set(null);
+    // Only reload when something actually changed — the badge count came from the
+    // same query, so a plain Close should not cost a round trip.
+    if (changed) this.loadProducts();
   }
 }

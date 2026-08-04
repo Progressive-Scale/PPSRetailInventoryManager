@@ -203,6 +203,8 @@ export interface StockRow {
   createdAt: string;
   // When this unit was sold; null while on hand and always null for quantity rows.
   soldAt: string | null;
+  /** This store already has a live reorder for this product. */
+  reorderOpen: boolean;
   // Serialized unit status (ON_HAND / SOLD / …); null for quantity rows.
   status: ItemStatus | null;
 }
@@ -413,9 +415,15 @@ export interface Product {
   upc: string | null;
   trackingType: TrackingType;
   needsReview: boolean;
+  /** Low-stock hint threshold; null = no opinion, no hint. */
+  reorderThreshold: number | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Company-wide units on hand (serialized ON_HAND + quantity counters). */
+  onHand: number;
+  /** Live reorder requests for this product across all stores. */
+  openReorders: number;
 }
 
 export interface Company {
@@ -619,6 +627,8 @@ export interface UpdateProduct {
   upc?: string;
   active?: boolean;
   needsReview?: boolean;
+  /** Explicit null clears the low-stock threshold; omit to leave it alone. */
+  reorderThreshold?: number | null;
   trackingType?: TrackingType;
 }
 
@@ -638,7 +648,10 @@ export interface UpdateLocation {
 
 // ---- notifications ----
 
-export type NotificationType = 'EXPIRATION_WARNING' | 'INVITE_ACCEPTED';
+export type NotificationType =
+  | 'EXPIRATION_WARNING'
+  | 'INVITE_ACCEPTED'
+  | 'REORDER_ACKNOWLEDGED';
 export type NotificationStatus = 'UNREAD' | 'READ' | 'DISMISSED';
 
 export interface ExpirationPayload {
@@ -660,15 +673,74 @@ export interface InviteAcceptedPayload {
   storeIds: number[];
 }
 
+/** Raised for the person who asked, once a consumer turns the request into an order. */
+export interface ReorderAcknowledgedPayload {
+  reorderId: number;
+  productId: number;
+  sku: string | null;
+  productName: string | null;
+  storeId: number;
+  storeName: string | null;
+  quantityRequested: number | null;
+  externalOrderRef: string;
+}
+
 export interface AppNotification {
   id: number;
   companyId: number;
   /** Null for company-wide notifications such as INVITE_ACCEPTED. */
   storeId: number | null;
+  /** Addressed at one person when set; null means everyone in store scope. */
+  userId: number | null;
   type: NotificationType;
-  payload: ExpirationPayload & Partial<InviteAcceptedPayload>;
+  payload: ExpirationPayload &
+    Partial<InviteAcceptedPayload> &
+    Partial<ReorderAcknowledgedPayload>;
   status: NotificationStatus;
   createdAt: string;
+}
+
+// ---- reorders -------------------------------------------------------------
+
+export type ReorderStatus = 'OPEN' | 'ACKNOWLEDGED' | 'CANCELLED';
+
+export interface Reorder {
+  id: number;
+  storeId: number;
+  storeName: string;
+  productId: number;
+  sku: string;
+  productName: string;
+  upc: string | null;
+  trackingType: TrackingType;
+  status: ReorderStatus;
+  quantityRequested: number | null;
+  note: string | null;
+  requestedByUserId: number | null;
+  requestedBy: string | null;
+  /** The consuming system's order identifier, once acknowledged. */
+  externalOrderRef: string | null;
+  createdAt: string;
+  acknowledgedAt: string | null;
+  cancelledAt: string | null;
+}
+
+export interface CreateReorder {
+  productId: number;
+  quantity?: number;
+  note?: string;
+  /** Required when the caller manages several stores. */
+  storeId?: number;
+}
+
+/**
+ * `created` is false when a request was already open for that store + product — the
+ * duplicate guard hands back the live one instead of erroring, so the dialog can say
+ * who asked and when rather than claiming to have raised a second request.
+ */
+export interface CreateReorderResult {
+  created: boolean;
+  request: Reorder;
 }
 
 export interface NotificationSetting {

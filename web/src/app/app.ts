@@ -94,6 +94,15 @@ interface NavLink {
                                     Accepted their invitation as
                                     {{ n.payload.role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User' }}
                                   </span>
+                                } @else if (n.type === 'REORDER_ACKNOWLEDGED') {
+                                  <span class="notif-title">
+                                    {{ n.payload.productName }}
+                                    <span class="notif-serial">reordered</span>
+                                  </span>
+                                  <span class="notif-sub">
+                                    Order {{ n.payload.externalOrderRef }} raised for
+                                    {{ n.payload.storeName }}
+                                  </span>
                                 } @else {
                                   <span class="notif-title">
                                     {{ n.payload.productName }}
@@ -468,6 +477,9 @@ export class App implements OnInit {
       'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
     alerts:
       'M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z',
+    // Shopping cart: a request for more stock.
+    reorders:
+      'M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
   };
 
   readonly navLinks = computed<NavLink[]>(() => {
@@ -482,6 +494,7 @@ export class App implements OnInit {
           { path: '/inventory', label: 'Inventory', icon: I.inventory },
           { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
           { path: '/products', label: 'Products', icon: I.products },
+          { path: '/reorders', label: 'Reorders', icon: I.reorders },
           { path: '/manage', label: 'Manage', icon: I.manage },
           { path: '/notifications', label: 'Notifications', icon: I.alerts },
           { path: '/settings', label: 'Settings', icon: I.settings },
@@ -490,6 +503,7 @@ export class App implements OnInit {
         return [
           { path: '/inventory', label: 'Inventory', icon: I.inventory },
           { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
+          { path: '/reorders', label: 'Reorders', icon: I.reorders },
         ];
     }
   });
@@ -525,6 +539,10 @@ export class App implements OnInit {
     if (n.status === 'UNREAD') this.notifications.markRead(n.id);
     if (n.type === 'INVITE_ACCEPTED') {
       this.router.navigate(['/manage'], { queryParams: { tab: 'users' } });
+      return;
+    }
+    if (n.type === 'REORDER_ACKNOWLEDGED') {
+      this.router.navigate(['/reorders'], { queryParams: { status: 'ACKNOWLEDGED' } });
       return;
     }
     this.router.navigate(['/inventory'], {

@@ -67,6 +67,12 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/settings/settings').then((m) => m.SettingsComponent),
   },
   {
+    // Store users too: whoever raised a request is who wants to know its fate.
+    path: 'reorders',
+    canActivate: [authGuard, roleGuard(['STORE_USER', 'COMPANY_ADMIN'])],
+    loadComponent: () => import('./pages/reorders/reorders').then((m) => m.ReordersComponent),
+  },
+  {
     // Full notification history (all statuses), with bulk removal.
     path: 'notifications',
     canActivate: [authGuard],
