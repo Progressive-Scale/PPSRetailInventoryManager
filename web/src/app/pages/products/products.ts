@@ -386,18 +386,22 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      /* Widths must sum to 100% across every column. */
+      /* Widths must sum to 100% across every column, and col-actions has to fit the
+         WIDEST row rather than the common one: a row being edited carries Save, Cancel
+         and Delete (~195px), not the single Edit button you see the rest of the time.
+         Sizing it for Edit alone silently clipped Cancel and Delete, because the
+         table.fixed td rule sets overflow: hidden. */
       .col-sku {
-        width: 13%;
+        width: 12%;
       }
       .col-name {
-        width: 27%;
+        width: 23%;
       }
       .col-type {
-        width: 11%;
+        width: 10%;
       }
       .col-upc {
-        width: 13%;
+        width: 12%;
       }
       .col-num {
         width: 8%;
@@ -406,7 +410,7 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
         width: 9%;
       }
       .col-actions {
-        width: 11%;
+        width: 18%;
       }
       .num {
         text-align: right;
@@ -461,8 +465,13 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
         border: 1px solid var(--border);
         border-radius: 6px;
       }
-      td.actions {
+      /* Must out-specify the table.fixed td rule above, which hides overflow — the
+         plain td.actions rule that used to live here lost that fight and did nothing.
+         Wrapping means a narrow window stacks the buttons and grows the row instead
+         of hiding controls. */
+      table.fixed td.actions {
         overflow: visible;
+        white-space: normal;
       }
       .overlay {
         position: fixed;
