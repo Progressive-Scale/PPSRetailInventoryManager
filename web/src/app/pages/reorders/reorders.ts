@@ -161,14 +161,25 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
         padding: 1rem 1.25rem;
       }
       h2 {
-        margin: 0 0 1rem;
+        margin: 0 0 0.85rem;
+        font-size: 1.05rem;
+      }
+      /* The app's standard control look — same rule as Products, Cycle Counts,
+         Needs Review and Manage. Without it a select falls back to the browser's
+         default chrome, which is visibly different from every other filter bar. */
+      input,
+      select {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
       }
       .filters {
         display: flex;
         align-items: flex-end;
         gap: 0.75rem;
         flex-wrap: wrap;
-        margin: 0 0 1rem;
+        margin: 0.85rem 0 1rem;
       }
       .f {
         display: flex;
@@ -185,10 +196,22 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
       .f-actions.right {
         margin-left: auto;
       }
+      /* One height for every control in the bar. */
+      .filters input,
       .filters select,
       .filters .f-actions button {
         height: 2.25rem;
         box-sizing: border-box;
+      }
+      .filters .f-actions button {
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        font-family: inherit;
+        border-radius: 8px;
+      }
+      /* Matches the ghost buttons beside it rather than the global button padding. */
+      .filters .f-actions.right button {
+        padding: 0 0.85rem;
       }
       .table-scroll {
         overflow-x: auto;

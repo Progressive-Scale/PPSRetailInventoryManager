@@ -179,11 +179,18 @@ import { ReorderDialogComponent } from './reorder-dialog';
       .f.grow {
         flex: 1;
       }
+      /* Same control look as every other filter bar and dialog in the app. */
+      input,
+      select {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
+      }
       .f input,
       .f select {
         height: 2.25rem;
         box-sizing: border-box;
-        font: inherit;
       }
       /* The list scrolls, not the dialog: the search box has to stay put while you type. */
       .plist {

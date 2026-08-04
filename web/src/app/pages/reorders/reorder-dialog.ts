@@ -147,6 +147,15 @@ import { Reorder, Store } from '../../core/models';
         font-style: italic;
         color: var(--muted);
       }
+      /* Same control look as the rest of the app; without it these fell back to
+         browser-default select and input chrome. */
+      input,
+      select {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
+      }
       .stacked-form {
         display: flex;
         flex-direction: column;
