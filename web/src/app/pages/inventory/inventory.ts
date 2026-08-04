@@ -166,25 +166,20 @@ interface Column {
                 Refresh
               </button>
             </div>
-            <!-- Which way the same stock is listed. Sticks for the session. -->
+            <!-- One control for how the same stock is listed. The label states where you
+                 ARE (so it doubles as a status) and the tooltip says what a click does. -->
             <div class="f-actions view-toggle">
               <button
                 type="button"
                 class="ghost"
-                [class.active]="viewMode() === 'byProduct'"
-                (click)="setViewMode('byProduct')"
-                title="One row per product, expandable to its items"
+                (click)="toggleViewMode()"
+                [title]="
+                  viewMode() === 'byProduct'
+                    ? 'Showing one row per product — click to list every item ungrouped'
+                    : 'Showing every item ungrouped — click to group them by product'
+                "
               >
-                By product
-              </button>
-              <button
-                type="button"
-                class="ghost"
-                [class.active]="viewMode() === 'allItems'"
-                (click)="setViewMode('allItems')"
-                title="One row per item / stock line, ungrouped"
-              >
-                All items
+                View: {{ viewMode() === 'byProduct' ? 'By product' : 'All items' }}
               </button>
             </div>
           </form>
@@ -783,21 +778,10 @@ interface Column {
         display: inline-block;
         width: 0.7rem;
       }
-      /* Two halves of one control, so it reads as a switch rather than two buttons. */
-      .view-toggle button.active {
-        background: var(--accent-soft);
-        border-color: var(--accent);
-        color: var(--accent);
-        font-weight: 600;
-      }
-      .view-toggle button:first-child {
-        border-top-right-radius: 0;
-        border-bottom-right-radius: 0;
-      }
-      .view-toggle button:last-child {
-        border-top-left-radius: 0;
-        border-bottom-left-radius: 0;
-        margin-left: -1px;
+      /* Wide enough that the label swapping between the two names does not resize the
+         button and shift what sits beside it. */
+      .view-toggle button {
+        min-width: 9.5rem;
       }
       /* Tier two is still indented — enough to read as belonging to the product above,
          no more. It was 1.9rem, which pushed the serial well clear of its own column. */
@@ -1873,8 +1857,8 @@ export class InventoryComponent implements OnInit {
     return p.trackingType === 'SERIALIZED' || p.rowCount > 1;
   }
 
-  setViewMode(mode: 'byProduct' | 'allItems'): void {
-    if (this.viewMode() === mode) return;
+  toggleViewMode(): void {
+    const mode = this.viewMode() === 'byProduct' ? 'allItems' : 'byProduct';
     this.viewMode.set(mode);
     sessionStorage.setItem('inv.viewMode', mode);
     // The two views count different things, so a page offset and a selection made in
