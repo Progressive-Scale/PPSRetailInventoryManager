@@ -76,13 +76,9 @@ import { Reorder, Store } from '../../core/models';
             }
             <label>
               Quantity
-              <input
-                type="number"
-                name="ro-qty"
-                min="1"
-                placeholder="Leave blank for “some”"
-                [(ngModel)]="quantity"
-              />
+              <!-- No placeholder: blank is still allowed and still means "some, you
+                   decide", but the field does not need to explain itself. -->
+              <input type="number" name="ro-qty" min="1" [(ngModel)]="quantity" />
             </label>
             <label>
               Note
