@@ -652,13 +652,17 @@ export interface Paginated<T> {
 
 // ---- request DTOs ----
 
+/**
+ * A store is a delivery destination, so the ship-to parts are required — the ERP cannot
+ * raise a shipment against a row without them. Only address2 (suite/unit) is optional.
+ */
 export interface CreateStore {
   name: string;
-  address1?: string;
+  address1: string;
   address2?: string;
-  city?: string;
-  state?: string;
-  zip?: string;
+  city: string;
+  state: string;
+  zip: string;
   notes?: string;
   isActive?: boolean;
 }

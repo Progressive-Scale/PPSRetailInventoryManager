@@ -38,6 +38,15 @@ Whether **store** ids need the same treatment is still open — see
 
 ## What's new in v3.9
 
+**The store list now carries the full ship-to address** (§6). `GET /api/sync/stores`
+returned only `city` and `state`, which is not enough to address a shipment. It now returns
+`address1`, `address2` and `zip` as well, and the portal **requires** street/city/state/zip
+when a store is created — a store is a delivery destination, and the gap used to surface
+only in the ERP, at the point where it could not be fixed quickly.
+
+Additive: existing consumers that ignore unknown fields are unaffected. Stores created
+before the rule may still hold nulls, so treat a missing `address1` as "not shippable yet".
+
 **Unit weight (`weightLbs`), for random-weight goods.**
 
 Two cases of the same product do not weigh the same, so weight is a fact about the
@@ -234,11 +243,21 @@ No query parameters; a company has few enough stores to return them all.
 {
   "count": 2,
   "stores": [
-    { "id": 1, "companyId": 1, "name": "Downtown", "city": "Springfield", "state": "IL", "isActive": true },
-    { "id": 7, "companyId": 1, "name": "Uptown",   "city": null,          "state": null, "isActive": false }
+    { "id": 1, "companyId": 1, "name": "Downtown",
+      "address1": "100 Main St", "address2": "Suite 200",
+      "city": "Springfield", "state": "IL", "zip": "62701", "isActive": true },
+    { "id": 7, "companyId": 1, "name": "Uptown",
+      "address1": null, "address2": null,
+      "city": null, "state": null, "zip": null, "isActive": false }
   ]
 }
 ```
+
+**The address is the ship-to** (added in v3.9). A store is a delivery destination, so
+`address1`, `city`, `state` and `zip` are **required when a store is created** in the
+portal; `address2` is optional. Stores created before that rule may still have nulls —
+a consumer should treat a missing `address1` as *not shippable yet* rather than as an
+empty line on a label.
 
 `id` is the value to send as `storeId` on a handoff line. **Inactive stores are
 included** — an agent mirroring these rows needs to know a store went inactive rather

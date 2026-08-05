@@ -187,32 +187,34 @@ type Tab = 'stores' | 'users' | 'invitations';
                   Name <span class="req">*</span>
                   <input name="ms-name" [(ngModel)]="storeDraft.name" required />
                 </label>
+                <!-- A store is a delivery destination: without these the ERP cannot
+                     raise a shipment against it. Address 2 stays optional. -->
                 <label>
-                  Address
-                  <input name="ms-addr1" [(ngModel)]="storeDraft.address1" />
+                  Address <span class="req">*</span>
+                  <input name="ms-addr1" [(ngModel)]="storeDraft.address1" required />
                 </label>
                 <label>
                   Address 2
                   <input name="ms-addr2" [(ngModel)]="storeDraft.address2" />
                 </label>
                 <label>
-                  City
-                  <input name="ms-city" [(ngModel)]="storeDraft.city" />
+                  City <span class="req">*</span>
+                  <input name="ms-city" [(ngModel)]="storeDraft.city" required />
                 </label>
                 <label>
-                  State
-                  <input name="ms-state" [(ngModel)]="storeDraft.state" />
+                  State <span class="req">*</span>
+                  <input name="ms-state" [(ngModel)]="storeDraft.state" required />
                 </label>
                 <label>
-                  Zip
-                  <input name="ms-zip" [(ngModel)]="storeDraft.zip" />
+                  Zip <span class="req">*</span>
+                  <input name="ms-zip" [(ngModel)]="storeDraft.zip" required />
                 </label>
                 <label>
                   Notes
                   <textarea name="ms-notes" rows="3" [(ngModel)]="storeDraft.notes"></textarea>
                 </label>
                 <div class="modal-actions">
-                  <button type="submit" [disabled]="saving() || !storeDraft.name.trim()">Add</button>
+                  <button type="submit" [disabled]="saving() || !storeReady()">Add</button>
                   <button type="button" class="ghost" (click)="closeAddStore()">Cancel</button>
                 </div>
               </form>
@@ -1634,17 +1636,35 @@ export class ManageComponent implements OnInit {
     this.showAddStore.set(false);
   }
 
+  /**
+   * Everything a shipment needs. Checked here as well as server-side so the button says
+   * "not yet" instead of the request coming back 400 — and trimmed, because a space is
+   * not an address.
+   */
+  storeReady(): boolean {
+    const d = this.storeDraft;
+    return [d.name, d.address1, d.city, d.state, d.zip].every(
+      (v) => (v ?? '').trim().length > 0,
+    );
+  }
+
   createStore(): void {
-    if (!this.storeDraft.name.trim()) {
-      this.modalError.set('Store name is required.');
+    if (!this.storeReady()) {
+      this.modalError.set(
+        'Name and the full address (street, city, state, zip) are required — a store is a delivery destination.',
+      );
       return;
     }
-    const dto: CreateStore = { name: this.storeDraft.name };
-    if (this.storeDraft.address1) dto.address1 = this.storeDraft.address1;
-    if (this.storeDraft.address2) dto.address2 = this.storeDraft.address2;
-    if (this.storeDraft.city) dto.city = this.storeDraft.city;
-    if (this.storeDraft.state) dto.state = this.storeDraft.state;
-    if (this.storeDraft.zip) dto.zip = this.storeDraft.zip;
+    // Trimmed on the way out: the server rejects a blank address, and " " reaching it as a
+    // 400 would be this form's fault rather than the user's.
+    const dto: CreateStore = {
+      name: this.storeDraft.name.trim(),
+      address1: (this.storeDraft.address1 ?? '').trim(),
+      city: (this.storeDraft.city ?? '').trim(),
+      state: (this.storeDraft.state ?? '').trim(),
+      zip: (this.storeDraft.zip ?? '').trim(),
+    };
+    if (this.storeDraft.address2) dto.address2 = this.storeDraft.address2.trim();
     if (this.storeDraft.notes) dto.notes = this.storeDraft.notes;
     this.saving.set(true);
     this.modalError.set(null);

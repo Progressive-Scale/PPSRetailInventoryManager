@@ -323,8 +323,15 @@ export class SyncService {
           id: stores.id,
           companyId: stores.companyId,
           name: stores.name,
+          // The full ship-to, not just city/state. A consuming ERP has to be able to
+          // address a shipment to this store, and half an address cannot. Required at
+          // creation as of this change; older rows may still be missing parts, so a
+          // consumer should treat a null here as "not shippable yet" rather than blank.
+          address1: stores.address1,
+          address2: stores.address2,
           city: stores.city,
           state: stores.state,
+          zip: stores.zip,
           isActive: stores.isActive,
         })
         .from(stores)

@@ -12,24 +12,39 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+/**
+ * A new store must have somewhere to ship to.
+ *
+ * address1, city, state and zip are REQUIRED: a store is a delivery destination, and the
+ * ERP cannot raise a shipment against a row that has no address. Leaving them optional
+ * meant the gap only showed up later, in the one place it cannot be fixed quickly.
+ *
+ * address2 stays optional — a suite or unit number is genuinely not always there.
+ */
 export class CreateStoreDto {
   @IsString() @MinLength(1) @MaxLength(128) name!: string;
-  @IsOptional() @IsString() @MaxLength(256) address1?: string;
+  @IsString() @MinLength(1) @MaxLength(256) address1!: string;
   @IsOptional() @IsString() @MaxLength(256) address2?: string;
-  @IsOptional() @IsString() @MaxLength(128) city?: string;
-  @IsOptional() @IsString() @MaxLength(64) state?: string;
-  @IsOptional() @IsString() @MaxLength(32) zip?: string;
+  @IsString() @MinLength(1) @MaxLength(128) city!: string;
+  @IsString() @MinLength(1) @MaxLength(64) state!: string;
+  @IsString() @MinLength(1) @MaxLength(32) zip!: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
+/**
+ * Every field stays optional, because this is a patch — but the address parts now carry
+ * MinLength(1), so an update can no longer blank out an address that a shipment depends
+ * on. Omitting a field still leaves it alone; sending "" is now rejected rather than
+ * quietly erasing a ship-to.
+ */
 export class UpdateStoreDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128) name?: string;
-  @IsOptional() @IsString() @MaxLength(256) address1?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(256) address1?: string;
   @IsOptional() @IsString() @MaxLength(256) address2?: string;
-  @IsOptional() @IsString() @MaxLength(128) city?: string;
-  @IsOptional() @IsString() @MaxLength(64) state?: string;
-  @IsOptional() @IsString() @MaxLength(32) zip?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(128) city?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(64) state?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(32) zip?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
