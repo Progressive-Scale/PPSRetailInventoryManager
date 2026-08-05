@@ -65,6 +65,12 @@ interface UnitSeed {
   status: ItemStatus;
   location: LocationSlot;
   expirationDate?: string | null;
+  /**
+   * Pounds, for random-weight goods. Left off deliberately on some units: null means
+   * "not weighed", and the by-product rollup has to show a partial total as partial
+   * rather than pretending it is complete.
+   */
+  weightLbs?: string;
 }
 interface StockSeed {
   sku: string;
@@ -303,22 +309,28 @@ async function main(): Promise<void> {
   // relative to "today" so the ExpirationAlertsJob has data to alert on:
   //   - ON_FLOOR + within/past the alert window  -> should raise a notification
   //   - BACKROOM near-expiry                      -> should NOT alert (floor-only)
+  // Weights are per unit and deliberately uneven — random-weight goods, so no two cases
+  // match. TS-BLK-M is fully weighed (a clean total). CAP-RED has one unweighed unit on
+  // purpose, so the product row shows a partial total with its indicator. HD-GRY-L has
+  // none at all, so that row shows an em dash rather than 0 lbs.
   const demoUnits: UnitSeed[] = [
     // On floor, far-out expiry — no alert.
-    { sku: 'TS-BLK-M', serial: 'SN-1001', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 200) },
+    { sku: 'TS-BLK-M', serial: 'SN-1001', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 200), weightLbs: '12.4' },
     // Backroom, swept SOLD by the cycle count below.
-    { sku: 'TS-BLK-M', serial: 'SN-1005', status: 'ON_HAND', location: 'BACKROOM' },
+    { sku: 'TS-BLK-M', serial: 'SN-1005', status: 'ON_HAND', location: 'BACKROOM', weightLbs: '11.85' },
     // Backroom near-expiry — must NOT alert (not customer-facing).
-    { sku: 'TS-BLK-M', serial: 'SN-1009', status: 'ON_HAND', location: 'BACKROOM', expirationDate: addDays(now, 5) },
+    { sku: 'TS-BLK-M', serial: 'SN-1009', status: 'ON_HAND', location: 'BACKROOM', expirationDate: addDays(now, 5), weightLbs: '13.02' },
     { sku: 'HD-GRY-L', serial: 'SN-1003', status: 'SOLD', location: 'BACKROOM' },
-    // On floor, already expired — alert (expired flag).
+    // On floor, already expired — alert (expired flag). No weight: this product is the
+    // "nobody has weighed any of these" case.
     { sku: 'HD-GRY-L', serial: 'SN-1007', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, -8) },
     // On floor, 5 days out — alert (within 7/30).
-    { sku: 'CAP-RED', serial: 'SN-1004', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 5) },
-    // On floor, 23 days out — alert (within 30).
+    { sku: 'CAP-RED', serial: 'SN-1004', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 5), weightLbs: '2.35' },
+    // On floor, 23 days out — alert (within 30). Left unweighed on purpose: with SN-1004
+    // weighed, CAP-RED's product row reads "2.35 lbs*" and says 1 of 2 units is missing.
     { sku: 'CAP-RED', serial: 'SN-1008', status: 'ON_HAND', location: 'ONFLOOR', expirationDate: addDays(now, 23) },
-    { sku: 'CAP-RED', serial: 'SN-1006', status: 'SOLD', location: 'BACKROOM' },
-    { sku: 'REVIEW-SN-UNKNOWN', serial: 'SN-REV-1', status: 'ON_HAND', location: 'BACKROOM' },
+    { sku: 'CAP-RED', serial: 'SN-1006', status: 'SOLD', location: 'BACKROOM', weightLbs: '2.41' },
+    { sku: 'REVIEW-SN-UNKNOWN', serial: 'SN-REV-1', status: 'ON_HAND', location: 'BACKROOM', weightLbs: '7.5' },
   ];
   for (const u of demoUnits) {
     const product = demoBySku.get(u.sku)!;
@@ -333,6 +345,7 @@ async function main(): Promise<void> {
         serial: u.serial,
         status: u.status,
         expirationDate: u.expirationDate ?? null,
+        weightLbs: u.weightLbs ?? null,
         receivedAt: now,
         soldAt: u.status === 'SOLD' ? now : null,
       })
@@ -612,6 +625,9 @@ async function main(): Promise<void> {
         locationId: acmeLoc.backroom,
         serial: 'SN-A1',
         status: 'ON_HAND',
+        // A weighed unit in the OTHER tenant. If a cross-company read ever leaked, it
+        // would show up as a wrong total rather than as nothing at all.
+        weightLbs: '4.75',
         receivedAt: now,
       })
       .onConflictDoNothing({
