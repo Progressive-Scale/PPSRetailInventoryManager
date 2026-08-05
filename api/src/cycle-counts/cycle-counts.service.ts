@@ -1409,6 +1409,15 @@ export class CycleCountsService {
    * Deliberately reuses inScope() and the same status order as submit(), so an
    * answer here cannot contradict what submitting will actually do.
    */
+  /**
+   * "What is this?" — for any code a handheld's own snapshot cannot explain.
+   *
+   * Named for serials because that is what it started with, but a scanned code is not
+   * always a unit: it can be a PRODUCT's barcode. A quantity product stocked in another
+   * location has no unit rows and no stock row here, so it matched nothing and the handheld
+   * offered to create it as a new product — a duplicate of a product the company already
+   * had. The catalog fallback below is the answer to that scan.
+   */
   async resolveSerial(ctx: DataContext, id: number, serialRaw: string) {
     // The handheld asks "what is this?" with whatever it read off the label, which may be
     // the 2D composite rather than the serial.
@@ -1418,6 +1427,11 @@ export class CycleCountsService {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const cc = await this.loadCount(tx, ctx, id);
       const scopeProducts = await this.scopeProductIds(tx, ctx, cc.id);
+      // Where a quantity count from this count lands, mirroring submit exactly: the
+      // counted location, or the Backroom for a whole-store count.
+      const contextLocationId =
+        cc.locationId ??
+        (await systemLocationId(tx, ctx.companyId, cc.storeId, 'BACKROOM'));
 
       // Deliberately NOT limit(1). A serial is unique per product, not per company, so a
       // scan can legitimately match two units of different SKUs at the same store.
@@ -1499,7 +1513,59 @@ export class CycleCountsService {
       // Report the unit's OWN serial back, not the scanned string: a full-barcode scan
       // resolves here, and the caller should learn the canonical serial from it.
       const base = { serial: unit?.serial ?? serial, itemId: unit?.id ?? null };
-      if (!unit) return { ...base, classification: 'UNKNOWN' as const };
+      if (!unit) {
+        // No unit anywhere in the company matches. The code may still be a product's own
+        // barcode — the common case being a quantity shelf stocked somewhere else, which
+        // this count can still record a count for: submit resolves a quantityCount by UPC
+        // against the whole catalog and files it at the count's location.
+        const [product] = await tx
+          .select({
+            id: products.id,
+            sku: products.sku,
+            name: products.name,
+            trackingType: products.trackingType,
+          })
+          .from(products)
+          .where(
+            and(eq(products.companyId, ctx.companyId), eq(products.upc, serial)),
+          )
+          .limit(1);
+        if (!product) return { ...base, classification: 'UNKNOWN' as const };
+
+        const shared = {
+          ...base,
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+        };
+        if (product.trackingType !== 'QUANTITY') {
+          // A serialized product's barcode. Not a count — each unit is tracked
+          // individually — but naming it beats sending the counter down the new-product
+          // path for something the catalog already holds.
+          return { ...shared, classification: 'SERIALIZED_PRODUCT' as const };
+        }
+        // What the books say is on this shelf HERE, which is what the handheld's quantity
+        // dialog should open on. Zero when the product is not stocked at this location:
+        // counting some anyway is a real outcome, and the count is where that gets said.
+        const [stock] = await tx
+          .select({ quantityOnHand: inventoryStock.quantityOnHand })
+          .from(inventoryStock)
+          .where(
+            and(
+              eq(inventoryStock.companyId, ctx.companyId),
+              eq(inventoryStock.storeId, cc.storeId),
+              eq(inventoryStock.productId, product.id),
+              eq(inventoryStock.locationId, contextLocationId),
+            ),
+          )
+          .limit(1);
+        return {
+          ...shared,
+          classification: 'QUANTITY_PRODUCT' as const,
+          locationId: contextLocationId,
+          recordedQuantity: stock?.quantityOnHand ?? 0,
+        };
+      }
 
       const shared = {
         ...base,
