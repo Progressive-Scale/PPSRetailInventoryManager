@@ -343,6 +343,68 @@ Deploy as **one service** from the repo root, plus a managed Postgres.
 
 > Never commit real secrets — `.env` is git-ignored; use `api/.env.example`.
 
+## Audit trail — who did what
+
+Two append-only tables answer two different questions, and neither is written twice
+for one fact:
+
+- **`inventory_transactions`** — where stock went: receipts, sales, returns,
+  adjustments, moves.
+- **`audit_events`** — who changed what: catalog edits, location lifecycle, reorders,
+  cycle-count decisions, invitations, user role/status changes, alert settings, and
+  single/bulk field edits on a unit.
+
+Reads come from **one stream**. `GET /api/activity` unions the two at query time and
+maps them onto a common shape (actor resolved to a username / `Sync` / `System`,
+entity, action, when, plus a ready-to-render summary). Unioning at read time rather
+than duplicating movements into `audit_events` is deliberate: two records of one fact
+can disagree, and a ledger that contradicts the audit log is worse than having only
+one of them.
+
+| Endpoint | Who | What |
+| --- | --- | --- |
+| `GET /api/activity` | `COMPANY_ADMIN` | the company's whole stream; filters `userId`, `entityType`, `action`, `storeId`, `source`, `from`, `to` (exclusive) |
+| `GET /api/activity/:entityType/:entityId` | admin, plus store users for stock entities | one thing's history, newest first |
+
+That split is the permission boundary. "What has everyone been doing" is management
+information; "what happened to this item" is part of reading the item, so a store
+user keeps it — otherwise the history sections on detail views would be admin-only
+and the shop floor loses the answer to *why does this say 3*. Store users are refused
+`USER`, `INVITATION` and `NOTIFICATION_SETTINGS` histories: those are people
+management, and a guessable id must not route around the admin-only stream.
+
+**Actor and door.** `audit_events` records both: *who* (user / API key / system job)
+and *which door* (`WEB`, `SCANNER`, `SYNC`, `JOB`). The door comes from the optional
+`X-Client` header, so a handheld's writes read as `SCANNER` and the portal's as
+`WEB`. Ledger rows predate that distinction — `transaction_source` knows only
+`PORTAL | SYNC | CYCLE_COUNT` — so a movement made from the handheld still reports
+`WEB` in the unified stream. **The actor on a movement is exact; the door is not.**
+
+A platform admin acting on a tenant's behalf is recorded as a **system** actor with
+`details.byPlatformAdmin`, not as one of the tenant's users: their user row lives in
+another company, so storing the id would put a name the tenant can never resolve into
+the tenant's own history.
+
+**Append-only, and role-proof.** `app_user` holds `SELECT, INSERT` only (migration
+0029), and a trigger refuses `UPDATE`, `DELETE` and `TRUNCATE` for *every* role,
+table owner included (migration 0030). The grant alone was not enough: a connection
+string pointing at the owner bypasses it, and which role is in the connection string
+is a deployment detail, not something this guarantee should rest on.
+`inventory_transactions` is still protected by grants alone — tightening it the same
+way is a separate change with its own verification.
+
+**Retention: none.** Events are kept forever, the same posture as the ledger. Three
+indexes carry the reads — `(company_id, created_at desc)`,
+`(company_id, entity_type, entity_id, created_at)` and
+`(company_id, user_id, created_at)` — covering the global tab, an entity's history
+and "what did this employee do". When volume makes that uncomfortable, the shape to
+reach for is monthly range partitioning on `created_at` with cold partitions archived
+out, not a delete job: a trail with a hole in it cannot be told apart from one that
+never recorded anything.
+
+`item_audit` survives as a **view** over `audit_events` for older readers; its rows
+were migrated in as `entity_type = 'INVENTORY_ITEM'`.
+
 ## Inventory locations & expiration alerts
 
 Every store has named **locations**. Two are created with the store
