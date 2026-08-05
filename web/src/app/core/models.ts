@@ -677,7 +677,14 @@ export interface CycleCountScope {
 
 /** How much of this count REMOVES stock. Surfaced separately for the reviewer. */
 export interface CycleCountDestructive {
+  /** Every unit the count would record as sold: unscanned units AND shelf shortfalls. */
   inferredSales: number;
+  /** The serialized half of inferredSales — units nobody accounted for. */
+  markedSoldUnits: number;
+  /** Units missing off the quantity shelves that were counted. */
+  shortfallUnits: number;
+  /** How many shelves came up short. A zeroed shelf is the extreme case of one. */
+  shortfallLines: number;
   zeroedStockLines: number;
 }
 

@@ -212,7 +212,13 @@ interface ResolutionGroup {
                   <p class="destructive">
                     Approving will mark
                     <strong>{{ d.destructive.inferredSales }}</strong>
-                    unit(s) sold and set
+                    unit(s) sold
+                    <!-- The split, because the two halves are corrected differently: a
+                         serialized unit can be reinstated, a shelf has to be recounted. -->
+                    ({{ d.destructive.markedSoldUnits }} unscanned unit(s),
+                    {{ d.destructive.shortfallUnits }} short on
+                    {{ d.destructive.shortfallLines }} shelf/shelves)
+                    and set
                     <strong>{{ d.destructive.zeroedStockLines }}</strong>
                     stock line(s) to zero.
                     @if (d.destructive.zeroedStockLines > 0) {

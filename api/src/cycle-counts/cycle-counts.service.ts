@@ -1833,8 +1833,61 @@ export class CycleCountsService {
     const zeroing = byResolution.COUNTED_BY_UPC.filter(
       (l) => (l.quantity ?? 0) === 0,
     );
+
+    // A shelf counted BELOW its recorded stock is a sale of the difference — applyLine
+    // writes a SALE for the negative delta — and it was in neither headline figure. A count
+    // of 5 against a recorded 15 is ten units sold, and the screen whose job is to stop a
+    // mistake said nothing about them.
+    const shelfKeys = byResolution.COUNTED_BY_UPC.filter(
+      (l) => l.productId != null && l.locationId != null,
+    );
+    let shortfallUnits = 0;
+    let shortfallLines = 0;
+    if (shelfKeys.length > 0) {
+      const recorded = await tx
+        .select({
+          productId: inventoryStock.productId,
+          locationId: inventoryStock.locationId,
+          quantityOnHand: inventoryStock.quantityOnHand,
+        })
+        .from(inventoryStock)
+        .where(
+          and(
+            eq(inventoryStock.companyId, ctx.companyId),
+            eq(inventoryStock.storeId, cc.storeId),
+            inArray(
+              inventoryStock.productId,
+              shelfKeys.map((l) => l.productId!),
+            ),
+          ),
+        );
+      const onHand = new Map(
+        recorded.map((r) => [`${r.productId}:${r.locationId}`, r.quantityOnHand]),
+      );
+      for (const l of shelfKeys) {
+        const was = onHand.get(`${l.productId}:${l.locationId}`) ?? 0;
+        const short = was - (l.quantity ?? 0);
+        if (short > 0) {
+          shortfallUnits += short;
+          shortfallLines++;
+        }
+      }
+    }
+
     const destructive = {
-      inferredSales: byResolution.MARKED_SOLD.length,
+      /**
+       * Every unit this count would record as sold, both kinds together — serialized units
+       * nobody accounted for, and the shortfall on counted shelves. One number because it
+       * is one outcome, and because a reviewer reading "0 would be sold" over a count that
+       * removes ten water bottles is being misinformed.
+       */
+      inferredSales: byResolution.MARKED_SOLD.length + shortfallUnits,
+      /** Serialized units only, for a reader who wants the split. */
+      markedSoldUnits: byResolution.MARKED_SOLD.length,
+      /** Units missing off the counted quantity shelves. */
+      shortfallUnits,
+      /** How many shelves are short — a zeroed shelf is the extreme case of one. */
+      shortfallLines,
       zeroedStockLines: zeroing.length,
     };
 
