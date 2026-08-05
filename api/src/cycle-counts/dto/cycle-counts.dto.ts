@@ -111,6 +111,23 @@ export class SubmitCycleCountDto {
   reinstateSerials?: string[];
 
   /**
+   * Serials the counter says are NOT on the shelf — "I looked, it is gone".
+   *
+   * Without this, a product nobody scanned is reported NOT_COUNTED and left alone, which
+   * is the right default: a count that never reached a shelf is not evidence its stock was
+   * sold. But a counter who did walk the shelf and found it empty has no way to say so, and
+   * the honest reading of that is a sale. This is the counter making that call explicitly,
+   * one product at a time, rather than the sweep inferring it.
+   *
+   * Only in-scope, unaccounted units are honoured. A scan always wins: a unit that was
+   * scanned is present, whatever this list says.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  markSoldSerials?: string[];
+
+  /**
    * Unknown serials the counter wants the PPS import agent to look up, rather than
    * naming by hand. Applied as import_check_status = REQUESTED on the created unit.
    */

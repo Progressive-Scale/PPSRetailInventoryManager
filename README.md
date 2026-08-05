@@ -262,6 +262,14 @@ source of truth for the DB shape.
     away from their recorded location, arrivals being received, sold units the
     counter chose to put back, quantity counts, unknown serials, and everything
     unaccounted-for. `/close` remains as a deprecated alias with this new meaning.
+
+    Two unaccounted-for outcomes, and the difference matters. A product the counter
+    scanned *some* of has its remainder proposed `MARKED_SOLD`; a product with **no
+    scan at all** is reported `NOT_COUNTED` and left alone, because a count that never
+    reached a shelf is not evidence its stock was sold. `markSoldSerials` is how a
+    counter who *did* walk that shelf says it was empty — those units are proposed sold
+    instead. Only in-scope, unaccounted units are honoured, and a scan always wins over
+    a declaration: one is evidence, the other is a recollection.
   - `POST /cycle-counts/:id/approve` / `reject` — **`COMPANY_ADMIN` only.** Approve
     applies every unapplied line in one transaction (this is the step that sells
     unscanned units and zeroes uncounted shelves); reject reopens for a recount and

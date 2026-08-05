@@ -458,6 +458,11 @@ export class CycleCountsService {
       const wantImportCheck = new Set(
         (dto.importCheckSerials ?? []).map(normalizeScannedSerial),
       );
+      // "I checked that shelf and it is empty." Normalised like every other serial list so
+      // a 2D label payload lands on the same key the snapshot uses.
+      const declaredGone = new Set(
+        (dto.markSoldSerials ?? []).map(normalizeScannedSerial),
+      );
       const quantityCounts = dto.quantityCounts ?? [];
       // A new item's value is a serial only when isUpc is false; a UPC must not be
       // touched. (The 2D pattern could not match one anyway, but saying so is cheaper
@@ -803,12 +808,20 @@ export class CycleCountsService {
       for (const u of inScopeUnits) {
         if (accountedInScope.has(u.id)) continue;
         const worked = u.productId != null && workedProducts.has(u.productId);
+        // The counter said this one is gone. Reached only for units nobody scanned — the
+        // guard above means a scan always wins over a declaration, which is the right
+        // precedence: one is evidence, the other is a recollection.
+        //
+        // Out-of-scope serials never appear in this loop, so a handheld that offered a
+        // unit from another location cannot write it off here. That is deliberate: the
+        // request fails safe rather than reaching past the count's own scope.
+        const gone = u.serial != null && declaredGone.has(u.serial);
         lines.push({
           productId: u.productId,
           itemId: u.id,
           serial: u.serial,
           quantity: null,
-          resolution: worked ? 'MARKED_SOLD' : 'NOT_COUNTED',
+          resolution: worked || gone ? 'MARKED_SOLD' : 'NOT_COUNTED',
           locationId: u.locationId,
           locationFromId: null,
           importCheckRequested: false,
