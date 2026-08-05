@@ -3,6 +3,20 @@ import { Tx } from '../db/tenant-db.service';
 import { Product, products, TrackingType } from '../db/schema';
 import { AuditActor, AuditService } from '../audit/audit.service';
 
+/**
+ * A blank barcode means "no barcode", and only NULL says that.
+ *
+ * products.upc is unique per company WHERE upc IS NOT NULL, so an empty string is not
+ * exempt: two products whose UPC was cleared to '' collide, and the error blames a
+ * duplicate SKU/UPC that the user cannot see anywhere. Every write path funnels through
+ * here so no caller has to remember.
+ */
+export function normaliseUpc(upc: string | null | undefined): string | null {
+  if (upc == null) return null;
+  const trimmed = upc.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 export interface ResolveProductInput {
   sku: string;
   name: string;
@@ -48,7 +62,7 @@ export async function resolveOrCreateProduct(
       sku: input.sku,
       name: input.name,
       price: input.price,
-      upc: input.upc,
+      upc: normaliseUpc(input.upc),
       trackingType: input.trackingType,
       needsReview: input.needsReview ?? false,
     })

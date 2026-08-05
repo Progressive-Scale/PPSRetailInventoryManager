@@ -12,6 +12,7 @@ import {
 } from '../db/schema';
 import { HandoffItemDto } from './dto/sync.dto';
 import { resolveOrCreateProduct } from '../products/product-catalog';
+import { normaliseUpc } from '../products/product-catalog';
 import { AuditService } from '../audit/audit.service';
 import { systemLocationId } from '../locations/location-util';
 
@@ -302,7 +303,7 @@ export class SyncService {
         sku: it.sku,
         name: it.name,
         price: it.price !== undefined ? String(it.price) : '0',
-        upc: it.upc ?? null,
+        upc: normaliseUpc(it.upc),
         trackingType: expected,
       },
       {

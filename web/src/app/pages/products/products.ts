@@ -667,7 +667,7 @@ export class ProductsComponent implements OnInit {
     };
     if (this.productDraft.description) dto.description = this.productDraft.description;
     if (this.productDraft.price != null) dto.price = Number(this.productDraft.price);
-    if (this.productDraft.upc) dto.upc = this.productDraft.upc;
+    if (this.productDraft.upc.trim()) dto.upc = this.productDraft.upc.trim();
     this.saving.set(true);
     this.modalError.set(null);
     this.api.createProduct(dto).subscribe({
@@ -736,7 +736,9 @@ export class ProductsComponent implements OnInit {
       sku: this.productEdit.sku,
       name: this.productEdit.name,
       description: this.productEdit.description,
-      upc: this.productEdit.upc,
+      // Empty means "no barcode": send null, not '', so the API stores an absence rather
+      // than a value that collides with every other blank one.
+      upc: this.productEdit.upc.trim() || null,
       active: this.productEdit.active,
       // Sent every save, including as null: the field is how a threshold is cleared,
       // and omitting null would make clearing impossible.

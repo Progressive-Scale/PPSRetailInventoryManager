@@ -22,6 +22,7 @@ import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { AuditService, diffFields } from '../audit/audit.service';
+import { normaliseUpc } from './product-catalog';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryItems, inventoryStock, products } from '../db/schema';
 import {
@@ -87,7 +88,7 @@ export class ProductsController {
             name: dto.name,
             description: dto.description ?? null,
             price: dto.price !== undefined ? String(dto.price) : '0',
-            upc: dto.upc ?? null,
+            upc: normaliseUpc(dto.upc),
             trackingType: dto.trackingType,
           })
           .returning();
@@ -135,7 +136,9 @@ export class ProductsController {
       if (dto.name !== undefined) patch.name = dto.name;
       if (dto.description !== undefined) patch.description = dto.description;
       if (dto.price !== undefined) patch.price = String(dto.price);
-      if (dto.upc !== undefined) patch.upc = dto.upc;
+      // Clearing the field is a real edit — it removes the barcode — so an empty string
+      // is stored as NULL rather than rejected or ignored.
+      if (dto.upc !== undefined) patch.upc = normaliseUpc(dto.upc);
       if (dto.active !== undefined) patch.active = dto.active;
       if (dto.needsReview !== undefined) patch.needsReview = dto.needsReview;
       // null is meaningful here — it clears the threshold.
@@ -252,6 +255,13 @@ export class ProductsController {
     });
   }
 
+  /**
+   * Name the field that actually collided.
+   *
+   * "That SKU or UPC already exists" made a blank-UPC collision unexplainable: the user
+   * was looking at an empty box being told it was a duplicate. The constraint knows which
+   * one it was, so say it.
+   */
   private conflictOrRethrow(err: unknown): unknown {
     if (
       !!err &&
@@ -259,6 +269,17 @@ export class ProductsController {
       'code' in err &&
       (err as { code?: string }).code === '23505'
     ) {
+      const constraint = (err as { constraint?: string }).constraint ?? '';
+      if (constraint.includes('upc')) {
+        return new ConflictException(
+          'Another product in your catalog already uses that barcode.',
+        );
+      }
+      if (constraint.includes('sku')) {
+        return new ConflictException(
+          'Another product in your catalog already uses that SKU.',
+        );
+      }
       return new ConflictException(
         'A product with that SKU or UPC already exists.',
       );

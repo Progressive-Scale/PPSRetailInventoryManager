@@ -756,7 +756,8 @@ export interface UpdateProduct {
   name?: string;
   description?: string;
   price?: number;
-  upc?: string;
+  /** Explicit null removes the barcode; omit to leave it alone. */
+  upc?: string | null;
   active?: boolean;
   needsReview?: boolean;
   /** Explicit null clears the low-stock threshold; omit to leave it alone. */

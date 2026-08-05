@@ -218,6 +218,13 @@
       "when": 1785949882394,
       "tag": "0030_audit_events_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785949942394,
+      "tag": "0031_blank_upc_is_null",
+      "breakpoints": true
     }
   ]
 }
