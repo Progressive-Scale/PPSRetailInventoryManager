@@ -1813,37 +1813,21 @@ export class CycleCountsService {
       )
       .orderBy(cycleCountLines.id);
 
-    const byResolution: Record<CycleCountResolution, typeof rows> = {
-      SCANNED: [],
-      COUNTED_BY_UPC: [],
-      MARKED_SOLD: [],
-      NEW_ITEM: [],
-      RECEIVED: [],
-      PENDING_NOT_RECEIVED: [],
-      REINSTATED: [],
-      MOVED_IN: [],
-      NOT_COUNTED: [],
-      TRANSFERRED_IN: [],
-    };
-    for (const r of rows) byResolution[r.resolution].push(r);
-
-    // What a reviewer must see first: the lines that REMOVE stock. A count is
-    // destructive by omission, so these are counted out separately rather than left
-    // to be spotted among the routine ones.
-    const zeroing = byResolution.COUNTED_BY_UPC.filter(
-      (l) => (l.quantity ?? 0) === 0,
+    // What the books say is on each counted shelf, so a quantity line can carry its own
+    // shortfall. A reviewer reading "counted 5" has no way to know whether that is the
+    // whole shelf or a third of it, and the missing units are the ones being sold.
+    const shelfLines = rows.filter(
+      (l) => l.resolution === 'COUNTED_BY_UPC' && l.productId != null && l.locationId != null,
     );
-
-    // A shelf counted BELOW its recorded stock is a sale of the difference — applyLine
-    // writes a SALE for the negative delta — and it was in neither headline figure. A count
-    // of 5 against a recorded 15 is ten units sold, and the screen whose job is to stop a
-    // mistake said nothing about them.
-    const shelfKeys = byResolution.COUNTED_BY_UPC.filter(
-      (l) => l.productId != null && l.locationId != null,
-    );
-    let shortfallUnits = 0;
-    let shortfallLines = 0;
-    if (shelfKeys.length > 0) {
+    const onHand = new Map<string, number>();
+    // Already-APPLIED lines cannot be measured against current stock: approval set the
+    // shelf to the counted figure, so "recorded now" IS the count and the shortfall reads
+    // as zero. For those the ledger is the record — approval wrote a SALE for exactly the
+    // units removed — and reading it back is what keeps a closed count's history honest
+    // rather than quietly reporting that nothing left the shelf.
+    const applied = new Map<string, number>();
+    if (shelfLines.length > 0) {
+      const productIds = shelfLines.map((l) => l.productId!);
       const recorded = await tx
         .select({
           productId: inventoryStock.productId,
@@ -1855,24 +1839,87 @@ export class CycleCountsService {
           and(
             eq(inventoryStock.companyId, ctx.companyId),
             eq(inventoryStock.storeId, cc.storeId),
-            inArray(
-              inventoryStock.productId,
-              shelfKeys.map((l) => l.productId!),
-            ),
+            inArray(inventoryStock.productId, productIds),
           ),
         );
-      const onHand = new Map(
-        recorded.map((r) => [`${r.productId}:${r.locationId}`, r.quantityOnHand]),
-      );
-      for (const l of shelfKeys) {
-        const was = onHand.get(`${l.productId}:${l.locationId}`) ?? 0;
-        const short = was - (l.quantity ?? 0);
-        if (short > 0) {
-          shortfallUnits += short;
-          shortfallLines++;
-        }
+      for (const r of recorded) {
+        onHand.set(`${r.productId}:${r.locationId}`, r.quantityOnHand);
+      }
+
+      const sales = await tx
+        .select({
+          productId: inventoryTransactions.productId,
+          locationId: inventoryTransactions.locationFromId,
+          quantityDelta: inventoryTransactions.quantityDelta,
+        })
+        .from(inventoryTransactions)
+        .where(
+          and(
+            eq(inventoryTransactions.companyId, ctx.companyId),
+            eq(inventoryTransactions.cycleCountId, cc.id),
+            eq(inventoryTransactions.type, 'SALE'),
+            isNull(inventoryTransactions.itemId),
+          ),
+        );
+      for (const r of sales) {
+        const key = `${r.productId}:${r.locationId}`;
+        applied.set(key, (applied.get(key) ?? 0) + Math.max(0, -r.quantityDelta));
       }
     }
+
+    const lines = rows.map((l) => {
+      if (l.resolution !== 'COUNTED_BY_UPC' || l.productId == null || l.locationId == null) {
+        return { ...l, recordedQuantity: null, shortfall: null };
+      }
+      const counted = l.quantity ?? 0;
+      const key = `${l.productId}:${l.locationId}`;
+      if (l.appliedAt != null) {
+        const sold = applied.get(key) ?? 0;
+        return {
+          ...l,
+          // What the shelf held BEFORE this count changed it.
+          recordedQuantity: counted + sold,
+          shortfall: sold,
+        };
+      }
+      const was = onHand.get(key) ?? 0;
+      return {
+        ...l,
+        recordedQuantity: was,
+        /** Units this count removes from the shelf. Zero when it found at least as many. */
+        shortfall: Math.max(0, was - counted),
+      };
+    });
+
+    const byResolution: Record<CycleCountResolution, typeof lines> = {
+      SCANNED: [],
+      COUNTED_BY_UPC: [],
+      MARKED_SOLD: [],
+      NEW_ITEM: [],
+      RECEIVED: [],
+      PENDING_NOT_RECEIVED: [],
+      REINSTATED: [],
+      MOVED_IN: [],
+      NOT_COUNTED: [],
+      TRANSFERRED_IN: [],
+    };
+    for (const l of lines) byResolution[l.resolution].push(l);
+
+    // What a reviewer must see first: the lines that REMOVE stock. A count is
+    // destructive by omission, so these are counted out separately rather than left
+    // to be spotted among the routine ones.
+    const zeroing = byResolution.COUNTED_BY_UPC.filter(
+      (l) => (l.quantity ?? 0) === 0,
+    );
+
+    // A shelf counted BELOW its recorded stock is a sale of the difference — applyLine
+    // writes a SALE for the negative delta — and it was in neither headline figure. A count
+    // of 5 against a recorded 15 is ten units sold, and the screen whose job is to stop a
+    // mistake said nothing about them. Summed from the lines themselves, so the total and
+    // the rows a reviewer reads cannot disagree.
+    const shortfalls = byResolution.COUNTED_BY_UPC.filter((l) => (l.shortfall ?? 0) > 0);
+    const shortfallUnits = shortfalls.reduce((n, l) => n + (l.shortfall ?? 0), 0);
+    const shortfallLines = shortfalls.length;
 
     const destructive = {
       /**
@@ -1910,7 +1957,7 @@ export class CycleCountsService {
         productIds: scopeProducts,
         wholeStore: cc.locationId == null,
       },
-      lines: rows,
+      lines,
       linesByResolution: byResolution,
       markedSoldSerials: byResolution.MARKED_SOLD.map((l) => l.serial),
       pendingNotReceived: byResolution.PENDING_NOT_RECEIVED,

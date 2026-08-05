@@ -192,13 +192,11 @@ interface ResolutionGroup {
                 <span class="tally-num">{{ d.cycleCount.scannedCount }}</span>
                 <span class="tally-label">Accounted for</span>
               </div>
+              <!-- Sold covers both routes — unscanned units and shelf shortfalls — so a
+                   separate "shelves zeroed" tally was a subset of this one shown twice. -->
               <div class="tally warn">
                 <span class="tally-num">{{ d.destructive.inferredSales }}</span>
                 <span class="tally-label">Would be sold</span>
-              </div>
-              <div class="tally warn">
-                <span class="tally-num">{{ d.destructive.zeroedStockLines }}</span>
-                <span class="tally-label">Shelves zeroed</span>
               </div>
             </div>
 
@@ -208,23 +206,15 @@ interface ResolutionGroup {
                    undo for quantity stock. -->
               <div class="review-box">
                 <h3>Waiting for your approval — nothing has been applied yet</h3>
-                @if (d.destructive.inferredSales + d.destructive.zeroedStockLines > 0) {
+                @if (d.destructive.inferredSales > 0) {
                   <p class="destructive">
                     Approving will mark
                     <strong>{{ d.destructive.inferredSales }}</strong>
-                    unit(s) sold
-                    <!-- The split, because the two halves are corrected differently: a
-                         serialized unit can be reinstated, a shelf has to be recounted. -->
-                    ({{ d.destructive.markedSoldUnits }} unscanned unit(s),
-                    {{ d.destructive.shortfallUnits }} short on
-                    {{ d.destructive.shortfallLines }} shelf/shelves)
-                    and set
-                    <strong>{{ d.destructive.zeroedStockLines }}</strong>
-                    stock line(s) to zero.
-                    @if (d.destructive.zeroedStockLines > 0) {
-                      Zeroed quantity stock has no per-unit record, so it cannot be
-                      reinstated the way a serialized unit can — check those lines
-                      before approving.
+                    unit(s) sold — see Sold below for which.
+                    @if (d.destructive.shortfallUnits > 0) {
+                      {{ d.destructive.shortfallUnits }} of them are shelf quantities, which
+                      have no per-unit record and so cannot be reinstated the way a
+                      serialized unit can — check those before approving.
                     }
                   </p>
                 } @else {
@@ -633,12 +623,14 @@ export class CycleCountsComponent implements OnInit {
     { key: 'MOVED_IN', label: 'Found here (moved in)' },
     { key: 'RECEIVED', label: 'Received (shipped units scanned in)' },
     { key: 'REINSTATED', label: 'Reinstated (found after being sold)' },
-    // NEW_ITEM has no group of its own: a code the counter found IS something they
-    // counted, so it belongs in Scanned, badged for what it will create. A separate
-    // "New / unidentified" list read like a side note about work that had not happened.
-    { key: 'COUNTED_BY_UPC', label: 'Counted by UPC' },
-    { key: 'MARKED_SOLD', label: 'Missing — would be marked sold' },
-    { key: 'PENDING_NOT_RECEIVED', label: 'Shipped, not yet received' },
+    // NEW_ITEM and COUNTED_BY_UPC have no group of their own. Both are things the counter
+    // counted — one by barcode-and-quantity, one by serial — and splitting them by HOW
+    // they were counted made a reviewer add two lists together to answer "what did they
+    // find". They belong in Scanned, badged where the distinction matters.
+    //
+    // PENDING_NOT_RECEIVED is gone too: an arrival that never turned up is not something
+    // this count did, and it belongs to the pending-arrivals view.
+    { key: 'MARKED_SOLD', label: 'Sold' },
   ];
 
   readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
@@ -694,12 +686,32 @@ export class CycleCountsComponent implements OnInit {
   readonly groups = computed<ResolutionGroup[]>(() => {
     const d = this.detail();
     if (!d) return [];
-    // Unrecognised codes join Scanned, badged. They were counted like everything else,
-    // and the tally above now counts them, so a separate list would say otherwise.
-    const newItems = (d.linesByResolution?.NEW_ITEM ?? []).map((l) => ({
-      text: this.formatLine(l),
-      tag: l.serial == null ? 'New product' : 'New serial',
-    }));
+    // Everything the counter found, in one list. Unrecognised codes are badged for what
+    // they will create; shelf counts read as the quantity they came to.
+    const alsoScanned: GroupItem[] = [
+      ...(d.linesByResolution?.COUNTED_BY_UPC ?? []).map((l) => ({
+        text: this.formatLine(l),
+        tag: 'Shelf count',
+      })),
+      ...(d.linesByResolution?.NEW_ITEM ?? []).map((l) => ({
+        text: this.formatLine(l),
+        tag: l.serial == null ? 'New product' : 'New serial',
+      })),
+    ];
+
+    // The units a shelf came up short by. They are sold on approval exactly as an
+    // unscanned serialized unit is, so they belong in the same list — without them, Sold
+    // read "0" over a count that removes ten water bottles.
+    const shortfalls: GroupItem[] = (d.linesByResolution?.COUNTED_BY_UPC ?? [])
+      .filter((l) => (l.shortfall ?? 0) > 0)
+      .map((l) => ({
+        text:
+          `${l.sku ?? ''} ${l.name ?? ''}`.trim() +
+          (l.locationName ? ` at ${l.locationName}` : '') +
+          ` — ${l.shortfall} of ${l.recordedQuantity} (counted ${l.quantity ?? 0})`,
+        tag: 'Shelf shortfall',
+      }));
+
     return CycleCountsComponent.ORDER.map(({ key, label }) => {
       const items: GroupItem[] = (d.linesByResolution?.[key] ?? []).map((l) => ({
         text: this.formatLine(l),
@@ -707,7 +719,12 @@ export class CycleCountsComponent implements OnInit {
       return {
         key,
         label,
-        items: key === 'SCANNED' ? [...items, ...newItems] : items,
+        items:
+          key === 'SCANNED'
+            ? [...items, ...alsoScanned]
+            : key === 'MARKED_SOLD'
+              ? [...items, ...shortfalls]
+              : items,
         // Highlighted because these are the lines that REMOVE stock.
         prominent: key === 'MARKED_SOLD',
       };

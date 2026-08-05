@@ -665,6 +665,13 @@ export interface CycleCountLine {
   sku: string | null;
   name: string | null;
   locationName: string | null;
+  /**
+   * COUNTED_BY_UPC only: what the books said was on that shelf, and how many units the
+   * count removes from it. Null on every other resolution — a serialized line's shortfall
+   * is the line itself.
+   */
+  recordedQuantity: number | null;
+  shortfall: number | null;
 }
 
 /** The scope a count was opened with — and therefore what its sweep can touch. */
