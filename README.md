@@ -351,6 +351,28 @@ Deploy as **one service** from the repo root, plus a managed Postgres.
 
 > Never commit real secrets — `.env` is git-ignored; use `api/.env.example`.
 
+## A fixture for testing counts by hand
+
+```bash
+npm run db:fixture           # or: npm run db:fixture -- "Downtown"
+```
+
+Puts one store into a known state — **10 Water Bottles in the Backroom, 10 Water Bottles
+plus 2 Chuck Rolls On Floor** — so a cycle count has 10 items in one location and 12 in
+the other, one product counted by UPC and one by serial. Defaults to the `Teset` store of
+the `demo` company; pass a store name to use another.
+
+It uses the products that are already there, found by the identifiers a scanner reads (the
+water bottle's UPC, the chuck roll's SKU), so scanning a physical label matches what the
+fixture created rather than a look-alike it invented. Idempotent: run it as often as you
+like and it converges on those numbers instead of adding to them. Every stock change writes
+its `inventory_transactions` row like any other, because a fixture that adjusts stock
+silently is the one hole a cycle count cannot find.
+
+It never deletes anything it did not create. If the store holds other stock, or has counts
+already in progress, it says so and leaves them alone — quietly deleting data to make an
+expectation true is not a trade a script gets to make.
+
 ## Audit trail — who did what
 
 Two append-only tables answer two different questions, and neither is written twice
