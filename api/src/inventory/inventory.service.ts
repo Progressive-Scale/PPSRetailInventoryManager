@@ -24,6 +24,7 @@ import {
   inventoryItems,
   inventoryStock,
   inventoryTransactions,
+  auditEvents,
   itemAudit,
   ItemStatus,
   outboxReturns,
@@ -35,6 +36,7 @@ import {
   storeLocations,
 } from '../db/schema';
 import { DataContext } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import {
   InventoryActionDto,
   ListInventoryQuery,
@@ -54,7 +56,10 @@ type Target =
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ---- scope helpers -----------------------------------------------------
 
@@ -1169,10 +1174,14 @@ export class InventoryService {
   }
 
   /**
-   * One field-change audit row. Note reads "src: old → new".
+   * One field-change audit row, now written to the unified stream.
    *
    * Field-agnostic because weight joined expiration as a synced unit fact that a human
    * may override; a second near-identical writer per field is how the two drift apart.
+   *
+   * `source` here describes the SHAPE of the edit (one item or a bulk action), which the
+   * new schema keeps in details — its own `source` column records the door the request came
+   * through. The distinction matters: "bulk edit" is not a front door.
    */
   private async writeFieldAudit(
     tx: Tx,
@@ -1181,19 +1190,26 @@ export class InventoryService {
     field: 'expiration_date' | 'weight_lbs',
     oldValue: string | null,
     newValue: string | null,
-    source: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC',
-    label = source === 'BULK_EDIT' ? 'bulk edit' : 'edit',
+    editKind: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC',
+    label = editKind === 'BULK_EDIT' ? 'bulk edit' : 'edit',
+    storeId?: number | null,
   ): Promise<void> {
-    await tx.insert(itemAudit).values({
-      companyId: ctx.companyId,
-      itemId,
-      field,
-      oldValue,
-      newValue,
-      changedByUserId: ctx.userId,
-      source,
-      note: `${label}: ${oldValue ?? '—'} → ${newValue ?? '—'}`,
-    });
+    await this.audit.record(
+      tx,
+      ctx.companyId,
+      editKind === 'SYNC' ? AuditService.agent(null) : AuditService.web(ctx),
+      { entityType: 'INVENTORY_ITEM', entityId: itemId, storeId: storeId ?? null },
+      'UPDATED',
+      {
+        field,
+        oldValue,
+        newValue,
+        details: {
+          editKind,
+          note: `${label}: ${oldValue ?? '—'} → ${newValue ?? '—'}`,
+        },
+      },
+    );
   }
 
   /**
@@ -1337,31 +1353,61 @@ export class InventoryService {
     });
   }
 
-  /** Audit records for one serialized item (expiration changes), newest first. */
+  /**
+   * Audit records for one serialized item, newest first — read straight from the unified
+   * stream rather than from the old item_audit table (now a view over it).
+   *
+   * Every event about the item, not only field edits: an adoption or a needs-review
+   * resolution belongs in the same history as an expiration change. The response keeps its
+   * shape (field/oldValue/newValue/note) so the existing dialog renders unchanged, and adds
+   * the actor, which is the point of the exercise.
+   */
   async itemAuditTrail(ctx: DataContext, itemId: string) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       await this.loadUnit(tx, ctx, itemId); // scope + existence
-      return tx
+      const rows = await tx
         .select({
-          id: itemAudit.id,
-          field: itemAudit.field,
-          oldValue: itemAudit.oldValue,
-          newValue: itemAudit.newValue,
-          source: itemAudit.source,
-          note: itemAudit.note,
-          createdAt: itemAudit.createdAt,
-          changedByUserId: itemAudit.changedByUserId,
+          id: auditEvents.id,
+          action: auditEvents.action,
+          field: auditEvents.field,
+          oldValue: auditEvents.oldValue,
+          newValue: auditEvents.newValue,
+          details: auditEvents.details,
+          actorType: auditEvents.actorType,
+          eventSource: auditEvents.source,
+          createdAt: auditEvents.createdAt,
+          changedByUserId: auditEvents.userId,
           changedByEmail: users.email,
+          changedByUsername: users.username,
         })
-        .from(itemAudit)
-        .leftJoin(users, eq(users.id, itemAudit.changedByUserId))
+        .from(auditEvents)
+        .leftJoin(users, eq(users.id, auditEvents.userId))
         .where(
           and(
-            eq(itemAudit.companyId, ctx.companyId),
-            eq(itemAudit.itemId, itemId),
+            eq(auditEvents.companyId, ctx.companyId),
+            eq(auditEvents.entityType, 'INVENTORY_ITEM'),
+            eq(auditEvents.entityId, itemId),
           ),
         )
-        .orderBy(desc(itemAudit.createdAt));
+        .orderBy(desc(auditEvents.createdAt));
+
+      return rows.map((r) => {
+        const details = (r.details ?? {}) as Record<string, unknown>;
+        return {
+          ...r,
+          // The old shape called this `source` and meant the edit kind; migrated rows keep
+          // theirs in details. Both are returned so nothing has to guess.
+          source: (details.editKind as string) ?? r.eventSource,
+          note: (details.note as string) ?? null,
+          // Who, resolved the same way the global stream resolves it.
+          actor:
+            r.actorType === 'USER'
+              ? (r.changedByUsername ?? r.changedByEmail ?? 'a user')
+              : r.actorType === 'SYNC_AGENT'
+                ? 'Sync'
+                : 'System',
+        };
+      });
     });
   }
 

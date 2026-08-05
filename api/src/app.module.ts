@@ -17,6 +17,7 @@ import { LocationsModule } from './locations/locations.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReordersModule } from './reorders/reorders.module';
 import { MailModule } from './mail/mail.module';
+import { AuditModule } from './audit/audit.module';
 import { AppThrottlerGuard } from './common/app-throttler.guard';
 
 @Module({
@@ -37,6 +38,8 @@ import { AppThrottlerGuard } from './common/app-throttler.guard';
     NotificationsModule,
     ReordersModule,
     MailModule,
+    // Global: every feature emits audit events, so nothing has to remember to import it.
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

@@ -96,6 +96,18 @@ export const itemAuditSource = pgEnum('item_audit_source', [
   'SINGLE_EDIT',
   'SYNC',
 ]);
+/**
+ * WHO did a thing. A closed set, unlike entity/action: every write in this system comes
+ * from a signed-in person, the sync agent's API key, or a scheduled job, and a fourth kind
+ * would be a new authentication path rather than a new label.
+ */
+export const auditActorType = pgEnum('audit_actor_type', [
+  'USER',
+  'SYNC_AGENT',
+  'SYSTEM_JOB',
+]);
+/** WHERE the write came in. Also closed — these are the system's front doors. */
+export const auditSource = pgEnum('audit_source', ['WEB', 'SCANNER', 'SYNC', 'JOB']);
 export const notificationStatus = pgEnum('notification_status', [
   'UNREAD',
   'READ',
@@ -900,6 +912,75 @@ export const reorderRequests = pgTable(
 // Audit trail for manual field changes on a serialized item (currently the
 // expiration date). Expiration normally arrives from ERP sync, so manual
 // overrides must be traceable: who changed it, from what to what, and how.
+/**
+ * Every non-movement change anyone makes, in one append-only stream.
+ *
+ * The companion to inventory_transactions, not a replacement for it: the ledger answers
+ * "where did this stock go", this answers "who changed what". Movements are NOT duplicated
+ * here — the read model unions the two rather than writing twice, so a move can never be
+ * recorded once and un-recorded the other way.
+ *
+ * Generalised out of item_audit, whose rows were migrated in as INVENTORY_ITEM (migration
+ * 0029). item_audit survives as a view over this table.
+ *
+ * entity_type and action are TEXT, not enums, deliberately. Both vocabularies are meant to
+ * grow — the spec ends each list with "extensible" — and an enum makes every new entity or
+ * verb an ALTER TYPE migration, which is exactly the friction that stops people emitting
+ * events. The vocabularies are documented in AuditService, which is the only writer.
+ */
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    /** The store the change belongs to, when it belongs to one. Null for company-wide. */
+    storeId: integer('store_id').references(() => stores.id),
+    actorType: auditActorType('actor_type').notNull(),
+    /** Set when actor_type = USER. Null for the agent and for jobs. */
+    userId: integer('user_id').references(() => users.id),
+    /** Set when actor_type = SYNC_AGENT: WHICH key acted, so a revoked key stays traceable. */
+    apiKeyId: integer('api_key_id').references(() => apiKeys.id),
+    /** PRODUCT | INVENTORY_ITEM | LOCATION | REORDER | CYCLE_COUNT | INVITATION | USER | NOTIFICATION_SETTINGS | … */
+    entityType: text('entity_type').notNull(),
+    /**
+     * The entity's own id as text, because the entities it points at are keyed
+     * inconsistently: inventory_items is a uuid, everything else is an int. A single text
+     * column keeps one stream queryable instead of one nullable id column per key type.
+     */
+    entityId: text('entity_id').notNull(),
+    /** CREATED | UPDATED | DELETED | DEACTIVATED | REACTIVATED | REVOKED | … */
+    action: text('action').notNull(),
+    /**
+     * Single-field edits carry field + old/new. A multi-field edit emits ONE ROW PER
+     * CHANGED FIELD, so "who changed the price" is a query rather than a jsonb dig.
+     */
+    field: text('field'),
+    oldValue: text('old_value'),
+    newValue: text('new_value'),
+    /** Context for events that are not field edits (tallies, external refs, reasons). */
+    details: jsonb('details'),
+    source: auditSource('source').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // The global tab: newest first, one company.
+    index('audit_events_company_created_idx').on(t.companyId, t.createdAt.desc()),
+    // An entity's own history section.
+    index('audit_events_company_entity_idx').on(
+      t.companyId,
+      t.entityType,
+      t.entityId,
+      t.createdAt,
+    ),
+    // "What did Dana do this week" — the reason this feature exists.
+    index('audit_events_company_user_idx').on(t.companyId, t.userId, t.createdAt),
+  ],
+);
+
 export const itemAudit = pgTable(
   'item_audit',
   {
@@ -1176,6 +1257,7 @@ export type NotificationSetting = typeof notificationSettings.$inferSelect;
 export type UserStore = typeof userStores.$inferSelect;
 export type ItemAudit = typeof itemAudit.$inferSelect;
 export type ReorderRequest = typeof reorderRequests.$inferSelect;
+export type AuditEvent = typeof auditEvents.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
 export type ReorderStatus = (typeof reorderStatus.enumValues)[number];
@@ -1208,4 +1290,5 @@ export const TENANT_TABLES = [
   'password_resets',
   'cycle_count_products',
   'reorder_requests',
+  'audit_events',
 ] as const;
