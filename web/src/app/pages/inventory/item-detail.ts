@@ -14,7 +14,7 @@ import { messageFor } from '../../core/http-error';
 import { ReorderDialogComponent } from '../reorders/reorder-dialog';
 import { ItemAudit, StockRow, StoreLocation, Transaction } from '../../core/models';
 
-type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
+type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
 
 @Component({
   selector: 'app-item-detail',
@@ -66,6 +66,8 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
                 <div><dt>Sold on</dt><dd>{{ row.soldAt | date: 'medium' }}</dd></div>
               }
               <div><dt>Expiration</dt><dd [class]="expClass(row.expirationDate)">{{ row.expirationDate ? (row.expirationDate | date: 'mediumDate') : '—' }}</dd></div>
+              <!-- Random-weight goods: this unit's own weight, not the product's. -->
+              <div><dt>Weight</dt><dd>{{ weightLabel() }}</dd></div>
             }
             <div><dt>Created</dt><dd>{{ row.createdAt | date: 'medium' }}</dd></div>
           </dl>
@@ -84,7 +86,7 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
                 @for (a of audit(); track a.id) {
                   <li>
                     <span class="muted">{{ a.createdAt | date: 'short' }}</span>
-                    Expiration {{ a.oldValue || '—' }} → {{ a.newValue || '—' }}
+                    {{ auditFieldLabel(a.field) }} {{ a.oldValue || '—' }} → {{ a.newValue || '—' }}
                     <span class="muted">
                       · {{ a.changedByEmail || 'system' }} · {{ auditSourceLabel(a.source) }}
                     </span>
@@ -128,6 +130,7 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
                   <button class="ghost sm" (click)="open('move')">Move</button>
                 }
                 <button class="ghost sm" (click)="open('expiration')">Edit expiration</button>
+                <button class="ghost sm" (click)="open('weight')">Edit weight</button>
               } @else {
                 <button class="ghost sm" (click)="open('setqty')">Set on-hand</button>
                 <button class="ghost sm" (click)="open('move')">Move</button>
@@ -161,6 +164,14 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'setqty' | null;
                 <input type="date" [(ngModel)]="expirationDate" name="m-exp" />
                 <button type="submit" [disabled]="saving()">Save</button>
                 <button type="button" class="ghost" (click)="clearExpiration()" [disabled]="saving()">Clear</button>
+                <button type="button" class="ghost" (click)="mgmt.set(null)">Cancel</button>
+              </form>
+            } @else if (mgmt() === 'weight') {
+              <form class="mgmt-form" (ngSubmit)="saveWeight()">
+                <span>Weight (lbs)</span>
+                <input class="qty" type="number" step="0.001" [(ngModel)]="weightLbs" name="m-wt" />
+                <button type="submit" [disabled]="saving()">Save</button>
+                <button type="button" class="ghost" (click)="clearWeight()" [disabled]="saving()">Clear</button>
                 <button type="button" class="ghost" (click)="mgmt.set(null)">Cancel</button>
               </form>
             } @else if (mgmt() === 'setqty') {
@@ -419,11 +430,13 @@ export class ItemDetailComponent implements OnInit {
   targetLocationId: number | null = null;
   qty: number | null = null;
   expirationDate = '';
+  weightLbs: number | string = '';
 
   ngOnInit(): void {
     this.loadHistory();
     if (this.row.rowKind === 'unit' && this.row.itemId) this.loadAudit();
     this.expirationDate = this.row.expirationDate ?? '';
+    this.weightLbs = this.row.weightLbs ?? '';
   }
 
   private loadAudit(): void {
@@ -472,6 +485,7 @@ export class ItemDetailComponent implements OnInit {
     this.targetLocationId = null;
     this.qty = this.row.rowKind === 'stock' ? this.row.onHand : null;
     this.expirationDate = this.row.expirationDate ?? '';
+    this.weightLbs = this.row.weightLbs ?? '';
     this.mgmt.set(m);
   }
 
@@ -538,6 +552,50 @@ export class ItemDetailComponent implements OnInit {
         })
         .subscribe({ next: () => this.done(), error: (e) => this.fail(e) });
     }
+  }
+
+  /** This unit's weight, or an em dash. Quantity rows never reach here. */
+  weightLabel(): string {
+    if (this.row.weightLbs == null) return '—';
+    const n = Number(this.row.weightLbs);
+    return Number.isFinite(n) ? `${Number(n.toFixed(3))} lbs` : this.row.weightLbs;
+  }
+
+  /**
+   * Which field an audit row is about. Weight joined expiration as an ERP-synced fact a
+   * human may override, so the history can no longer assume every row is an expiration.
+   */
+  auditFieldLabel(field: string): string {
+    if (field === 'weight_lbs') return 'Weight';
+    if (field === 'expiration_date') return 'Expiration';
+    return field;
+  }
+
+  saveWeight(): void {
+    if (!this.row.itemId) return;
+    const raw = String(this.weightLbs).trim();
+    if (raw === '') {
+      this.mgmtError.set('Enter a weight, or use Clear to remove it.');
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      this.mgmtError.set('Enter a number of pounds.');
+      return;
+    }
+    this.saving.set(true);
+    this.api
+      .updateItem(this.row.itemId, { weightLbs: n })
+      .subscribe({ next: () => this.done(), error: (e) => this.fail(e) });
+  }
+
+  /** Back to "not weighed" — null, not zero. */
+  clearWeight(): void {
+    if (!this.row.itemId) return;
+    this.saving.set(true);
+    this.api
+      .updateItem(this.row.itemId, { weightLbs: null })
+      .subscribe({ next: () => this.done(), error: (e) => this.fail(e) });
   }
 
   saveExpiration(): void {

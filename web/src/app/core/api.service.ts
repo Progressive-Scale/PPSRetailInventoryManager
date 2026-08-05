@@ -186,12 +186,20 @@ export class ApiService {
   }
 
   /**
-   * Admin: edit a serialized unit. `expirationDate` corrects a date; `productId`
-   * identifies an unidentified unit (and takes it out of the review queue).
+   * Admin: edit a serialized unit. `expirationDate` corrects a date, `weightLbs` its
+   * weight in pounds (null clears either back to "not recorded"); `productId` identifies
+   * an unidentified unit (and takes it out of the review queue).
+   *
+   * Expiration and weight are both synced from the ERP, so a change to either writes an
+   * item_audit row — a manual override of ERP data stays traceable.
    */
   updateItem(
     itemId: string,
-    dto: { expirationDate?: string | null; productId?: number },
+    dto: {
+      expirationDate?: string | null;
+      weightLbs?: number | null;
+      productId?: number;
+    },
   ): Observable<InventoryItem> {
     return this.http.patch<InventoryItem>(`/api/inventory/items/${itemId}`, dto);
   }

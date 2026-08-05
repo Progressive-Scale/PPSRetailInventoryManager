@@ -314,6 +314,7 @@ interface Column {
                         </td>
                         <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
                         <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
+                        <td class="num">{{ unitWeight(row) }}</td>
                       </tr>
                     }
                   } @else {
@@ -362,6 +363,9 @@ interface Column {
                       </td>
                       <td class="muted">{{ dateRange(p.createdFrom, p.createdTo) }}</td>
                       <td class="muted">{{ dateRange(p.soldFrom, p.soldTo, true) }}</td>
+                      <td class="num" [title]="weightTitle(p)">
+                        {{ productWeight(p) }}
+                      </td>
                     </tr>
 
                     <!-- Tier two: the actual rows, in the same columns. -->
@@ -420,6 +424,7 @@ interface Column {
                             </td>
                             <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
                             <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
+                            <td class="num">{{ unitWeight(row) }}</td>
                           </tr>
                         }
                       }
@@ -1216,6 +1221,10 @@ export class InventoryComponent implements OnInit {
       { label: 'Expiration', field: 'expiration' },
       { label: 'Created', field: 'created' },
       { label: 'Sold', field: 'sold' },
+      // ONE column for both tiers, because they share one header row: per-unit lbs on a
+      // unit row, the product's total on a product row. Quantity stock has no weight in
+      // either tier and shows an em dash.
+      { label: 'Weight', field: 'weight', num: true },
     );
     return cols;
   });
@@ -1867,6 +1876,49 @@ export class InventoryComponent implements OnInit {
     this.clearSelection();
     this.offset.set(0);
     this.reload();
+  }
+
+  /**
+   * A unit's own weight. Quantity stock rows have none — there is no unit to weigh — and
+   * an unweighed unit has none either; both read as an em dash rather than 0 lbs.
+   */
+  unitWeight(row: StockRow): string {
+    if (row.weightLbs == null) return '—';
+    return `${this.formatLbs(row.weightLbs)} lbs`;
+  }
+
+  /**
+   * A product's total weight, over exactly the units On hand counts.
+   *
+   * An asterisk marks a total that is incomplete because some of those units have no
+   * recorded weight; the tooltip says how many. A partial sum presented as a whole number
+   * of pounds is the one thing this column must never do.
+   */
+  productWeight(p: ProductStockRow): string {
+    if (p.trackingType === 'QUANTITY') return '—';
+    if (p.totalWeightLbs == null) return '—';
+    const total = `${this.formatLbs(p.totalWeightLbs)} lbs`;
+    return p.unweightedCount > 0 ? `${total}*` : total;
+  }
+
+  /** Explains the asterisk. Empty (no tooltip) when the total is complete. */
+  weightTitle(p: ProductStockRow): string {
+    if (p.trackingType === 'QUANTITY') return 'Quantity-tracked stock has no unit weight';
+    if (p.unweightedCount === 0) return '';
+    if (p.totalWeightLbs == null) {
+      return `No recorded weight for any of the ${p.onHand} unit(s)`;
+    }
+    return `${p.unweightedCount} of ${p.onHand} units have no recorded weight`;
+  }
+
+  /**
+   * Trims the numeric's trailing zeros without rounding away a real value: the column
+   * mirrors an ERP decimal(18,8), so 12.4 shows as "12.4" and 0.125 keeps its precision.
+   */
+  private formatLbs(value: string): string {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return value;
+    return String(Number(n.toFixed(3)));
   }
 
   /** Open a product without closing it if it already is. */

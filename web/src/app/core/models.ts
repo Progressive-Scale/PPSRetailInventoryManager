@@ -110,6 +110,8 @@ export interface InventoryItem {
   serial: string;
   status: ItemStatus;
   expirationDate: string | null;
+  /** Pounds, as a numeric string. Null when nobody has weighed this unit. */
+  weightLbs: string | null;
   receivedAt: string | null;
   updatedAt: string;
   createdAt: string;
@@ -148,6 +150,8 @@ export interface DetailUnit {
   serial: string;
   status: ItemStatus;
   expirationDate: string | null;
+  /** Pounds, as a numeric string. Null when nobody has weighed this unit. */
+  weightLbs: string | null;
   receivedAt: string | null;
   updatedAt: string;
 }
@@ -201,6 +205,11 @@ export interface StockRow {
   serial: string | null;
   expirationDate: string | null;
   createdAt: string;
+  /**
+   * This unit's weight in pounds, as a numeric string. Null on a quantity row (there is
+   * no unit to weigh) and on a unit nobody has weighed — both render as "—", never 0.
+   */
+  weightLbs: string | null;
   // When this unit was sold; null while on hand and always null for quantity rows.
   soldAt: string | null;
   /** This store already has a live reorder for this product. */
@@ -238,6 +247,19 @@ export interface ProductStockRow {
   createdTo: string;
   soldFrom: string | null;
   soldTo: string | null;
+  /**
+   * Total pounds over the SAME units onHand counts, summed server-side. Numeric string,
+   * or null when no unit of the product has a weight at all.
+   *
+   * A total is the useful rollup for weight where the dates get a range: what a shop
+   * wants off a product row is how many pounds are sitting there.
+   */
+  totalWeightLbs: string | null;
+  /**
+   * How many of those units have no weight recorded. Above zero, the total is a partial
+   * sum and must be shown as one — see the indicator in the grid.
+   */
+  unweightedCount: number;
   /** Shipped, not yet received. Excluded from onHand by design. */
   pendingCount: number;
 }
@@ -252,7 +274,9 @@ export type StockSortField =
   | 'location'
   | 'expiration'
   | 'created'
-  | 'sold';
+  | 'sold'
+  /** Per-unit lbs on the flat grid; the product total in the by-product view. */
+  | 'weight';
 
 export type StockStatusFilter = 'ON_HAND' | 'SOLD' | 'ALL';
 
