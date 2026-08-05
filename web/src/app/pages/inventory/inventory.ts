@@ -682,9 +682,14 @@ interface Column {
         border-bottom: 1px solid var(--border);
         vertical-align: middle;
       }
+      /* Numeric columns line up with every other column rather than against the next
+         one. Right-aligning two columns in a table where nothing else is right-aligned
+         read as a mistake, which is the only thing alignment has to avoid here — these
+         are small counts and weights, not figures anyone scans down to compare digits.
+         The class stays because it still marks the numeric columns (see td.num.strong). */
       th.num,
       td.num {
-        text-align: right;
+        text-align: left;
       }
       th.sortable {
         cursor: pointer;
