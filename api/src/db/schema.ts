@@ -537,6 +537,18 @@ export const inventoryItems = pgTable(
     importCheckResult: jsonb('import_check_result'),
     // Expiration date (calendar date, nullable). Per physical unit.
     expirationDate: date('expiration_date'),
+    /**
+     * Weight of THIS unit, in pounds. Random-weight goods: two cases of the same
+     * product weigh different amounts, so weight is a unit fact and lives nowhere else
+     * — not on products, not on inventory_stock (a quantity counter has no unit to
+     * weigh).
+     *
+     * Mirrors Ordersystem8's gs1_item.weight_lbs, which is decimal(18,8) nullable.
+     * Deliberately unconstrained: no CHECK >= 0, because real ERP rows carry negative
+     * weights (credits/corrections) and a constraint here would reject a handoff rather
+     * than record what the ERP says. Null means nobody has weighed it.
+     */
+    weightLbs: numeric('weight_lbs'),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     /**
      * When this unit was sold. Set on every transition into SOLD and CLEARED on

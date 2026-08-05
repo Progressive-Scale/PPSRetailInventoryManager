@@ -188,6 +188,10 @@ export class CycleCountsService {
         // one and say "scan each serial" instead of asking for a count that the
         // submit endpoint would reject.
         upc: products.upc,
+        // Per-unit weight, for a handheld that wants to show it while counting. Carried
+        // in the snapshot rather than fetched per scan: the count is already offline-first
+        // and this is one more fact about a unit it has already downloaded.
+        weightLbs: inventoryItems.weightLbs,
       })
       .from(inventoryItems)
       .leftJoin(products, eq(products.id, inventoryItems.productId))
@@ -211,6 +215,7 @@ export class CycleCountsService {
         productId: inventoryItems.productId,
         sku: products.sku,
         name: products.name,
+        weightLbs: inventoryItems.weightLbs,
         handedOffAt: inventoryItems.createdAt,
       })
       .from(inventoryItems)

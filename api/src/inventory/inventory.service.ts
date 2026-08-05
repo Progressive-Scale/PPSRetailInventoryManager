@@ -215,6 +215,7 @@ export class InventoryService {
             serial: inventoryItems.serial,
             status: inventoryItems.status,
             expirationDate: inventoryItems.expirationDate,
+            weightLbs: inventoryItems.weightLbs,
             receivedAt: inventoryItems.receivedAt,
             updatedAt: inventoryItems.updatedAt,
           })
@@ -735,6 +736,9 @@ export class InventoryService {
           barcode: inventoryItems.barcode,
           status: inventoryItems.status,
           expirationDate: inventoryItems.expirationDate,
+          // Carried here too so a PENDING arrival shows its weight before it is
+          // received — the ERP already said what it weighs.
+          weightLbs: inventoryItems.weightLbs,
           receivedAt: inventoryItems.receivedAt,
           needsReview: inventoryItems.needsReview,
           importCheckStatus: inventoryItems.importCheckStatus,
@@ -816,7 +820,10 @@ export class InventoryService {
                l.id, l.name, l.kind::text,
                -- A quantity stock line has no sold date: selling decrements a counter
                -- rather than retiring an identifiable unit, so there is nothing to date.
-               NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text
+               -- Nor a weight: there is no unit to weigh, only a number of them. NULL
+               -- rather than 0, so the UI can render "—" instead of claiming zero pounds.
+               NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text,
+               NULL::numeric
         FROM inventory_stock s
         JOIN products p ON p.id = s.product_id
         JOIN store_locations l ON l.id = s.location_id
@@ -831,7 +838,10 @@ export class InventoryService {
                (CASE WHEN i.status = 'ON_HAND' THEN 1 ELSE 0 END) AS on_hand,
                l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
                i.serial, i.expiration_date, i.created_at, i.sold_at,
-               i.status::text AS status
+               i.status::text AS status,
+               -- Per-unit weight (random-weight goods). Positionally matched by the
+               -- stock branch below, which has none.
+               i.weight_lbs
         FROM inventory_items i
         JOIN products p ON p.id = i.product_id
         JOIN store_locations l ON l.id = i.location_id
@@ -893,6 +903,9 @@ export class InventoryService {
       expiration: ends(sql`c.expiration_date`),
       created: ends(sql`c.created_at`),
       sold: ends(sql`c.sold_at`),
+      // Sorts by the same total the row displays, not by an end of a range: a product's
+      // weight column IS a sum, so ascending means "lightest shelf-load first".
+      weight: sql`sum(c.weight_lbs) FILTER (WHERE c.on_hand = 1)`,
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = desc ? sql`DESC` : sql`ASC`;
@@ -914,6 +927,18 @@ export class InventoryService {
                max(c.created_at)                AS created_to,
                min(c.sold_at)                   AS sold_from,
                max(c.sold_at)                   AS sold_to,
+               -- Weight rolls up as a TOTAL, not a range: what a shop wants off a
+               -- product row is how many pounds are sitting there.
+               --
+               -- FILTER pins it to exactly the unit set On hand counts — ON_HAND units
+               -- matching these filters, PENDING already excluded by the CTE — so the
+               -- two numbers can never describe different rows. row_kind guards the
+               -- quantity branch, whose weight is NULL by construction but whose rows
+               -- would otherwise be counted as "unweighted".
+               sum(c.weight_lbs) FILTER (WHERE c.on_hand = 1)   AS total_weight_lbs,
+               count(*) FILTER (
+                 WHERE c.on_hand = 1 AND c.row_kind = 'unit' AND c.weight_lbs IS NULL
+               )::int                            AS unweighted_count,
                -- Shipped but not yet received. Deliberately counted OUTSIDE the CTE:
                -- the status filter keeps PENDING out of the rows (and out of On hand),
                -- yet a shop still needs to know something is on its way.
@@ -959,6 +984,12 @@ export class InventoryService {
         createdTo: r.created_to,
         soldFrom: r.sold_from,
         soldTo: r.sold_to,
+        // numeric → string, like every other numeric in this API. Null when no unit of
+        // the product has a weight at all, which the UI shows as "—" rather than 0.
+        totalWeightLbs: r.total_weight_lbs,
+        // How many of those units have no weight recorded, so a partial sum is never
+        // presented as a complete one.
+        unweightedCount: r.unweighted_count,
         pendingCount: r.pending_count,
       }));
       return { data, total, limit, offset };
@@ -980,6 +1011,7 @@ export class InventoryService {
       expiration: sql`c.expiration_date`,
       created: sql`c.created_at`,
       sold: sql`c.sold_at`,
+      weight: sql`c.weight_lbs`,
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = query.sortDir === 'desc' ? sql`DESC` : sql`ASC`;
@@ -1027,6 +1059,8 @@ export class InventoryService {
         expirationDate: r.expiration_date,
         createdAt: r.created_at,
         soldAt: r.sold_at,
+        // Null on a quantity stock row (nothing to weigh) and on a unit nobody weighed.
+        weightLbs: r.weight_lbs,
         status: r.status,
         reorderOpen: r.reorder_open,
       }));
@@ -1036,17 +1070,30 @@ export class InventoryService {
 
   // ---- admin edits (data corrections) ------------------------------------
 
-  /** Edit a serialized unit's expiration date (COMPANY_ADMIN data correction). */
+  /**
+   * Edit a serialized unit's own facts — expiration date, weight (COMPANY_ADMIN data
+   * correction). Both are synced from the ERP, so both changes are audited: a manual
+   * override of ERP data has to stay traceable, or the next sync silently disagreeing
+   * with the shelf becomes unexplainable.
+   */
   async updateItem(
     ctx: DataContext,
     itemId: string,
-    dto: { expirationDate?: string | null; productId?: number },
+    dto: {
+      expirationDate?: string | null;
+      weightLbs?: number | null;
+      productId?: number;
+    },
   ) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const item = await this.loadUnit(tx, ctx, itemId);
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (dto.expirationDate !== undefined) {
         patch.expirationDate = dto.expirationDate; // string 'YYYY-MM-DD' or null
+      }
+      if (dto.weightLbs !== undefined) {
+        // numeric column: drizzle wants a string, and null clears it back to "not weighed".
+        patch.weightLbs = dto.weightLbs === null ? null : String(dto.weightLbs);
       }
 
       // Manual identification: attach a catalog product to an unidentified unit.
@@ -1080,29 +1127,58 @@ export class InventoryService {
         .set(patch)
         .where(eq(inventoryItems.id, item.id))
         .returning();
-      // Audit the expiration change (traceable manual override of ERP sync).
+      // Audit the changes (traceable manual overrides of ERP sync). Only real changes
+      // are recorded: re-saving the form with the same values is not an edit.
       if (
         dto.expirationDate !== undefined &&
         (item.expirationDate ?? null) !== (dto.expirationDate ?? null)
       ) {
-        await this.writeExpirationAudit(
+        await this.writeFieldAudit(
           tx,
           ctx,
           item.id,
+          'expiration_date',
           item.expirationDate ?? null,
           dto.expirationDate ?? null,
           'SINGLE_EDIT',
         );
       }
+      if (dto.weightLbs !== undefined) {
+        // Compared as numbers where both exist: the column round-trips as a string, so
+        // '12.4' and '12.400' are the same weight and must not log as a change.
+        const before = item.weightLbs ?? null;
+        const after = dto.weightLbs === null ? null : String(dto.weightLbs);
+        const changed =
+          before === null || after === null
+            ? before !== after
+            : Number(before) !== Number(after);
+        if (changed) {
+          await this.writeFieldAudit(
+            tx,
+            ctx,
+            item.id,
+            'weight_lbs',
+            before,
+            after,
+            'SINGLE_EDIT',
+          );
+        }
+      }
       return row;
     });
   }
 
-  /** One expiration-change audit row. Note reads "src: old → new". */
-  private async writeExpirationAudit(
+  /**
+   * One field-change audit row. Note reads "src: old → new".
+   *
+   * Field-agnostic because weight joined expiration as a synced unit fact that a human
+   * may override; a second near-identical writer per field is how the two drift apart.
+   */
+  private async writeFieldAudit(
     tx: Tx,
     ctx: DataContext,
     itemId: string,
+    field: 'expiration_date' | 'weight_lbs',
     oldValue: string | null,
     newValue: string | null,
     source: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC',
@@ -1111,7 +1187,7 @@ export class InventoryService {
     await tx.insert(itemAudit).values({
       companyId: ctx.companyId,
       itemId,
-      field: 'expiration_date',
+      field,
       oldValue,
       newValue,
       changedByUserId: ctx.userId,
@@ -1175,7 +1251,15 @@ export class InventoryService {
             .update(inventoryItems)
             .set({ expirationDate: newValue, updatedAt: new Date() })
             .where(eq(inventoryItems.id, it.id));
-          await this.writeExpirationAudit(tx, ctx, it.id, oldValue, newValue, 'BULK_EDIT');
+          await this.writeFieldAudit(
+            tx,
+            ctx,
+            it.id,
+            'expiration_date',
+            oldValue,
+            newValue,
+            'BULK_EDIT',
+          );
         }
         results.push({ itemId: it.id, ok: true });
       }

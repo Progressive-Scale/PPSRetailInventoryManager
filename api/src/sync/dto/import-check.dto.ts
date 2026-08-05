@@ -27,6 +27,13 @@ export class ImportMatchDto {
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price?: number;
   @IsOptional() @IsISO8601() expirationDate?: string;
+  /**
+   * This unit's weight in POUNDS, if PPS knows it. Unit-level, unlike most of this
+   * payload: sku/name/price/description describe the PRODUCT, while this and the
+   * expiration describe the one physical thing that was scanned. No unsigned check —
+   * see HandoffItemDto.weightLbs for why.
+   */
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 8 }) weightLbs?: number;
   /** PPS's own identifier for the product, stored for traceability. */
   @IsOptional() @IsString() @MaxLength(128) ppsProductRef?: string;
   /**

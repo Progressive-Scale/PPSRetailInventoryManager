@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.8
+# Sync Agent Integration Contract — v3.9
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,7 +10,7 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.8`
+- **Contract version:** `v3.9`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
@@ -35,6 +35,44 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.9
+
+**Unit weight (`weightLbs`), for random-weight goods.**
+
+Two cases of the same product do not weigh the same, so weight is a fact about the
+**unit**, not the product — it sits on the inventory item next to its expiration date,
+and nowhere else. Quantity-tracked stock has no weight at all: there is no unit to weigh,
+only a number of them.
+
+Two optional fields, both additive:
+
+- `POST /api/sync/handoffs` — a `unit` line may carry `weightLbs` (number, **pounds**).
+  Stored on the PENDING item it creates.
+- `POST /api/sync/import-checks/results` — a `MATCHED` answer's `match` object may carry
+  `weightLbs`, applied when the unit is adopted, alongside price and expiration.
+
+**Sign is not validated.** `gs1_item.weight_lbs` in Ordersystem8 legitimately holds
+negative values (credits and corrections; the lowest observed is `-240.3`), so the API
+records what the ERP says rather than rejecting a handoff over it. Consumers of the
+rollup should expect that a total can be dragged down by one such unit.
+
+### Re-delivery: what a second handoff for the same serial does
+
+`weightLbs` follows the convention `expirationDate` and `barcode` already use, which was
+inspected rather than invented:
+
+> **A value that arrives overwrites. An omitted value is left alone.**
+
+So a re-delivered handoff carrying a *different* weight updates it — the ERP is
+authoritative, and a re-weigh is exactly why a line would be re-sent — while one that
+omits the field never blanks a weight that is already recorded. A handoff therefore
+cannot clear a weight back to null; only a manual edit in the portal can, and that is
+written to the item's audit trail (`field = "weight_lbs"`, `source = "SINGLE_EDIT"`).
+
+For contrast, `price` is **not** a unit field: it describes the product, and the handoff
+only uses it when creating a catalog row that does not exist yet — it never overwrites a
+curated price. That is why weight follows expiration's rule and not price's.
 
 ## What's new in v3.8
 
@@ -254,7 +292,7 @@ the cloud does not hold PPS's own store identifiers, so the agent maps
 { "results": [
   { "itemId": "957d0e3c-…", "outcome": "MATCHED",
     "match": { "sku": "WIDGET-9", "name": "Widget", "description": "…",
-               "price": 12.50, "expirationDate": "2028-03-01",
+               "price": 12.50, "expirationDate": "2028-03-01", "weightLbs": 12.4,
                "ppsProductRef": "PPSREF-9" } },
   { "itemId": "aa3b338f-…", "outcome": "NOT_FOUND" },
   { "itemId": "b1602114-…", "outcome": "DISCREPANCY",
@@ -275,7 +313,7 @@ Response — **one ack per item**, in request order:
 
 | Outcome | What the cloud does |
 | --- | --- |
-| `MATCHED` | Finds the product by (company, `sku`) and links it, or creates it — **`needs_review = false`, because the ERP is authoritative for catalog data**. Sets the unit's product, price and expiration, clears its needs-review flag, and writes a ledger row noted `adopted via PPS import match (<sku>)`. The unit leaves the review queue on its own. |
+| `MATCHED` | Finds the product by (company, `sku`) and links it, or creates it — **`needs_review = false`, because the ERP is authoritative for catalog data**. Sets the unit's product, price, expiration and `weightLbs` (each only if the answer carries it; otherwise the unit keeps what it had), clears its needs-review flag, and writes a ledger row noted `adopted via PPS import match (<sku>)`. The unit leaves the review queue on its own. |
 | `NOT_FOUND` | Records the answer. The unit **stays** needs-review — nobody has identified it, so it must not leave the queue just because the ERP shrugged. |
 | `DISCREPANCY` | Stores `reason` and `ppsState` verbatim and surfaces them to an admin. The unit **stays** needs-review. |
 
@@ -403,6 +441,7 @@ Content-Type: application/json
       "price": 19.99,
       "upc": "0001110001",
       "expirationDate": "2026-12-31",
+      "weightLbs": 12.4,
       "storeId": 3
     },
     {
@@ -424,7 +463,8 @@ the cloud store id) are required; `description`, `price`, `upc` are optional.
 
 **`kind: "unit"`** (serialized): also requires `serial`* — the GS1 AI **(21)** value
 alone, **not** the whole barcode; see v3.5 above. `barcode` (the full label string, max 400
-chars) and `expirationDate` (a `YYYY-MM-DD` calendar date) are optional. Idempotency key is
+chars), `expirationDate` (a `YYYY-MM-DD` calendar date) and `weightLbs` (a number, in
+**pounds**, up to 8 decimal places; may be negative — see v3.9) are optional. Idempotency key is
 **(company, sku, serial)** — redelivering the same serial *for the same sku* never creates a
 duplicate unit or ledger row, and re-sending with `barcode` fills it in on a unit handed off
 before the agent knew how. The same serial under a **different** sku is a different physical

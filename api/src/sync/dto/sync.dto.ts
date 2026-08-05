@@ -43,6 +43,12 @@ export class HandoffItemDto {
   // used as the identity key.
   @IsOptional() @IsString() @MinLength(1) @MaxLength(400) barcode?: string;
   @IsOptional() @IsISO8601() expirationDate?: string;
+  /**
+   * This unit's weight in POUNDS (random-weight goods). Not validated as positive:
+   * gs1_item.weight_lbs really does hold negative values for credits and corrections,
+   * and rejecting one would drop the handoff rather than record what the ERP says.
+   */
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 8 }) weightLbs?: number;
 
   // --- stock only ---
   @IsOptional() @IsInt() @IsPositive() quantity?: number;

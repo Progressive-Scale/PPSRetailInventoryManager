@@ -1,0 +1,12 @@
+-- Per-unit weight in pounds, for random-weight goods: two cases of the same product
+-- weigh different amounts, so this is a unit fact and belongs nowhere else. Mirrors
+-- Ordersystem8's gs1_item.weight_lbs (decimal(18,8), nullable).
+--
+-- No backfill: existing units stay null until the ERP re-delivers them or somebody
+-- edits one. Null therefore means "not weighed", never "weighs nothing", and the
+-- product rollup says so rather than presenting a partial sum as complete.
+--
+-- No CHECK constraint on purpose. Real gs1_item rows carry negative weights (min
+-- observed: -240.3), and a constraint here would reject the handoff instead of
+-- recording what the ERP says.
+ALTER TABLE "inventory_items" ADD COLUMN "weight_lbs" numeric;

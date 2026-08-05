@@ -225,6 +225,10 @@ export class ImportChecksService {
         productId: product.id,
         needsReview: false,
         expirationDate: m.expirationDate ?? item.expirationDate,
+        // Same rule as the expiration beside it: what PPS says wins, and saying nothing
+        // leaves the existing value alone. This unit came from a bare serial scan, so
+        // there is usually nothing to overwrite.
+        weightLbs: m.weightLbs != null ? String(m.weightLbs) : item.weightLbs,
         // Only ever fills a gap. This unit was created from a bare serial scan, so it has
         // no barcode; if it somehow does, that one was recorded closer to the label than
         // this answer is.

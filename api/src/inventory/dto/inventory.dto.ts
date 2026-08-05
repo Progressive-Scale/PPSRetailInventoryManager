@@ -7,6 +7,7 @@ import {
   IsIn,
   IsInt,
   IsISO8601,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -130,6 +131,9 @@ const STOCK_SORT_FIELDS = [
   'created',
   // Serialized units only; quantity stock lines have no sold date and sort last.
   'sold',
+  // Per-unit lbs on the flat grid; the product TOTAL in the by-product view, since that
+  // is the number that view actually shows.
+  'weight',
 ] as const;
 
 // Combined flat stock listing: one row per serialized unit + one row per
@@ -200,6 +204,19 @@ export class UpdateItemDto {
   @ValidateIf((o: UpdateItemDto) => o.expirationDate !== null)
   @IsISO8601()
   expirationDate?: string | null;
+
+  /**
+   * This unit's weight in pounds, or null to clear it back to "not weighed". Synced from
+   * the ERP, so a change here is a manual override and is written to item_audit.
+   *
+   * No @Min(0): Ordersystem8's own column carries negative weights, and refusing to
+   * record a value that is already in the ERP would leave the two disagreeing with no
+   * way to say why.
+   */
+  @IsOptional()
+  @ValidateIf((o: UpdateItemDto) => o.weightLbs !== null)
+  @IsNumber({ maxDecimalPlaces: 8 })
+  weightLbs?: number | null;
 
   /**
    * Identify an unidentified unit by attaching it to a catalog product. This is the
