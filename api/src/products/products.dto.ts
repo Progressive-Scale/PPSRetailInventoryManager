@@ -31,7 +31,8 @@ export class CreateProductDto {
 export class UpdateProductDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128) sku?: string;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(256) name?: string;
-  @IsOptional() @IsString() @MaxLength(2000) description?: string;
+  /** An explicit null, or a blank string, removes the description. */
+  @IsOptional() @IsString() @MaxLength(2000) description?: string | null;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price?: number;
   /**
    * An explicit null removes the barcode; omit to leave it alone. A blank string means the

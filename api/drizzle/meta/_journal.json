@@ -225,6 +225,13 @@
       "when": 1785949942394,
       "tag": "0031_blank_upc_is_null",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785950002394,
+      "tag": "0032_blank_description_is_null",
+      "breakpoints": true
     }
   ]
 }

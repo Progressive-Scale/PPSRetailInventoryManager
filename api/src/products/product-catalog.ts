@@ -4,16 +4,21 @@ import { Product, products, TrackingType } from '../db/schema';
 import { AuditActor, AuditService } from '../audit/audit.service';
 
 /**
- * A blank barcode means "no barcode", and only NULL says that.
+ * An empty text box means "nothing here", and only NULL says that.
  *
- * products.upc is unique per company WHERE upc IS NOT NULL, so an empty string is not
- * exempt: two products whose UPC was cleared to '' collide, and the error blames a
- * duplicate SKU/UPC that the user cannot see anywhere. Every write path funnels through
- * here so no caller has to remember.
+ * A form sends '' for a field the user left blank, and storing that verbatim causes two
+ * distinct faults:
+ *   - `upc` is unique per company WHERE upc IS NOT NULL, so '' is not exempt: two products
+ *     whose barcode was cleared collide, and the error blames a duplicate the user cannot
+ *     see anywhere.
+ *   - a NULL-to-'' transition is a change to the database and no change to anybody reading
+ *     it, so the audit trail reports "changed description: — → " and means nothing by it.
+ *
+ * Every write path funnels through here so no caller has to remember.
  */
-export function normaliseUpc(upc: string | null | undefined): string | null {
-  if (upc == null) return null;
-  const trimmed = upc.trim();
+export function blankToNull(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
   return trimmed === '' ? null : trimmed;
 }
 
@@ -62,7 +67,7 @@ export async function resolveOrCreateProduct(
       sku: input.sku,
       name: input.name,
       price: input.price,
-      upc: normaliseUpc(input.upc),
+      upc: blankToNull(input.upc),
       trackingType: input.trackingType,
       needsReview: input.needsReview ?? false,
     })

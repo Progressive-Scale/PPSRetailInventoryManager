@@ -22,7 +22,7 @@ import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
 import { AuditService, diffFields } from '../audit/audit.service';
-import { normaliseUpc } from './product-catalog';
+import { blankToNull } from './product-catalog';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryItems, inventoryStock, products } from '../db/schema';
 import {
@@ -86,9 +86,9 @@ export class ProductsController {
             companyId: ctx.companyId,
             sku: dto.sku,
             name: dto.name,
-            description: dto.description ?? null,
+            description: blankToNull(dto.description),
             price: dto.price !== undefined ? String(dto.price) : '0',
-            upc: normaliseUpc(dto.upc),
+            upc: blankToNull(dto.upc),
             trackingType: dto.trackingType,
           })
           .returning();
@@ -134,11 +134,14 @@ export class ProductsController {
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (dto.sku !== undefined) patch.sku = dto.sku;
       if (dto.name !== undefined) patch.name = dto.name;
-      if (dto.description !== undefined) patch.description = dto.description;
+      // Blank means "no description". Without this, saving a product that never had one
+      // stores '' and the trail records a change from nothing to nothing.
+      if (dto.description !== undefined)
+        patch.description = blankToNull(dto.description);
       if (dto.price !== undefined) patch.price = String(dto.price);
       // Clearing the field is a real edit — it removes the barcode — so an empty string
       // is stored as NULL rather than rejected or ignored.
-      if (dto.upc !== undefined) patch.upc = normaliseUpc(dto.upc);
+      if (dto.upc !== undefined) patch.upc = blankToNull(dto.upc);
       if (dto.active !== undefined) patch.active = dto.active;
       if (dto.needsReview !== undefined) patch.needsReview = dto.needsReview;
       // null is meaningful here — it clears the threshold.

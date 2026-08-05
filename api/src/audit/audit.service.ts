@@ -222,8 +222,11 @@ export function diffFields<T extends Record<string, unknown>>(
   for (const key of opts.fields) {
     if (!(key in after)) continue; // not part of this request — not an edit
     const norm = opts.normalise?.[key] ?? ((v: unknown) => v);
-    const a = before[key] ?? null;
-    const b = (after[key] ?? null) as unknown;
+    // An empty string and NULL are the same absence, so a form that submits '' for a field
+    // that was never set is not an edit. Write paths normalise blanks to NULL anyway; this
+    // is here so one that forgets cannot fill the trail with "— → " rows.
+    const a = empty(before[key]) ? null : before[key];
+    const b = empty(after[key]) ? null : (after[key] as unknown);
     const same =
       a === null && b === null
         ? true
@@ -238,4 +241,9 @@ export function diffFields<T extends Record<string, unknown>>(
     });
   }
   return out;
+}
+
+/** Nothing there: null, undefined, or a string with only whitespace in it. */
+function empty(value: unknown): boolean {
+  return value == null || (typeof value === 'string' && value.trim() === '');
 }

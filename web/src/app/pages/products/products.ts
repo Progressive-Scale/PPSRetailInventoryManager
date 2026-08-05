@@ -665,7 +665,8 @@ export class ProductsComponent implements OnInit {
       name: this.productDraft.name,
       trackingType: this.productDraft.trackingType,
     };
-    if (this.productDraft.description) dto.description = this.productDraft.description;
+    if (this.productDraft.description.trim())
+      dto.description = this.productDraft.description.trim();
     if (this.productDraft.price != null) dto.price = Number(this.productDraft.price);
     if (this.productDraft.upc.trim()) dto.upc = this.productDraft.upc.trim();
     this.saving.set(true);
@@ -735,7 +736,9 @@ export class ProductsComponent implements OnInit {
     const dto: UpdateProduct = {
       sku: this.productEdit.sku,
       name: this.productEdit.name,
-      description: this.productEdit.description,
+      // Blank means "no description", so send null rather than '' — otherwise the history
+      // shows an edit that changed nothing anyone can see.
+      description: this.productEdit.description.trim() || null,
       // Empty means "no barcode": send null, not '', so the API stores an absence rather
       // than a value that collides with every other blank one.
       upc: this.productEdit.upc.trim() || null,

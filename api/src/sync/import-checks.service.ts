@@ -9,7 +9,7 @@ import {
   products,
   stores,
 } from '../db/schema';
-import { resolveOrCreateProduct } from '../products/product-catalog';
+import { blankToNull, resolveOrCreateProduct } from '../products/product-catalog';
 import { ImportCheckResultDto } from './dto/import-check.dto';
 
 export interface ImportCheckAck {
@@ -228,7 +228,7 @@ export class ImportChecksService {
     if (!existing && m.description) {
       await tx
         .update(products)
-        .set({ description: m.description })
+        .set({ description: blankToNull(m.description) })
         .where(eq(products.id, product.id));
     }
 

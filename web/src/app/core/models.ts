@@ -754,7 +754,8 @@ export interface CreateProduct {
 export interface UpdateProduct {
   sku?: string;
   name?: string;
-  description?: string;
+  /** Explicit null removes the description; omit to leave it alone. */
+  description?: string | null;
   price?: number;
   /** Explicit null removes the barcode; omit to leave it alone. */
   upc?: string | null;
