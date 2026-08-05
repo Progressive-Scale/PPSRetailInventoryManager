@@ -8,6 +8,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { messageFor } from '../../core/http-error';
 import { Reorder, ReorderStatus, Store } from '../../core/models';
+import { ActivityDialogComponent } from '../../shared/activity-dialog';
 import { ReorderNewDialogComponent } from './reorder-new-dialog';
 
 type StatusFilter = ReorderStatus | 'ALL';
@@ -23,7 +24,7 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
  */
 @Component({
   selector: 'app-reorders',
-  imports: [DatePipe, FormsModule, ReorderNewDialogComponent],
+  imports: [DatePipe, FormsModule, ReorderNewDialogComponent, ActivityDialogComponent],
   template: `
     <main class="container">
       <section class="card">
@@ -125,6 +126,9 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
                           Cancel
                         </button>
                       }
+                      <!-- Raised by whom, acknowledged by which agent, against what order
+                           reference — the lifecycle this table only summarises. -->
+                      <button class="sm ghost" (click)="openHistory(r)">History</button>
                     </td>
                   </tr>
                 }
@@ -144,6 +148,15 @@ const STATUS_FILTERS: StatusFilter[] = ['OPEN', 'ACKNOWLEDGED', 'CANCELLED', 'AL
 
       @if (newOpen()) {
         <app-reorder-new-dialog (close)="onNewClosed($event)" />
+      }
+
+      @if (historyFor()) {
+        <app-activity-dialog
+          [entityType]="historyFor()!.type"
+          [entityId]="historyFor()!.id"
+          [subtitle]="historyFor()!.label"
+          (close)="historyFor.set(null)"
+        />
       }
     </main>
   `,
@@ -322,6 +335,12 @@ export class ReordersComponent implements OnInit {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly busyId = signal<number | null>(null);
+  /** Which request's lifecycle is showing, if any. */
+  readonly historyFor = signal<{ type: string; id: number; label: string } | null>(null);
+
+  openHistory(r: Reorder): void {
+    this.historyFor.set({ type: 'REORDER', id: r.id, label: `${r.sku} — ${r.productName}` });
+  }
   readonly newOpen = signal(false);
 
   readonly statusFilter = signal<StatusFilter>('OPEN');

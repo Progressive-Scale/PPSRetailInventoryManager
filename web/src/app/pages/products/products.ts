@@ -4,6 +4,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
+import { ActivityDialogComponent } from '../../shared/activity-dialog';
 
 // The Review sub-tab moved to Cycle Counts -> Review: everything in it
 // originates from a count, so it belongs beside the counts, not the catalog.
@@ -14,7 +15,7 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
 
 @Component({
   selector: 'app-products',
-  imports: [FormsModule],
+  imports: [FormsModule, ActivityDialogComponent],
   template: `
     <main class="container">
       @if (error()) {
@@ -132,6 +133,7 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
                       <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
                       <td class="actions">
                         <button class="sm ghost" (click)="startEditProduct(p)">Edit</button>
+                        <button class="sm ghost" (click)="openHistory(p)">History</button>
                         <button
                           class="sm ghost"
                           (click)="viewInventory(p)"
@@ -213,6 +215,15 @@ import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/
             }
           </div>
         </div>
+      }
+
+      @if (historyFor()) {
+        <app-activity-dialog
+          [entityType]="historyFor()!.type"
+          [entityId]="historyFor()!.id"
+          [subtitle]="historyFor()!.label"
+          (close)="historyFor.set(null)"
+        />
       }
     </main>
   `,
@@ -497,6 +508,12 @@ export class ProductsComponent implements OnInit {
   readonly loading = signal(false);
   readonly saving = signal(false);
   readonly error = signal<string | null>(null);
+  /** Which product's history is showing, if any. */
+  readonly historyFor = signal<{ type: string; id: number; label: string } | null>(null);
+
+  openHistory(p: Product): void {
+    this.historyFor.set({ type: 'PRODUCT', id: p.id, label: `${p.sku} — ${p.name}` });
+  }
 
   readonly products = signal<Product[]>([]);
 

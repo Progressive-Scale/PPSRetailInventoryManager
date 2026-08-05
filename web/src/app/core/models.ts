@@ -293,6 +293,55 @@ export interface ItemAudit {
   changedByEmail: string | null;
 }
 
+/**
+ * One row of the unified activity stream — a field change, a lifecycle event, or a stock
+ * movement, all in one shape. `kind` says which stream it came from; `summary` is the
+ * sentence the server already composed, so every surface says the same thing.
+ */
+export interface ActivityRow {
+  id: string;
+  kind: 'AUDIT' | 'LEDGER';
+  at: string;
+  actorType: 'USER' | 'SYNC_AGENT' | 'SYSTEM_JOB';
+  userId: number | null;
+  /** username / 'Sync' / 'System'. */
+  actor: string;
+  source: 'WEB' | 'SCANNER' | 'SYNC' | 'JOB';
+  storeId: number | null;
+  storeName: string | null;
+  entityType: string;
+  entityId: string;
+  action: string;
+  field: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+  details: Record<string, unknown> | null;
+  summary: string;
+  quantityDelta: number | null;
+  productId: number | null;
+  sku: string | null;
+  productName: string | null;
+  serial: string | null;
+  locationFrom: string | null;
+  locationTo: string | null;
+  cycleCountId: number | null;
+  note: string | null;
+}
+
+/** Filters the activity stream accepts. Every field is optional and ANDed server-side. */
+export interface ActivityQuery {
+  userId?: number | null;
+  entityType?: string | null;
+  action?: string | null;
+  storeId?: number | null;
+  source?: string | null;
+  /** ISO dates (yyyy-mm-dd is fine); `to` is exclusive. */
+  from?: string | null;
+  to?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
 export interface BulkExpirationResult {
   results: { itemId: string; ok: boolean; reason?: string }[];
 }

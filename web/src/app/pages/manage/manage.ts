@@ -13,6 +13,7 @@ import { ActivatedRoute } from '@angular/router';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import {
+  ActivityRow,
   CreateInvitation,
   CreateStore,
   Invitation,
@@ -20,12 +21,13 @@ import {
   Store,
   User,
 } from '../../core/models';
+import { ActivityDialogComponent } from '../../shared/activity-dialog';
 
-type Tab = 'stores' | 'users' | 'invitations';
+type Tab = 'stores' | 'users' | 'invitations' | 'activity';
 
 @Component({
   selector: 'app-manage',
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, ActivityDialogComponent],
   template: `
     <main class="container">
       <div class="tabs">
@@ -34,6 +36,7 @@ type Tab = 'stores' | 'users' | 'invitations';
         <button [class.active]="tab() === 'invitations'" (click)="select('invitations')">
           Invitations
         </button>
+        <button [class.active]="tab() === 'activity'" (click)="select('activity')">Activity</button>
       </div>
 
       @if (error()) {
@@ -458,6 +461,9 @@ type Tab = 'stores' | 'users' | 'invitations';
                         <td>{{ u.status === 'ACTIVE' ? 'Active' : 'Suspended' }}</td>
                         <td class="actions">
                           <button class="sm ghost" (click)="startEditUser(u)">Edit</button>
+                          <!-- Straight to "what has this person been doing", which is the
+                               question an admin is usually on this screen to answer. -->
+                          <button class="sm ghost" (click)="viewUserActivity(u)">Activity</button>
                         </td>
                       }
                     </tr>
@@ -467,6 +473,193 @@ type Tab = 'stores' | 'users' | 'invitations';
             </div>
           }
         </section>
+      }
+
+      <!-- ACTIVITY -->
+      @if (tab() === 'activity') {
+        <section class="card">
+          <div class="section-head">
+            <h2>Activity</h2>
+            @if (!activityLoading()) {
+              <span class="muted small">{{ activityTotal() }} events</span>
+            }
+          </div>
+          <div class="filters">
+            <!-- User first, deliberately: the common question is "what has this person
+                 been doing", not "what happened to products this week". -->
+            <label class="f">
+              User
+              <select
+                name="fa-user"
+                [ngModel]="activityUserId()"
+                (ngModelChange)="setActivityUser($event)"
+              >
+                <option [ngValue]="null">Everyone</option>
+                @for (u of users(); track u.id) {
+                  <option [ngValue]="u.id">{{ u.username }}</option>
+                }
+              </select>
+            </label>
+            <label class="f">
+              Type
+              <select
+                name="fa-entity"
+                [ngModel]="activityEntity()"
+                (ngModelChange)="activityEntity.set($event); loadActivity()"
+              >
+                <option [ngValue]="null">All</option>
+                @for (e of activityEntities; track e.value) {
+                  <option [ngValue]="e.value">{{ e.label }}</option>
+                }
+              </select>
+            </label>
+            <label class="f">
+              Action
+              <select
+                name="fa-action"
+                [ngModel]="activityAction()"
+                (ngModelChange)="activityAction.set($event); loadActivity()"
+              >
+                <option [ngValue]="null">All</option>
+                @for (a of activityActions; track a) {
+                  <option [ngValue]="a">{{ a }}</option>
+                }
+              </select>
+            </label>
+            <label class="f">
+              Store
+              <select
+                name="fa-store"
+                [ngModel]="activityStoreId()"
+                (ngModelChange)="activityStoreId.set($event); loadActivity()"
+              >
+                <option [ngValue]="null">All</option>
+                @for (st of stores(); track st.id) {
+                  <option [ngValue]="st.id">{{ st.name }}</option>
+                }
+              </select>
+            </label>
+            <label class="f">
+              Source
+              <select
+                name="fa-source"
+                [ngModel]="activitySource()"
+                (ngModelChange)="activitySource.set($event); loadActivity()"
+              >
+                <option [ngValue]="null">All</option>
+                <option [ngValue]="'WEB'">Website</option>
+                <option [ngValue]="'SCANNER'">Scanner</option>
+                <option [ngValue]="'SYNC'">Sync agent</option>
+                <option [ngValue]="'JOB'">System job</option>
+              </select>
+            </label>
+            <label class="f">
+              From
+              <input
+                name="fa-from"
+                type="date"
+                [ngModel]="activityFrom()"
+                (ngModelChange)="activityFrom.set($event); loadActivity()"
+              />
+            </label>
+            <label class="f">
+              To
+              <input
+                name="fa-to"
+                type="date"
+                [ngModel]="activityTo()"
+                (ngModelChange)="activityTo.set($event); loadActivity()"
+              />
+            </label>
+            <div class="f-actions">
+              <button
+                type="button"
+                class="ghost"
+                (click)="clearActivityFilters()"
+                [disabled]="!activityFiltersActive()"
+              >
+                Clear
+              </button>
+              <button type="button" class="ghost" (click)="loadActivity()" [disabled]="activityLoading()">
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <!-- One line about the person being looked at, so a filtered view answers
+               "how much, over what period" without reading every row. -->
+          @if (activityUserId() !== null && activitySummary()) {
+            <p class="muted small">{{ activitySummary() }}</p>
+          }
+
+          @if (activityLoading()) {
+            <p class="muted">Loading…</p>
+          } @else if (activity().length === 0) {
+            <p class="muted">No activity matches these filters.</p>
+          } @else {
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Who</th>
+                    <th>What</th>
+                    <th>Store</th>
+                    <th>Source</th>
+                    <th class="actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (r of activity(); track r.id) {
+                    <tr>
+                      <td class="muted nowrap">{{ r.at | date: 'short' }}</td>
+                      <td [class.muted]="r.actorType !== 'USER'">{{ r.actor }}</td>
+                      <td>{{ r.summary }}</td>
+                      <td class="muted">{{ r.storeName || '—' }}</td>
+                      <td>
+                        <span class="src-badge" [class]="'src-' + r.source">{{ r.source }}</span>
+                      </td>
+                      <td class="actions">
+                        <button class="sm ghost" (click)="historyForRow(r)">Open</button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            @if (activityTotal() > activity().length) {
+              <div class="pager">
+                <button
+                  class="sm ghost"
+                  (click)="activityPage(-1)"
+                  [disabled]="activityOffset() === 0 || activityLoading()"
+                >
+                  Previous
+                </button>
+                <span class="muted small">
+                  {{ activityOffset() + 1 }}–{{ activityOffset() + activity().length }}
+                  of {{ activityTotal() }}
+                </span>
+                <button
+                  class="sm ghost"
+                  (click)="activityPage(1)"
+                  [disabled]="activityOffset() + activity().length >= activityTotal() || activityLoading()"
+                >
+                  Next
+                </button>
+              </div>
+            }
+          }
+        </section>
+      }
+
+      @if (historyEntity()) {
+        <app-activity-dialog
+          [entityType]="historyEntity()!.type"
+          [entityId]="historyEntity()!.id"
+          [subtitle]="historyEntity()!.label"
+          (close)="historyEntity.set(null)"
+        />
       }
 
       <!-- INVITATIONS -->
@@ -595,6 +788,7 @@ type Tab = 'stores' | 'users' | 'invitations';
                             Revoke
                           </button>
                         }
+                        <button class="sm ghost" (click)="historyFor(inv)">History</button>
                       </td>
                     </tr>
                   }
@@ -1281,6 +1475,44 @@ type Tab = 'stores' | 'users' | 'invitations';
       .sc-actions {
         width: 19%;
       }
+      .nowrap {
+        white-space: nowrap;
+      }
+      .src-badge {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 0.05rem 0.4rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      .src-WEB {
+        background: #eff4ff;
+        color: #1d4ed8;
+        border-color: #c7d7fe;
+      }
+      .src-SCANNER {
+        background: #fffaeb;
+        color: #b54708;
+        border-color: #fedf89;
+      }
+      .src-SYNC {
+        background: #ecfdf3;
+        color: #067647;
+        border-color: #abefc6;
+      }
+      .src-JOB {
+        background: #f4f4f5;
+        color: #52525b;
+        border-color: #e4e4e7;
+      }
+      .pager {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.6rem;
+      }
     `,
   ],
 })
@@ -1297,6 +1529,58 @@ export class ManageComponent implements OnInit {
   readonly stores = signal<Store[]>([]);
   readonly users = signal<User[]>([]);
   readonly invitations = signal<Invitation[]>([]);
+
+  // ---- activity tab ----
+  readonly activity = signal<ActivityRow[]>([]);
+  readonly activityTotal = signal(0);
+  readonly activityLoading = signal(false);
+  readonly activityOffset = signal(0);
+  readonly activityUserId = signal<number | null>(null);
+  readonly activityEntity = signal<string | null>(null);
+  readonly activityAction = signal<string | null>(null);
+  readonly activityStoreId = signal<number | null>(null);
+  readonly activitySource = signal<string | null>(null);
+  readonly activityFrom = signal<string>('');
+  readonly activityTo = signal<string>('');
+  /** A row's history in a popup, shared with the invitations tab. */
+  readonly historyEntity = signal<{ type: string; id: string | number; label: string } | null>(
+    null,
+  );
+
+  /** The entity types worth filtering by, in the order they matter to an admin. */
+  readonly activityEntities = [
+    { value: 'INVENTORY_ITEM', label: 'Inventory item' },
+    { value: 'PRODUCT', label: 'Product' },
+    { value: 'CYCLE_COUNT', label: 'Cycle count' },
+    { value: 'REORDER', label: 'Reorder' },
+    { value: 'LOCATION', label: 'Location' },
+    { value: 'USER', label: 'User' },
+    { value: 'INVITATION', label: 'Invitation' },
+    { value: 'NOTIFICATION_SETTINGS', label: 'Alert settings' },
+  ];
+
+  /** Verbs the stream actually emits, audit and ledger together. */
+  readonly activityActions = [
+    'CREATED',
+    'UPDATED',
+    'DELETED',
+    'DEACTIVATED',
+    'REACTIVATED',
+    'REVOKED',
+    'RESENT',
+    'CANCELLED',
+    'ACKNOWLEDGED',
+    'RESOLVED',
+    'OPENED',
+    'SUBMITTED',
+    'CLOSED',
+    'REJECTED',
+    'RECEIPT',
+    'SALE',
+    'RETURN',
+    'MOVE',
+    'ADJUSTMENT',
+  ];
 
   // Add-store modal.
   readonly showAddStore = signal(false);
@@ -1545,6 +1829,118 @@ export class ManageComponent implements OnInit {
     this.select(this.tab());
   }
 
+  // ---- activity tab -------------------------------------------------------
+
+  loadActivity(): void {
+    this.activityLoading.set(true);
+    this.error.set(null);
+    this.api
+      .listActivity({
+        userId: this.activityUserId(),
+        entityType: this.activityEntity(),
+        action: this.activityAction(),
+        storeId: this.activityStoreId(),
+        source: this.activitySource(),
+        from: this.activityFrom() || null,
+        to: this.activityTo() || null,
+        limit: 50,
+        offset: this.activityOffset(),
+      })
+      .subscribe({
+        next: (res) => {
+          this.activity.set(res.data);
+          this.activityTotal.set(res.total);
+          this.activityLoading.set(false);
+        },
+        error: (err) => {
+          this.activityLoading.set(false);
+          this.error.set(messageFor(err));
+        },
+      });
+  }
+
+  /** Any filter change restarts at the first page: page 3 of a different query is noise. */
+  private resetActivityPage(): void {
+    this.activityOffset.set(0);
+  }
+
+  setActivityUser(userId: number | null): void {
+    this.activityUserId.set(userId);
+    this.resetActivityPage();
+    this.loadActivity();
+  }
+
+  activityPage(direction: 1 | -1): void {
+    const next = this.activityOffset() + direction * 50;
+    this.activityOffset.set(Math.max(0, next));
+    this.loadActivity();
+  }
+
+  readonly activityFiltersActive = computed(
+    () =>
+      this.activityUserId() !== null ||
+      this.activityEntity() !== null ||
+      this.activityAction() !== null ||
+      this.activityStoreId() !== null ||
+      this.activitySource() !== null ||
+      this.activityFrom() !== '' ||
+      this.activityTo() !== '',
+  );
+
+  clearActivityFilters(): void {
+    this.activityUserId.set(null);
+    this.activityEntity.set(null);
+    this.activityAction.set(null);
+    this.activityStoreId.set(null);
+    this.activitySource.set(null);
+    this.activityFrom.set('');
+    this.activityTo.set('');
+    this.resetActivityPage();
+    this.loadActivity();
+  }
+
+  /**
+   * The one-line answer for a person-filtered view: how many events, and when they were
+   * last active. Derived from the loaded page's total and newest row rather than a second
+   * endpoint — the numbers a reader can already see, said in one sentence.
+   */
+  readonly activitySummary = computed(() => {
+    const id = this.activityUserId();
+    if (id === null) return '';
+    const who = this.users().find((u) => u.id === id)?.username ?? `user #${id}`;
+    const total = this.activityTotal();
+    if (total === 0) return `${who} has no activity matching these filters.`;
+    const newest = this.activity()[0];
+    const last = newest ? new Date(newest.at).toLocaleString() : '—';
+    return `${who}: ${total} event${total === 1 ? '' : 's'} matching these filters; most recent ${last}.`;
+  });
+
+  /** Open the row's entity history — the "each row links to its entity" affordance. */
+  historyForRow(r: ActivityRow): void {
+    this.historyEntity.set({
+      type: r.entityType,
+      id: r.entityId,
+      label: r.sku ?? r.summary,
+    });
+  }
+
+  historyFor(inv: Invitation): void {
+    this.historyEntity.set({ type: 'INVITATION', id: inv.id, label: inv.email });
+  }
+
+  /** From the Users tab: show this person's activity, pre-filtered. */
+  viewUserActivity(u: User): void {
+    this.activityUserId.set(u.id);
+    this.activityEntity.set(null);
+    this.activityAction.set(null);
+    this.activityStoreId.set(null);
+    this.activitySource.set(null);
+    this.activityFrom.set('');
+    this.activityTo.set('');
+    this.resetActivityPage();
+    this.select('activity');
+  }
+
   ngOnInit(): void {
     // Stores are needed by every tab (user/invite store pickers) and are the
     // initial tab, so load them once up front.
@@ -1558,7 +1954,12 @@ export class ManageComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((params) => {
         const wanted = params.get('tab');
-        if (wanted === 'users' || wanted === 'invitations' || wanted === 'stores') {
+        if (
+          wanted === 'users' ||
+          wanted === 'invitations' ||
+          wanted === 'stores' ||
+          wanted === 'activity'
+        ) {
           this.select(wanted);
         }
       });
@@ -1576,6 +1977,13 @@ export class ManageComponent implements OnInit {
     if (tab === 'invitations') {
       if (this.stores().length === 0) this.loadStores();
       this.loadInvitations();
+    }
+    if (tab === 'activity') {
+      // The user filter is the primary affordance, so its options have to be there before
+      // the first row is.
+      if (this.users().length === 0) this.loadUsers();
+      if (this.stores().length === 0) this.loadStores();
+      this.loadActivity();
     }
   }
 

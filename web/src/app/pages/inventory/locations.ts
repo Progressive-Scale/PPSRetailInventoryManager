@@ -12,12 +12,13 @@ import { AuthService } from '../../core/auth.service';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { LocationKind, Store, StoreLocation } from '../../core/models';
+import { ActivityDialogComponent } from '../../shared/activity-dialog';
 
 type SortField = 'name' | 'store' | 'kind' | 'active';
 
 @Component({
   selector: 'app-locations',
-  imports: [FormsModule],
+  imports: [FormsModule, ActivityDialogComponent],
   template: `
     <section class="card">
       <div class="section-head">
@@ -136,6 +137,7 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                         }
                       } @else {
                         <button class="sm ghost" (click)="startEdit(loc)">Edit</button>
+                        <button class="sm ghost" (click)="openHistory(loc)">History</button>
                       }
                     </td>
                   }
@@ -294,6 +296,15 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
             </div>
           </div>
         </div>
+      }
+
+      @if (historyFor()) {
+        <app-activity-dialog
+          [entityType]="historyFor()!.type"
+          [entityId]="historyFor()!.id"
+          [subtitle]="historyFor()!.label"
+          (close)="historyFor.set(null)"
+        />
       }
     </section>
   `,
@@ -612,6 +623,12 @@ export class LocationsComponent implements OnInit {
   readonly locations = signal<StoreLocation[]>([]);
   readonly loading = signal(false);
   readonly saving = signal(false);
+  /** Which location's history is showing, if any. */
+  readonly historyFor = signal<{ type: string; id: number; label: string } | null>(null);
+
+  openHistory(loc: StoreLocation): void {
+    this.historyFor.set({ type: 'LOCATION', id: loc.id, label: loc.name });
+  }
   readonly error = signal<string | null>(null);
 
   readonly editId = signal<number | null>(null);

@@ -12,13 +12,14 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { ReorderDialogComponent } from '../reorders/reorder-dialog';
-import { ItemAudit, StockRow, StoreLocation, Transaction } from '../../core/models';
+import { StockRow, StoreLocation, Transaction } from '../../core/models';
+import { ActivityLogComponent } from '../../shared/activity-log';
 
 type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
 
 @Component({
   selector: 'app-item-detail',
-  imports: [FormsModule, DatePipe, ReorderDialogComponent],
+  imports: [FormsModule, DatePipe, ReorderDialogComponent, ActivityLogComponent],
   template: `
     <div class="overlay" (click)="close.emit()">
       <div class="modal" (click)="$event.stopPropagation()">
@@ -76,24 +77,17 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
         <!-- HISTORY -->
         <section class="block">
           <h3>History</h3>
-          @if (historyLoading()) {
+          <!-- A unit's history is one stream: movements and field edits interleaved, each
+               with the person (or the agent) behind it. A quantity stock row has no unit to
+               edit, so it keeps the location-scoped ledger table — the same rows it always
+               showed, filtered to this location. -->
+          @if (row.rowKind === 'unit' && row.itemId) {
+            <app-activity-log entityType="INVENTORY_ITEM" [entityId]="row.itemId" />
+          } @else if (historyLoading()) {
             <p class="muted">Loading…</p>
-          } @else if (history().length === 0 && audit().length === 0) {
+          } @else if (history().length === 0) {
             <p class="muted">No activity.</p>
           } @else {
-            @if (audit().length > 0) {
-              <ul class="audit">
-                @for (a of audit(); track a.id) {
-                  <li>
-                    <span class="muted">{{ a.createdAt | date: 'short' }}</span>
-                    {{ auditFieldLabel(a.field) }} {{ a.oldValue || '—' }} → {{ a.newValue || '—' }}
-                    <span class="muted">
-                      · {{ a.changedByEmail || 'system' }} · {{ auditSourceLabel(a.source) }}
-                    </span>
-                  </li>
-                }
-              </ul>
-            }
             @if (history().length > 0) {
               <table class="hist">
                 <thead>
@@ -285,19 +279,6 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
       table.hist td.num {
         text-align: right;
       }
-      .audit {
-        list-style: none;
-        margin: 0 0 0.6rem;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-        font-size: 0.82rem;
-      }
-      .audit li {
-        border-bottom: 1px dashed var(--border);
-        padding-bottom: 0.3rem;
-      }
       .muted {
         color: var(--muted);
       }
@@ -419,7 +400,6 @@ export class ItemDetailComponent implements OnInit {
   @Output() changed = new EventEmitter<void>();
 
   readonly history = signal<Transaction[]>([]);
-  readonly audit = signal<ItemAudit[]>([]);
   readonly historyLoading = signal(false);
 
   readonly mgmt = signal<Mgmt>(null);
@@ -433,31 +413,11 @@ export class ItemDetailComponent implements OnInit {
   weightLbs: number | string = '';
 
   ngOnInit(): void {
-    this.loadHistory();
-    if (this.row.rowKind === 'unit' && this.row.itemId) this.loadAudit();
+    // Units render <app-activity-log>, which fetches its own rows; only the quantity
+    // branch still needs the ledger call.
+    if (this.row.rowKind !== 'unit') this.loadHistory();
     this.expirationDate = this.row.expirationDate ?? '';
     this.weightLbs = this.row.weightLbs ?? '';
-  }
-
-  private loadAudit(): void {
-    if (!this.row.itemId) return;
-    this.api.itemAudit(this.row.itemId).subscribe({
-      next: (rows) => this.audit.set(rows),
-      error: () => this.audit.set([]),
-    });
-  }
-
-  auditSourceLabel(source: string): string {
-    switch (source) {
-      case 'BULK_EDIT':
-        return 'bulk edit';
-      case 'SINGLE_EDIT':
-        return 'manual edit';
-      case 'SYNC':
-        return 'sync';
-      default:
-        return source;
-    }
   }
 
   private loadHistory(): void {
@@ -559,16 +519,6 @@ export class ItemDetailComponent implements OnInit {
     if (this.row.weightLbs == null) return '—';
     const n = Number(this.row.weightLbs);
     return Number.isFinite(n) ? `${Number(n.toFixed(3))} lbs` : this.row.weightLbs;
-  }
-
-  /**
-   * Which field an audit row is about. Weight joined expiration as an ERP-synced fact a
-   * human may override, so the history can no longer assume every row is an expiration.
-   */
-  auditFieldLabel(field: string): string {
-    if (field === 'weight_lbs') return 'Weight';
-    if (field === 'expiration_date') return 'Expiration';
-    return field;
   }
 
   saveWeight(): void {

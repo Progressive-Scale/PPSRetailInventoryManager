@@ -11,6 +11,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { CountNeedsReviewComponent } from './needs-review';
+import { ActivityLogComponent } from '../../shared/activity-log';
 import { messageFor } from '../../core/http-error';
 import {
   CycleCount,
@@ -38,7 +39,7 @@ interface ResolutionGroup {
 
 @Component({
   selector: 'app-cycle-counts',
-  imports: [DatePipe, FormsModule, CountNeedsReviewComponent],
+  imports: [DatePipe, FormsModule, CountNeedsReviewComponent, ActivityLogComponent],
   template: `
     <main class="container">
       @if (isCompanyAdmin) {
@@ -245,6 +246,13 @@ interface ResolutionGroup {
                 }
               </div>
             }
+
+            <!-- Who opened it, who handed it in with what tallies, who approved or sent
+                 it back. The groups below say what was counted; this says who did it. -->
+            <div class="group">
+              <h3>Activity</h3>
+              <app-activity-log entityType="CYCLE_COUNT" [entityId]="selectedId()!" />
+            </div>
 
             @for (g of groups(); track g.key) {
               <div class="group" [class.prominent]="g.prominent">

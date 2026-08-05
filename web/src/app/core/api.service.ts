@@ -38,6 +38,8 @@ import {
   NotificationSettingsResponse,
   NotificationStatus,
   NotificationType,
+  ActivityQuery,
+  ActivityRow,
   Paginated,
   Product,
   ProductStockRow,
@@ -284,6 +286,45 @@ export class ApiService {
   /** Bulk mark serialized items sold (partial success). */
   bulkSell(itemIds: string[], note?: string): Observable<BulkExpirationResult> {
     return this.http.post<BulkExpirationResult>('/api/inventory/bulk-sell', { itemIds, note });
+  }
+
+  /**
+   * The company-wide activity stream (company admin). Filters are ANDed; omit them all
+   * for "everything, newest first".
+   */
+  listActivity(q: ActivityQuery = {}): Observable<Paginated<ActivityRow>> {
+    return this.http.get<Paginated<ActivityRow>>('/api/activity', {
+      params: this.activityParams(q),
+    });
+  }
+
+  /**
+   * One entity's history: audit events and ledger movements interleaved. Open to store
+   * users for the entities they work with, which is why the detail views can use it.
+   */
+  entityActivity(
+    entityType: string,
+    entityId: string | number,
+    q: ActivityQuery = {},
+  ): Observable<Paginated<ActivityRow>> {
+    return this.http.get<Paginated<ActivityRow>>(
+      `/api/activity/${entityType}/${encodeURIComponent(String(entityId))}`,
+      { params: this.activityParams(q) },
+    );
+  }
+
+  private activityParams(q: ActivityQuery): HttpParams {
+    let params = new HttpParams();
+    if (q.userId != null) params = params.set('userId', String(q.userId));
+    if (q.entityType) params = params.set('entityType', q.entityType);
+    if (q.action) params = params.set('action', q.action);
+    if (q.storeId != null) params = params.set('storeId', String(q.storeId));
+    if (q.source) params = params.set('source', q.source);
+    if (q.from) params = params.set('from', q.from);
+    if (q.to) params = params.set('to', q.to);
+    if (q.limit != null) params = params.set('limit', String(q.limit));
+    if (q.offset != null) params = params.set('offset', String(q.offset));
+    return params;
   }
 
   /** Audit trail (expiration changes) for a serialized item. */
