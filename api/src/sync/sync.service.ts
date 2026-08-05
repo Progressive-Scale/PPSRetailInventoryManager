@@ -12,6 +12,7 @@ import {
 } from '../db/schema';
 import { HandoffItemDto } from './dto/sync.dto';
 import { resolveOrCreateProduct } from '../products/product-catalog';
+import { AuditService } from '../audit/audit.service';
 import { systemLocationId } from '../locations/location-util';
 
 export interface HandoffAck {
@@ -24,7 +25,10 @@ export interface HandoffAck {
 
 @Injectable()
 export class SyncService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Idempotent ingestion of a mixed handoff batch. Each line is processed in
@@ -36,6 +40,8 @@ export class SyncService {
   async handoffs(
     companyId: number,
     items: HandoffItemDto[],
+    /** Which agent key delivered the batch, for attribution. */
+    apiKeyId?: number | null,
   ): Promise<{ results: HandoffAck[] }> {
     const results: HandoffAck[] = [];
     for (const it of items) {
@@ -43,8 +49,8 @@ export class SyncService {
       try {
         const ack = await this.tenantDb.withCompany(companyId, (tx) =>
           kind === 'stock'
-            ? this.handleStock(tx, companyId, it)
-            : this.handleUnit(tx, companyId, it),
+            ? this.handleStock(tx, companyId, it, apiKeyId ?? null)
+            : this.handleUnit(tx, companyId, it, apiKeyId ?? null),
         );
         results.push(ack);
       } catch (err) {
@@ -68,6 +74,7 @@ export class SyncService {
     tx: Tx,
     companyId: number,
     it: HandoffItemDto,
+    apiKeyId: number | null,
   ): Promise<HandoffAck> {
     if (!it.serial) {
       return { kind: 'unit', status: 'error', reason: 'unit handoff requires a serial' };
@@ -81,7 +88,7 @@ export class SyncService {
         reason: `unknown store id '${it.storeId}'`,
       };
     }
-    const product = await this.resolveProduct(tx, companyId, it, 'SERIALIZED');
+    const product = await this.resolveProduct(tx, companyId, it, 'SERIALIZED', apiKeyId);
     if (!product) {
       return {
         kind: 'unit',
@@ -190,6 +197,7 @@ export class SyncService {
     tx: Tx,
     companyId: number,
     it: HandoffItemDto,
+    apiKeyId: number | null,
   ): Promise<HandoffAck> {
     if (!it.handoffId) {
       return { kind: 'stock', status: 'error', reason: 'stock handoff requires a handoffId' };
@@ -211,7 +219,7 @@ export class SyncService {
         reason: `unknown store id '${it.storeId}'`,
       };
     }
-    const product = await this.resolveProduct(tx, companyId, it, 'QUANTITY');
+    const product = await this.resolveProduct(tx, companyId, it, 'QUANTITY', apiKeyId);
     if (!product) {
       return {
         kind: 'stock',
@@ -285,14 +293,24 @@ export class SyncService {
     companyId: number,
     it: HandoffItemDto,
     expected: 'SERIALIZED' | 'QUANTITY',
+    apiKeyId: number | null,
   ): Promise<Product | null> {
-    const product = await resolveOrCreateProduct(tx, companyId, {
-      sku: it.sku,
-      name: it.name,
-      price: it.price !== undefined ? String(it.price) : '0',
-      upc: it.upc ?? null,
-      trackingType: expected,
-    });
+    const product = await resolveOrCreateProduct(
+      tx,
+      companyId,
+      {
+        sku: it.sku,
+        name: it.name,
+        price: it.price !== undefined ? String(it.price) : '0',
+        upc: it.upc ?? null,
+        trackingType: expected,
+      },
+      {
+        service: this.audit,
+        actor: AuditService.agent(apiKeyId),
+        details: { via: 'handoff', handoffId: it.handoffId ?? null },
+      },
+    );
     if (product.trackingType !== expected) return null;
     return product;
   }

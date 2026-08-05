@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiKeyGuard } from './api-key.guard';
-import { ApiCompany } from './api-company.decorator';
+import { ApiCompany, ApiKeyId } from './api-company.decorator';
 import { SyncService } from './sync.service';
 import { ImportChecksService } from './import-checks.service';
 import { ReorderContractService } from '../reorders/reorders.service';
@@ -30,8 +30,12 @@ export class SyncController {
 
   @Post('handoffs')
   @HttpCode(HttpStatus.OK)
-  handoffs(@ApiCompany() companyId: number, @Body() dto: HandoffsDto) {
-    return this.sync.handoffs(companyId, dto.handoffs);
+  handoffs(
+    @ApiCompany() companyId: number,
+    @ApiKeyId() apiKeyId: number | null,
+    @Body() dto: HandoffsDto,
+  ) {
+    return this.sync.handoffs(companyId, dto.handoffs, apiKeyId);
   }
 
   /**
@@ -72,9 +76,10 @@ export class SyncController {
   @HttpCode(HttpStatus.OK)
   importCheckResults(
     @ApiCompany() companyId: number,
+    @ApiKeyId() apiKeyId: number | null,
     @Body() dto: ImportCheckResultsDto,
   ) {
-    return this.importChecks.applyResults(companyId, dto.results);
+    return this.importChecks.applyResults(companyId, dto.results, apiKeyId);
   }
 
   /**
@@ -103,9 +108,12 @@ export class SyncController {
   @HttpCode(HttpStatus.OK)
   ackReorder(
     @ApiCompany() companyId: number,
+    @ApiKeyId() apiKeyId: number | null,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AckReorderDto,
   ) {
-    return this.reorders.ack(companyId, id, dto.externalOrderRef);
+    // The key is passed through so the audit event names WHICH agent installation acked,
+    // not just "Sync".
+    return this.reorders.ack(companyId, id, dto.externalOrderRef, apiKeyId);
   }
 }

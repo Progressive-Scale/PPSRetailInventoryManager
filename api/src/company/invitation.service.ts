@@ -16,6 +16,7 @@ import {
 } from '../db/schema';
 import { Role } from '../auth/auth.types';
 import { MailService } from '../mail/mail.service';
+import { AuditService } from '../audit/audit.service';
 import {
   assertEmailNotTaken,
   buildAcceptUrl,
@@ -87,6 +88,7 @@ export class InvitationService {
   constructor(
     private readonly mail: MailService,
     private readonly config: ConfigService,
+    private readonly audit: AuditService,
   ) {}
 
   async create(
@@ -128,6 +130,11 @@ export class InvitationService {
         );
     }
 
+    await this.recordEvent(tx, companyId, actorUserId, row.id, 'CREATED', {
+      email: row.email,
+      role: row.role,
+      storeIds: permitted,
+    });
     const res = await this.deliver(tx, {
       companyId,
       id: row.id,
@@ -185,6 +192,9 @@ export class InvitationService {
       .where(eq(invitations.id, opts.id))
       .returning(invitationPublic);
 
+    await this.recordEvent(tx, opts.companyId, opts.actorUserId, row.id, 'RESENT', {
+      email: row.email,
+    });
     return this.deliver(tx, {
       companyId: opts.companyId,
       id: row.id,
@@ -213,6 +223,9 @@ export class InvitationService {
       .update(invitations)
       .set({ revokedAt: new Date(), revokedByUserId: opts.actorUserId })
       .where(eq(invitations.id, opts.id));
+    await this.recordEvent(tx, opts.companyId, opts.actorUserId, opts.id, 'REVOKED', {
+      email: inv.email,
+    });
     return { revoked: true, id: opts.id };
   }
 
@@ -333,6 +346,36 @@ export class InvitationService {
         ? null
         : 'Invitation created but the email failed to send — resend or copy the link.',
     };
+  }
+
+  /**
+   * One audit row per invitation lifecycle event. Accepting an invitation is not recorded
+   * here: it creates a user, and that CREATED event is where a reader will look.
+   */
+  private async recordEvent(
+    tx: Tx,
+    companyId: number,
+    actorUserId: number | null,
+    invitationId: number,
+    action: 'CREATED' | 'REVOKED' | 'RESENT',
+    details: Record<string, unknown>,
+  ): Promise<void> {
+    const actor = await this.audit.actorForCompany(tx, companyId, actorUserId);
+    await this.audit.record(
+      tx,
+      companyId,
+      actor,
+      { entityType: 'INVITATION', entityId: invitationId },
+      action,
+      {
+        details:
+          // Someone acted, but not one of this company's users: say so, or the event reads
+          // as though the system did it on its own.
+          actorUserId != null && actor.type !== 'USER'
+            ? { ...details, byPlatformAdmin: true }
+            : details,
+      },
+    );
   }
 
   private async actorLabel(tx: Tx, actorUserId: number | null): Promise<string> {

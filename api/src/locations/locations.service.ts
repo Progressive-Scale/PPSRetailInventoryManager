@@ -16,6 +16,7 @@ import {
   stores,
 } from '../db/schema';
 import { DataContext } from '../auth/auth.types';
+import { AuditService, diffFields } from '../audit/audit.service';
 import {
   CreateLocationDto,
   ReorderLocationsDto,
@@ -62,7 +63,10 @@ export interface LocationFlags {
 
 @Injectable()
 export class LocationsService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Store a read/write must target, enforcing STORE_USER scope. */
   private storeId(ctx: DataContext, requested?: number): number {
@@ -464,6 +468,14 @@ export class LocationsService {
             isActive: dto.isActive ?? true,
           })
           .returning();
+        await this.audit.record(
+          tx,
+          ctx.companyId,
+          AuditService.user(ctx),
+          { entityType: 'LOCATION', entityId: row.id, storeId: row.storeId },
+          'CREATED',
+          { details: { name: row.name, kind: row.kind } },
+        );
         return row;
       } catch (err) {
         if (isUniqueViolation(err)) {
@@ -501,6 +513,18 @@ export class LocationsService {
     patch: Record<string, unknown>,
     name?: string,
   ) {
+    // Before, so the diff is real and so a deactivate/reactivate can tell whether it
+    // actually changed anything.
+    const [before] = await tx
+      .select()
+      .from(storeLocations)
+      .where(
+        and(
+          eq(storeLocations.id, id),
+          eq(storeLocations.companyId, ctx.companyId),
+        ),
+      )
+      .limit(1);
     try {
       const [row] = await tx
         .update(storeLocations)
@@ -512,6 +536,39 @@ export class LocationsService {
           ),
         )
         .returning();
+      if (before) {
+        const target = {
+          entityType: 'LOCATION' as const,
+          entityId: id,
+          storeId: row.storeId,
+        };
+        // isActive is a lifecycle event, not a field edit: "Dana deactivated Aisle 2" is
+        // what an admin is looking for, and UPDATED is_active=false says it less clearly.
+        if ('isActive' in patch && patch.isActive !== before.isActive) {
+          await this.audit.record(
+            tx,
+            ctx.companyId,
+            AuditService.user(ctx),
+            target,
+            patch.isActive ? 'REACTIVATED' : 'DEACTIVATED',
+            { details: { name: row.name } },
+          );
+        }
+        // sortOrder is excluded on purpose: reordering the list is arranging a screen, not
+        // changing the location, and one drag would otherwise write a row per location.
+        const changes = diffFields(
+          before as unknown as Record<string, unknown>,
+          patch,
+          { fields: ['name'] },
+        );
+        await this.audit.recordChanges(
+          tx,
+          ctx.companyId,
+          AuditService.user(ctx),
+          target,
+          changes,
+        );
+      }
       return row;
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -630,14 +687,24 @@ export class LocationsService {
             'history. Make it inactive instead.',
         );
       }
-      await tx
+      const [gone] = await tx
         .delete(storeLocations)
         .where(
           and(
             eq(storeLocations.id, id),
             eq(storeLocations.companyId, ctx.companyId),
           ),
-        );
+        )
+        .returning();
+      // The name lives in details because the row it described no longer exists.
+      await this.audit.record(
+        tx,
+        ctx.companyId,
+        AuditService.user(ctx),
+        { entityType: 'LOCATION', entityId: id, storeId: gone?.storeId ?? null },
+        'DELETED',
+        { details: { name: gone?.name ?? null, kind: gone?.kind ?? null } },
+      );
       return { deleted: true, id };
     });
   }

@@ -3,6 +3,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { Tx } from '../db/tenant-db.service';
 import { User, stores, users, userStores } from '../db/schema';
 import { UpdateUserDto } from './company.dto';
+import { AuditActor, AuditService, diffFields } from '../audit/audit.service';
 
 /** Safe projection (never expose password_hash). */
 export const publicUser = {
@@ -35,6 +36,17 @@ export async function updateCompanyUser(
   companyId: number,
   id: number,
   dto: UpdateUserDto,
+  /**
+   * Who is doing this, so the change is attributable. Optional only so the function stays
+   * callable from a context with no actor; both real callers pass it, because a role change
+   * nobody is recorded as making is exactly the gap the audit trail exists to close.
+   */
+  audit?: {
+    service: AuditService;
+    actor: AuditActor;
+    /** Extra context for the event (e.g. that a platform admin acted). */
+    details?: Record<string, unknown>;
+  },
 ): Promise<PublicUser & { storeIds: number[] }> {
   const [existing] = await tx
     .select(publicUser)
@@ -42,6 +54,15 @@ export async function updateCompanyUser(
     .where(and(eq(users.id, id), eq(users.companyId, companyId)))
     .limit(1);
   if (!existing) throw new NotFoundException('User not found.');
+
+  // The permitted set as it stood, so a reassignment can be reported as a change from
+  // something rather than as a bare new list.
+  const beforeStoreIds = (
+    await tx
+      .select({ storeId: userStores.storeId })
+      .from(userStores)
+      .where(and(eq(userStores.userId, id), eq(userStores.companyId, companyId)))
+  ).map((l) => l.storeId);
 
   // Replace the permitted-store set, validating every id is in-company.
   let permitted: number[] | undefined;
@@ -110,5 +131,52 @@ export async function updateCompanyUser(
     .select({ storeId: userStores.storeId })
     .from(userStores)
     .where(and(eq(userStores.userId, id), eq(userStores.companyId, companyId)));
-  return { ...row, storeIds: links.map((l) => l.storeId) };
+  const after = links.map((l) => l.storeId);
+
+  if (audit) {
+    const target = { entityType: 'USER' as const, entityId: id };
+    const details = { email: existing.email, ...(audit.details ?? {}) };
+
+    // Suspending someone is a lifecycle event, not a field edit: "Dana suspended Ravi" is
+    // what an admin scans the log for, and `UPDATED status=SUSPENDED` says it less clearly.
+    if (patch.status !== undefined && patch.status !== existing.status) {
+      await audit.service.record(
+        tx,
+        companyId,
+        audit.actor,
+        target,
+        patch.status === 'ACTIVE' ? 'REACTIVATED' : 'DEACTIVATED',
+        { details },
+      );
+    }
+    // role and the ACTIVE store as ordinary per-field rows. store_id may be adjusted by the
+    // consistency rules above rather than requested outright, and the diff is against the
+    // applied patch, so the log records what actually happened to the row.
+    await audit.service.recordChanges(
+      tx,
+      companyId,
+      audit.actor,
+      target,
+      diffFields(existing as unknown as Record<string, unknown>, patch, {
+        fields: ['role', 'storeId'],
+        columnFor: { storeId: 'store_id' },
+      }),
+      details,
+    );
+    // The permitted set is a junction table, not a column, so it is diffed by hand — and
+    // only reported when the membership really moved (order is not a change).
+    const sameSet =
+      [...beforeStoreIds].sort((a, b) => a - b).join(',') ===
+      [...after].sort((a, b) => a - b).join(',');
+    if (permitted !== undefined && !sameSet) {
+      await audit.service.record(tx, companyId, audit.actor, target, 'UPDATED', {
+        field: 'store_ids',
+        oldValue: beforeStoreIds.join(',') || null,
+        newValue: after.join(',') || null,
+        details,
+      });
+    }
+  }
+
+  return { ...row, storeIds: after };
 }

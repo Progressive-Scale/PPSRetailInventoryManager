@@ -22,6 +22,7 @@ import {
 } from '../db/schema';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
 import { DataContext } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { resolveOrCreateProduct } from '../products/product-catalog';
 import { systemLocationId } from '../locations/location-util';
@@ -69,7 +70,34 @@ interface ProposedLine {
  */
 @Injectable()
 export class CycleCountsService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
+
+  /**
+   * One lifecycle event for a count. The stock effects of an approval are NOT recorded
+   * here — every applied line writes its own inventory_transactions row, and duplicating
+   * those as audit events would create two records of the same movement that can disagree.
+   * What this adds is the human decision around them: who opened it, who handed it in with
+   * what tallies, who approved or sent it back.
+   */
+  private async recordCountEvent(
+    tx: Tx,
+    ctx: DataContext,
+    cc: { id: number; storeId: number },
+    action: 'OPENED' | 'SUBMITTED' | 'CLOSED' | 'CANCELLED' | 'REJECTED',
+    details: Record<string, unknown>,
+  ): Promise<void> {
+    await this.audit.record(
+      tx,
+      ctx.companyId,
+      AuditService.user(ctx),
+      { entityType: 'CYCLE_COUNT', entityId: cc.id, storeId: cc.storeId },
+      action,
+      { details },
+    );
+  }
 
   private writeStoreId(ctx: DataContext, requested?: number): number {
     if (ctx.role === 'STORE_USER') {
@@ -367,6 +395,16 @@ export class CycleCountsService {
           expectedCount: units.length,
         })
         .returning();
+
+      await this.recordCountEvent(tx, ctx, cc, 'OPENED', {
+        locationId: dto.locationId ?? null,
+        locationName: location?.name ?? null,
+        // A whole-store count and a one-aisle count are different jobs; the scope is the
+        // first thing a reader wants to know about a count that turned up a surprise.
+        wholeStore: location == null,
+        productIds,
+        expectedUnits: units.length,
+      });
 
       if (productIds.length > 0) {
         await tx.insert(cycleCountProducts).values(
@@ -877,6 +915,19 @@ export class CycleCountsService {
         .where(eq(cycleCounts.id, cc.id))
         .returning();
 
+      await this.recordCountEvent(tx, ctx, cc, 'SUBMITTED', {
+        expectedCount: updated.expectedCount,
+        scannedCount: updated.scannedCount,
+        // The proposal mix is the shape of the count: a hand-in that is mostly MARKED_SOLD
+        // reads very differently from one that is mostly SCANNED, and this is the record of
+        // what was proposed even if a reviewer later rejects all of it.
+        proposals: lines.reduce<Record<string, number>>((acc, l) => {
+          acc[l.resolution] = (acc[l.resolution] ?? 0) + 1;
+          return acc;
+        }, {}),
+        lineCount: lines.length,
+      });
+
       return this.buildResult(tx, ctx, updated);
     });
   }
@@ -924,6 +975,12 @@ export class CycleCountsService {
         .set({ status: 'CLOSED', closedAt: now, closedByUserId: ctx.userId })
         .where(eq(cycleCounts.id, cc.id))
         .returning();
+      await this.recordCountEvent(tx, ctx, cc, 'CLOSED', {
+        appliedLines: pending.length,
+        expectedCount: updated.expectedCount,
+        scannedCount: updated.scannedCount,
+        submittedByUserId: cc.submittedByUserId,
+      });
       return this.buildResult(tx, ctx, updated);
     });
   }
@@ -958,6 +1015,14 @@ export class CycleCountsService {
         })
         .where(eq(cycleCounts.id, cc.id))
         .returning();
+      // Recorded with the tallies as they STOOD, because the update above zeroes them: the
+      // point of a rejection event is what was rejected, which the row no longer says.
+      await this.recordCountEvent(tx, ctx, cc, 'REJECTED', {
+        discardedLines: cc.scannedCount,
+        expectedCount: cc.expectedCount,
+        scannedCount: cc.scannedCount,
+        submittedByUserId: cc.submittedByUserId,
+      });
       return this.buildResult(tx, ctx, updated);
     });
   }
@@ -1480,6 +1545,12 @@ export class CycleCountsService {
           closedByUserId: ctx.userId,
         })
         .where(eq(cycleCounts.id, cc.id));
+      await this.recordCountEvent(tx, ctx, cc, 'CANCELLED', {
+        // Cancelling from the handheld abandons work: how far it had got is the useful part.
+        statusWas: cc.status,
+        expectedCount: cc.expectedCount,
+        scannedCount: cc.scannedCount,
+      });
       return { cancelled: true, id };
     });
   }
@@ -1498,14 +1569,26 @@ export class CycleCountsService {
       .where(and(eq(products.companyId, ctx.companyId), eq(products.upc, upc)))
       .limit(1);
     if (!product) {
-      product = await resolveOrCreateProduct(tx, ctx.companyId, {
-        sku: `REVIEW-UPC-${upc}`,
-        name: ni.name ?? `Unidentified UPC ${upc}`,
-        price: '0',
-        upc,
-        trackingType: 'QUANTITY',
-        needsReview: true,
-      });
+      product = await resolveOrCreateProduct(
+        tx,
+        ctx.companyId,
+        {
+          sku: `REVIEW-UPC-${upc}`,
+          name: ni.name ?? `Unidentified UPC ${upc}`,
+          price: '0',
+          upc,
+          trackingType: 'QUANTITY',
+          needsReview: true,
+        },
+        // A placeholder product entering the review queue: the count that scanned the
+        // unknown UPC is why it exists, so the approver is the actor and the count is in
+        // the details.
+        {
+          service: this.audit,
+          actor: AuditService.user(ctx),
+          details: { via: 'cycle count new item', upc },
+        },
+      );
     }
     if (product.trackingType !== 'QUANTITY') {
       throw new BadRequestException(

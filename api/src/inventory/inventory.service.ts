@@ -1146,6 +1146,8 @@ export class InventoryService {
           item.expirationDate ?? null,
           dto.expirationDate ?? null,
           'SINGLE_EDIT',
+          undefined,
+          item.storeId,
         );
       }
       if (dto.weightLbs !== undefined) {
@@ -1166,6 +1168,8 @@ export class InventoryService {
             before,
             after,
             'SINGLE_EDIT',
+            undefined,
+            item.storeId,
           );
         }
       }
@@ -1192,12 +1196,16 @@ export class InventoryService {
     newValue: string | null,
     editKind: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC',
     label = editKind === 'BULK_EDIT' ? 'bulk edit' : 'edit',
+    /**
+     * The item's store. Always pass it: a store-scoped reader filters on this column, and
+     * a null here makes an edit invisible to the store whose stock it changed.
+     */
     storeId?: number | null,
   ): Promise<void> {
     await this.audit.record(
       tx,
       ctx.companyId,
-      editKind === 'SYNC' ? AuditService.agent(null) : AuditService.web(ctx),
+      editKind === 'SYNC' ? AuditService.agent(null) : AuditService.user(ctx),
       { entityType: 'INVENTORY_ITEM', entityId: itemId, storeId: storeId ?? null },
       'UPDATED',
       {
@@ -1228,6 +1236,7 @@ export class InventoryService {
       const items = await tx
         .select({
           id: inventoryItems.id,
+          storeId: inventoryItems.storeId,
           status: inventoryItems.status,
           expirationDate: inventoryItems.expirationDate,
         })
@@ -1275,6 +1284,8 @@ export class InventoryService {
             oldValue,
             newValue,
             'BULK_EDIT',
+            undefined,
+            it.storeId,
           );
         }
         results.push({ itemId: it.id, ok: true });

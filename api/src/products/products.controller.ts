@@ -21,6 +21,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
 import { DataContext } from '../auth/auth.types';
+import { AuditService, diffFields } from '../audit/audit.service';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryItems, inventoryStock, products } from '../db/schema';
 import {
@@ -33,7 +34,10 @@ import {
 @Roles(['COMPANY_ADMIN'])
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Readable by a STORE_USER as well: the reorder picker needs the catalog to search,
@@ -87,6 +91,15 @@ export class ProductsController {
             trackingType: dto.trackingType,
           })
           .returning();
+        // A catalog row is company-wide, so no store: the event belongs to the company.
+        await this.audit.record(
+          tx,
+          ctx.companyId,
+          AuditService.user(ctx),
+          { entityType: 'PRODUCT', entityId: row.id },
+          'CREATED',
+          { details: { sku: row.sku, name: row.name, trackingType: row.trackingType } },
+        );
         return row;
       } catch (err) {
         throw this.conflictOrRethrow(err);
@@ -128,12 +141,63 @@ export class ProductsController {
       // null is meaningful here — it clears the threshold.
       if (dto.reorderThreshold !== undefined)
         patch.reorderThreshold = dto.reorderThreshold;
+      // Read the row BEFORE writing, so the diff is what actually changed rather than
+      // what the request happened to mention.
+      const [before] = await tx
+        .select()
+        .from(products)
+        .where(and(eq(products.id, id), eq(products.companyId, ctx.companyId)))
+        .limit(1);
+      if (!before) throw new NotFoundException('Product not found.');
       try {
         const [row] = await tx
           .update(products)
           .set(patch)
           .where(and(eq(products.id, id), eq(products.companyId, ctx.companyId)))
           .returning();
+        const changes = diffFields(
+          before as unknown as Record<string, unknown>,
+          patch,
+          {
+            fields: [
+              'name',
+              'description',
+              'price',
+              'upc',
+              'trackingType',
+              'reorderThreshold',
+              'active',
+              'needsReview',
+            ],
+            columnFor: {
+              trackingType: 'tracking_type',
+              reorderThreshold: 'reorder_threshold',
+              needsReview: 'needs_review',
+            },
+            // '12.00' and '12.0' are the same price; logging that as an edit is noise.
+            normalise: { price: (v) => Number(v) },
+          },
+        );
+        await this.audit.recordChanges(
+          tx,
+          ctx.companyId,
+          AuditService.user(ctx),
+          { entityType: 'PRODUCT', entityId: id },
+          changes,
+          { sku: before.sku },
+        );
+        // Clearing needs_review by hand is a resolution, not just a field flip: it is how a
+        // human answers the question the review queue asked.
+        if (before.needsReview && patch.needsReview === false) {
+          await this.audit.record(
+            tx,
+            ctx.companyId,
+            AuditService.user(ctx),
+            { entityType: 'PRODUCT', entityId: id },
+            'RESOLVED',
+            { details: { sku: before.sku, resolvedBy: 'manual edit' } },
+          );
+        }
         return row;
       } catch (err) {
         throw this.conflictOrRethrow(err);
@@ -174,6 +238,16 @@ export class ProductsController {
         .where(and(eq(products.id, id), eq(products.companyId, ctx.companyId)))
         .returning();
       if (!row) throw new NotFoundException('Product not found.');
+      // Details carry what the row WAS: after this, the entity it points at is gone, and an
+      // id on its own would make the event unreadable.
+      await this.audit.record(
+        tx,
+        ctx.companyId,
+        AuditService.user(ctx),
+        { entityType: 'PRODUCT', entityId: id },
+        'DELETED',
+        { details: { sku: row.sku, name: row.name } },
+      );
       return { deleted: true, id };
     });
   }

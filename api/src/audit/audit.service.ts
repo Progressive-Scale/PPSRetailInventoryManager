@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { auditEvents } from '../db/schema';
+import { users } from '../db/schema';
+import { and, eq } from 'drizzle-orm';
 import { Tx } from '../db/tenant-db.service';
 import { DataContext } from '../auth/auth.types';
 
@@ -36,7 +38,8 @@ export type AuditAction =
   | 'RESOLVED'
   | 'OPENED'
   | 'SUBMITTED'
-  | 'CLOSED';
+  | 'CLOSED'
+  | 'REJECTED';
 
 export type AuditSource = 'WEB' | 'SCANNER' | 'SYNC' | 'JOB';
 
@@ -74,14 +77,13 @@ export interface FieldChange {
  */
 @Injectable()
 export class AuditService {
-  /** A user acting through the portal. */
-  static web(ctx: DataContext): AuditActor {
-    return { type: 'USER', userId: ctx.userId, source: 'WEB' };
-  }
-
-  /** A user acting through the handheld — the same person, a different door. */
-  static scanner(ctx: DataContext): AuditActor {
-    return { type: 'USER', userId: ctx.userId, source: 'SCANNER' };
+  /**
+   * The signed-in user, with the door they came through taken from their context — so a
+   * count submitted from the handheld and one submitted from the portal are the same person
+   * and distinguishable events, without every call site having to know which it is.
+   */
+  static user(ctx: DataContext): AuditActor {
+    return { type: 'USER', userId: ctx.userId, source: ctx.client ?? 'WEB' };
   }
 
   /** The sync agent, identified by the key it presented. */
@@ -92,6 +94,34 @@ export class AuditService {
   /** A scheduled job, with nobody behind it. */
   static job(): AuditActor {
     return { type: 'SYSTEM_JOB' };
+  }
+
+  /**
+   * The acting user, but ONLY if they belong to the company the event is about.
+   *
+   * A platform admin acting on a tenant's behalf is not one of that tenant's people: their
+   * user row lives in another company, so storing the id here would put a name the tenant
+   * can never resolve into the tenant's own history — and their audit read joins users
+   * inside their own company, so it would render as a blank actor. Those events are
+   * recorded as a system actor instead, which is honest: something outside the company did
+   * this. Callers add a detail saying so.
+   *
+   * Works under RLS and under bypass: the company_id is checked explicitly rather than
+   * relying on the policy to hide the row.
+   */
+  async actorForCompany(
+    tx: Tx,
+    companyId: number,
+    userId: number | null,
+    source: Exclude<AuditSource, 'SYNC' | 'JOB'> = 'WEB',
+  ): Promise<AuditActor> {
+    if (userId == null) return AuditService.job();
+    const [row] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.companyId, companyId)))
+      .limit(1);
+    return row ? { type: 'USER', userId, source } : AuditService.job();
   }
 
   /**

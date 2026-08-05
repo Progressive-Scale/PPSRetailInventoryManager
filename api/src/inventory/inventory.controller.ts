@@ -87,7 +87,7 @@ export class InventoryController {
   @HttpCode(HttpStatus.OK)
   @Roles(['COMPANY_ADMIN'])
   requestImportCheck(@Ctx() ctx: DataContext, @Param('itemId') itemId: string) {
-    return this.importChecks.request(ctx.companyId, itemId);
+    return this.importChecks.request(ctx, itemId);
   }
 
   /**

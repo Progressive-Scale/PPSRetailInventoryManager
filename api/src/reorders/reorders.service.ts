@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, desc, eq, sql, SQL } from 'drizzle-orm';
 import { DataContext } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   notifications,
@@ -42,7 +43,10 @@ export interface ReorderRow {
 
 @Injectable()
 export class ReordersService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Which store this request is for.
@@ -171,10 +175,28 @@ export class ReordersService {
             requestedByUserId: ctx.userId,
           })
           .returning({ id: reorderRequests.id });
-        return {
-          created: true,
-          request: (await this.loadRow(tx, ctx.companyId, inserted.id))!,
-        };
+        // Only the real creation is audited. The duplicate-guard path above returns the
+        // existing request without writing anything, and an event there would read as a
+        // second request that never happened.
+        // Loaded first so the event can name the product: "reordered CAP-RED" is readable
+        // in the activity stream, "reorder #13" sends the reader off to look it up.
+        const request = (await this.loadRow(tx, ctx.companyId, inserted.id))!;
+        await this.audit.record(
+          tx,
+          ctx.companyId,
+          AuditService.user(ctx),
+          { entityType: 'REORDER', entityId: inserted.id, storeId },
+          'CREATED',
+          {
+            details: {
+              productId: dto.productId,
+              sku: request.sku ?? null,
+              quantityRequested: dto.quantity ?? null,
+              note: dto.note?.trim() || null,
+            },
+          },
+        );
+        return { created: true, request };
       } catch (err) {
         // Two people pressing Reorder at the same moment lose the race here rather
         // than in the read above. Same answer either way: return the live request.
@@ -235,7 +257,16 @@ export class ReordersService {
             eq(reorderRequests.status, 'OPEN'),
           ),
         );
-      return (await this.loadRow(tx, ctx.companyId, id))!;
+      const row = (await this.loadRow(tx, ctx.companyId, id))!;
+      await this.audit.record(
+        tx,
+        ctx.companyId,
+        AuditService.user(ctx),
+        { entityType: 'REORDER', entityId: id, storeId: row.storeId },
+        'CANCELLED',
+        { details: { productId: row.productId, sku: row.sku ?? null } },
+      );
+      return row;
     });
   }
 
@@ -275,7 +306,10 @@ export class ReordersService {
  */
 @Injectable()
 export class ReorderContractService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Oldest first, so a backlog is worked in the order the shops asked. */
   async list(
@@ -349,6 +383,8 @@ export class ReorderContractService {
     companyId: number,
     id: number,
     externalOrderRef: string,
+    /** Which API key acted, for attribution. Null when a caller cannot say. */
+    apiKeyId?: number | null,
   ): Promise<{ status: 'acknowledged' | 'already_acknowledged'; reorderId: number; externalOrderRef: string }> {
     const ref = externalOrderRef.trim();
     return this.tenantDb.withCompany(companyId, async (tx) => {
@@ -387,6 +423,16 @@ export class ReorderContractService {
       }
 
       const now = new Date();
+      // SYNC_AGENT, not a person: the external reference is the whole point of the event,
+      // so it goes in details where the global stream can show it.
+      await this.audit.record(
+        tx,
+        companyId,
+        AuditService.agent(apiKeyId ?? null),
+        { entityType: 'REORDER', entityId: id, storeId: existing.storeId },
+        'ACKNOWLEDGED',
+        { details: { externalOrderRef: ref, productId: existing.productId } },
+      );
       await tx
         .update(reorderRequests)
         .set({ status: 'ACKNOWLEDGED', acknowledgedAt: now, externalOrderRef: ref })

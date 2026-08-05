@@ -17,12 +17,16 @@ import { TenantDbService } from '../db/tenant-db.service';
 import { users, userStores } from '../db/schema';
 import { UpdateUserDto } from './company.dto';
 import { publicUser, updateCompanyUser } from './user-update.util';
+import { AuditService } from '../audit/audit.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(['COMPANY_ADMIN'])
 @Controller('users')
 export class UsersController {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Users with the set of stores each may access (storeIds). */
   @Get()
@@ -54,7 +58,10 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
   ) {
     return this.tenantDb.withCompany(ctx.companyId, (tx) =>
-      updateCompanyUser(tx, ctx.companyId, id, dto),
+      updateCompanyUser(tx, ctx.companyId, id, dto, {
+        service: this.audit,
+        actor: AuditService.user(ctx),
+      }),
     );
   }
 }

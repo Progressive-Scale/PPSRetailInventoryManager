@@ -25,4 +25,13 @@ export interface DataContext {
   storeId: number | null;
   role: Role;
   userId: number;
+  /**
+   * Which front door this request came through, for audit attribution. Read from the
+   * optional `X-Client: scanner` header and defaulted to WEB.
+   *
+   * A default rather than a guess: the handheld uses the same JWT and the same endpoints as
+   * the portal, so nothing else can tell them apart. Until the handheld sends the header its
+   * events read as WEB — the ACTOR is still exact, only the door is assumed.
+   */
+  client: 'WEB' | 'SCANNER';
 }

@@ -12,6 +12,7 @@ import {
   stores,
 } from '../db/schema';
 import { DataContext } from '../auth/auth.types';
+import { AuditService, diffFields } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
 import {
   ListNotificationsQuery,
@@ -21,7 +22,10 @@ import {
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   private storeScope(ctx: DataContext, requested?: number): number | null {
     if (ctx.role === 'STORE_USER') return ctx.storeId ?? null;
@@ -205,6 +209,15 @@ export class NotificationsService {
         .from(notificationSettings)
         .where(match)
         .limit(1);
+      // The settings ROW is the entity, so its own id is the entity id in both branches —
+      // keyed on the scope instead, the company default and a store override would share a
+      // history. store_id carries the scope for filtering.
+      const scope = dto.storeId != null ? 'store' : 'company default';
+      const target = {
+        entityType: 'NOTIFICATION_SETTINGS' as const,
+        entityId: existing?.id ?? 0,
+        storeId: dto.storeId ?? null,
+      };
       if (existing) {
         const [row] = await tx
           .update(notificationSettings)
@@ -214,6 +227,22 @@ export class NotificationsService {
           })
           .where(eq(notificationSettings.id, existing.id))
           .returning();
+        // Turning alerts off is the change worth noticing — nobody being told stock is
+        // expiring looks exactly like nothing expiring.
+        await this.audit.recordChanges(
+          tx,
+          ctx.companyId,
+          AuditService.user(ctx),
+          target,
+          diffFields(existing as unknown as Record<string, unknown>, {
+            expirationAlertDays: dto.expirationAlertDays,
+            enabled: dto.enabled,
+          } as Record<string, unknown>, {
+            fields: ['expirationAlertDays', 'enabled'],
+            columnFor: { expirationAlertDays: 'expiration_alert_days' },
+          }),
+          { scope },
+        );
         return row;
       }
       const [row] = await tx
@@ -225,6 +254,20 @@ export class NotificationsService {
           enabled: dto.enabled,
         })
         .returning();
+      await this.audit.record(
+        tx,
+        ctx.companyId,
+        AuditService.user(ctx),
+        { ...target, entityId: row.id },
+        'CREATED',
+        {
+          details: {
+            scope,
+            expirationAlertDays: dto.expirationAlertDays,
+            enabled: dto.enabled,
+          },
+        },
+      );
       return row;
     });
   }

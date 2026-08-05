@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
+import { AuditService } from '../audit/audit.service';
+import { DataContext } from '../auth/auth.types';
 import {
   inventoryItems,
   inventoryTransactions,
@@ -37,7 +39,10 @@ const MAX_LIMIT = 500;
 export class ImportChecksService {
   private readonly logger = new Logger(ImportChecksService.name);
 
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Oldest first: the agent should drain the backlog in the order things were
@@ -85,13 +90,15 @@ export class ImportChecksService {
   async applyResults(
     companyId: number,
     results: ImportCheckResultDto[],
+    /** Which agent key delivered these answers, for attribution. */
+    apiKeyId?: number | null,
   ): Promise<{ results: ImportCheckAck[] }> {
     const acks: ImportCheckAck[] = [];
     for (const r of results) {
       try {
         acks.push(
           await this.tenantDb.withCompany(companyId, (tx) =>
-            this.applyOne(tx, companyId, r),
+            this.applyOne(tx, companyId, r, apiKeyId ?? null),
           ),
         );
       } catch (err) {
@@ -107,6 +114,7 @@ export class ImportChecksService {
     tx: Tx,
     companyId: number,
     r: ImportCheckResultDto,
+    apiKeyId: number | null,
   ): Promise<ImportCheckAck> {
     const [item] = await tx
       .select()
@@ -145,6 +153,7 @@ export class ImportChecksService {
         .where(eq(inventoryItems.id, item.id));
       // needs_review stays true: nobody has identified it, so it must not leave the
       // queue just because the ERP shrugged.
+      await this.recordAnswer(tx, companyId, apiKeyId, item, 'NOT_FOUND', {});
       return { itemId: r.itemId, status: 'resolved', outcome: 'NOT_FOUND' };
     }
 
@@ -169,6 +178,9 @@ export class ImportChecksService {
           updatedAt: now,
         })
         .where(eq(inventoryItems.id, item.id));
+      await this.recordAnswer(tx, companyId, apiKeyId, item, 'DISCREPANCY', {
+        reason: r.discrepancy.reason,
+      });
       return { itemId: r.itemId, status: 'resolved', outcome: 'DISCREPANCY' };
     }
 
@@ -193,14 +205,23 @@ export class ImportChecksService {
 
     const product =
       existing ??
-      (await resolveOrCreateProduct(tx, companyId, {
-        sku: m.sku,
-        name: m.name,
-        price: m.price != null ? String(m.price) : '0',
-        upc: null,
-        trackingType: 'SERIALIZED',
-        needsReview: false,
-      }));
+      (await resolveOrCreateProduct(
+        tx,
+        companyId,
+        {
+          sku: m.sku,
+          name: m.name,
+          price: m.price != null ? String(m.price) : '0',
+          upc: null,
+          trackingType: 'SERIALIZED',
+          needsReview: false,
+        },
+        {
+          service: this.audit,
+          actor: AuditService.agent(apiKeyId),
+          details: { via: 'import match', itemId: r.itemId },
+        },
+      ));
 
     // resolveOrCreateProduct does not carry a description, so apply the ERP's
     // separately — but only onto a row we just created, never over a curated one.
@@ -261,7 +282,52 @@ export class ImportChecksService {
       source: 'SYNC',
     });
 
+    // The identity question this unit was flagged with is now answered, and the answer
+    // came from PPS rather than from a person — which is exactly what a reviewer wondering
+    // why it left the queue needs to see.
+    await this.recordAnswer(tx, companyId, apiKeyId, item, 'MATCHED', {
+      sku: m.sku,
+      name: m.name,
+      productId: product.id,
+      ppsProductRef: m.ppsProductRef ?? null,
+    });
     return { itemId: r.itemId, status: 'resolved', outcome: 'MATCHED' };
+  }
+
+  /**
+   * One audit row per answered import check.
+   *
+   * MATCHED is a RESOLVED event because it clears needs_review — the unit has an identity
+   * now. The other two answered the question without settling it, so they read as a status
+   * change and the unit stays in the queue.
+   */
+  private async recordAnswer(
+    tx: Tx,
+    companyId: number,
+    apiKeyId: number | null,
+    item: { id: string; storeId: number; serial: string | null },
+    outcome: 'MATCHED' | 'NOT_FOUND' | 'DISCREPANCY',
+    details: Record<string, unknown>,
+  ): Promise<void> {
+    const target = {
+      entityType: 'INVENTORY_ITEM' as const,
+      entityId: item.id,
+      storeId: item.storeId,
+    };
+    const actor = AuditService.agent(apiKeyId);
+    const body = { ...details, outcome, serial: item.serial };
+    if (outcome === 'MATCHED') {
+      await this.audit.record(tx, companyId, actor, target, 'RESOLVED', {
+        details: body,
+      });
+      return;
+    }
+    await this.audit.record(tx, companyId, actor, target, 'UPDATED', {
+      field: 'import_check_status',
+      oldValue: 'REQUESTED',
+      newValue: outcome,
+      details: body,
+    });
   }
 
   /**
@@ -270,9 +336,10 @@ export class ImportChecksService {
    * point: the ERP may have caught up since.
    */
   async request(
-    companyId: number,
+    ctx: DataContext,
     itemId: string,
   ): Promise<{ itemId: string; importCheckStatus: string }> {
+    const companyId = ctx.companyId;
     return this.tenantDb.withCompany(companyId, async (tx) => {
       const [item] = await tx
         .select()
@@ -292,6 +359,26 @@ export class ImportChecksService {
           updatedAt: now,
         })
         .where(eq(inventoryItems.id, item.id));
+      // Asking the ERP about a unit was previously anonymous — the row recorded that a
+      // check was requested but not by whom. Re-asking after a NOT_FOUND is a judgement
+      // call, so it is worth knowing who made it.
+      await this.audit.record(
+        tx,
+        companyId,
+        AuditService.user(ctx),
+        {
+          entityType: 'INVENTORY_ITEM',
+          entityId: item.id,
+          storeId: item.storeId,
+        },
+        'UPDATED',
+        {
+          field: 'import_check_status',
+          oldValue: item.importCheckStatus,
+          newValue: 'REQUESTED',
+          details: { serial: item.serial, reasked: item.importCheckStatus != null },
+        },
+      );
       return { itemId, importCheckStatus: 'REQUESTED' };
     });
   }

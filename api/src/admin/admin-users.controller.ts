@@ -21,6 +21,7 @@ import { TenantDbService, Tx } from '../db/tenant-db.service';
 import { companies, stores, users, userStores } from '../db/schema';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { publicUser, updateCompanyUser } from '../company/user-update.util';
+import { AuditService } from '../audit/audit.service';
 import { AdminUpdateUserDto, AdminUserQuery } from './admin.dto';
 
 /** A user row as the platform panel shows it: whose tenant, and which stores. */
@@ -54,6 +55,7 @@ export class AdminUsersController {
   constructor(
     private readonly tenantDb: TenantDbService,
     private readonly resets: PasswordResetService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Cross-tenant user list. Filter by company, role, status, or name/email. */
@@ -119,7 +121,13 @@ export class AdminUsersController {
   ) {
     return this.tenantDb.withBypass(async (tx) => {
       const companyId = await this.tenantCompanyOf(tx, id);
-      return updateCompanyUser(tx, companyId, id, dto);
+      // A platform admin is not one of the tenant's users, so the event is a system actor
+      // flagged as such rather than a name their company cannot look up.
+      return updateCompanyUser(tx, companyId, id, dto, {
+        service: this.audit,
+        actor: AuditService.job(),
+        details: { byPlatformAdmin: true },
+      });
     });
   }
 

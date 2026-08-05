@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { Tx } from '../db/tenant-db.service';
 import { Product, products, TrackingType } from '../db/schema';
+import { AuditActor, AuditService } from '../audit/audit.service';
 
 export interface ResolveProductInput {
   sku: string;
@@ -23,6 +24,12 @@ export async function resolveOrCreateProduct(
   tx: Tx,
   companyId: number,
   input: ResolveProductInput,
+  /**
+   * Records the creation when this call is what created the product. Optional, but every
+   * caller passes it: a catalog row appearing on its own is one of the more confusing
+   * things an admin can find, and "the agent's handoff created it" is the answer.
+   */
+  audit?: { service: AuditService; actor: AuditActor; details?: Record<string, unknown> },
 ): Promise<Product> {
   const existing = await tx
     .select()
@@ -31,7 +38,10 @@ export async function resolveOrCreateProduct(
     .limit(1);
   if (existing[0]) return existing[0];
 
-  await tx
+  // RETURNING says whether THIS statement inserted the row: under a concurrent create,
+  // ON CONFLICT DO NOTHING yields nothing, and the other transaction is the one that
+  // should own the audit event.
+  const inserted = await tx
     .insert(products)
     .values({
       companyId,
@@ -42,7 +52,32 @@ export async function resolveOrCreateProduct(
       trackingType: input.trackingType,
       needsReview: input.needsReview ?? false,
     })
-    .onConflictDoNothing({ target: [products.companyId, products.sku] });
+    .onConflictDoNothing({ target: [products.companyId, products.sku] })
+    .returning();
+
+  if (inserted[0]) {
+    if (audit) {
+      await audit.service.record(
+        tx,
+        companyId,
+        audit.actor,
+        { entityType: 'PRODUCT', entityId: inserted[0].id },
+        'CREATED',
+        {
+          details: {
+            sku: inserted[0].sku,
+            name: inserted[0].name,
+            trackingType: inserted[0].trackingType,
+            needsReview: inserted[0].needsReview,
+            // Distinguishes this from a product a person typed into the catalog screen.
+            autoCreated: true,
+            ...(audit.details ?? {}),
+          },
+        },
+      );
+    }
+    return inserted[0];
+  }
 
   const [row] = await tx
     .select()
