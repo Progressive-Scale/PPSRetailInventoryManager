@@ -44,7 +44,14 @@ const SEARCH_DEBOUNCE_MS = 300;
 interface Column {
   label: string;
   field: StockSortField;
+  /** Numeric column. Marks it; alignment is [center] below. */
   num?: boolean;
+  /**
+   * Centre this column. Only On hand: it is a bare count, and centring it under its
+   * header sets it apart from the text columns without pushing it against the next one.
+   * Weight stays left with the rest — "12.4 lbs" is a measurement that reads as text.
+   */
+  center?: boolean;
   adminOnly?: boolean;
 }
 
@@ -262,7 +269,12 @@ interface Column {
                       </th>
                     }
                     @for (col of columns(); track col.field) {
-                      <th [class.num]="col.num" class="sortable" (click)="sort(col.field)">
+                      <th
+                        [class.num]="col.num"
+                        [class.center]="col.center"
+                        class="sortable"
+                        (click)="sort(col.field)"
+                      >
                         {{ col.label }}<span class="arrow">{{ sortIcon(col.field) }}</span>
                       </th>
                     }
@@ -302,7 +314,7 @@ interface Column {
                         @if (isCompanyAdmin) {
                           <td class="muted">{{ storeName(row.storeId) }}</td>
                         }
-                        <td class="num">{{ row.onHand }}</td>
+                        <td class="num center">{{ row.onHand }}</td>
                         <td>
                           <span class="kind-badge" [class]="'k-' + row.locationKind">{{ row.locationName }}</span>
                         </td>
@@ -356,7 +368,7 @@ interface Column {
                       @if (isCompanyAdmin) {
                         <td class="muted">{{ productStoreLabel(p) }}</td>
                       }
-                      <td class="num strong">{{ p.onHand }}</td>
+                      <td class="num strong center">{{ p.onHand }}</td>
                       <td class="muted">{{ productLocationLabel(p) }}</td>
                       <td [class]="expClass(p.expirationFrom)">
                         {{ dateRange(p.expirationFrom, p.expirationTo) }}
@@ -412,7 +424,7 @@ interface Column {
                             @if (isCompanyAdmin) {
                               <td class="muted">{{ storeName(row.storeId) }}</td>
                             }
-                            <td class="num">{{ row.onHand }}</td>
+                            <td class="num center">{{ row.onHand }}</td>
                             <td>
                               <span class="kind-badge" [class]="'k-' + row.locationKind">{{ row.locationName }}</span>
                             </td>
@@ -690,6 +702,11 @@ interface Column {
       th.num,
       td.num {
         text-align: left;
+      }
+      /* On hand only — see Column.center. */
+      th.center,
+      td.center {
+        text-align: center;
       }
       th.sortable {
         cursor: pointer;
@@ -1221,7 +1238,7 @@ export class InventoryComponent implements OnInit {
     ];
     if (this.isCompanyAdmin) cols.push({ label: 'Store', field: 'store' });
     cols.push(
-      { label: 'On hand', field: 'onHand', num: true },
+      { label: 'On hand', field: 'onHand', num: true, center: true },
       { label: 'Location', field: 'location' },
       { label: 'Expiration', field: 'expiration' },
       { label: 'Created', field: 'created' },
