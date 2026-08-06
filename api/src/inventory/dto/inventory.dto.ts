@@ -70,7 +70,7 @@ export class InventoryActionDto {
   @IsPositive()
   locationId?: number;
 
-  // Quantity moves: required for COMPANY_ADMIN, ignored for STORE_USER.
+  // Quantity moves: required for COMPANY_ADMIN, ignored for a store-scoped user.
   @IsOptional()
   @IsInt()
   @IsPositive()

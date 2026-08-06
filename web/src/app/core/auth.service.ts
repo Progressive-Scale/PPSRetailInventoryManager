@@ -14,6 +14,33 @@ export class AuthService {
   readonly user = this._user.asReadonly();
   readonly isLoggedIn = computed(() => this._user() !== null);
 
+  /**
+   * What this session may do, named after the capability rather than the role.
+   *
+   * Every screen asks one of these instead of comparing to a role, so adding a role
+   * is one edit here rather than a hunt through the pages — which is exactly how
+   * STORE_MANAGER arrived. These MIRROR the API's guards; they hide buttons, they
+   * do not grant anything, and the server refuses regardless of what is rendered.
+   */
+  readonly role = computed(() => this._user()?.role ?? null);
+
+  /** Company-level administration: users, stores, invitations, settings. */
+  readonly isCompanyAdmin = computed(() => this.role() === 'COMPANY_ADMIN');
+
+  /**
+   * May correct inventory: edit a unit, set an absolute shelf quantity, bulk
+   * expiration, mark lost, ask the ERP, approve cycle counts, and maintain
+   * locations and the product catalog.
+   */
+  readonly canManageInventory = computed(
+    () => this.role() === 'COMPANY_ADMIN' || this.role() === 'STORE_MANAGER',
+  );
+
+  /** Pinned to a single store: no store picker, no cross-store filters. */
+  readonly isStoreScoped = computed(
+    () => this.role() === 'STORE_USER' || this.role() === 'STORE_MANAGER',
+  );
+
   /** `identifier` is a username or an email; the API tells them apart. */
   login(identifier: string, password: string): Observable<LoginResponse> {
     return this.http

@@ -4,7 +4,7 @@ import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/rou
 import { AuthService } from './core/auth.service';
 import { BrandingStore } from './core/branding.store';
 import { NotificationStore } from './core/notification.store';
-import { AppNotification, Role } from './core/models';
+import { AppNotification, roleLabel } from './core/models';
 import { isAdminHost } from './core/tenant';
 
 interface NavLink {
@@ -92,7 +92,7 @@ interface NavLink {
                                   </span>
                                   <span class="notif-sub">
                                     Accepted their invitation as
-                                    {{ n.payload.role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User' }}
+                                    {{ roleLabel(n.payload.role) }}
                                   </span>
                                 } @else if (n.type === 'REORDER_ACKNOWLEDGED') {
                                   <span class="notif-title">
@@ -452,7 +452,7 @@ export class App implements OnInit {
     return !isAdminHost() && !!u && u.role !== 'PLATFORM_ADMIN';
   });
 
-  readonly isCompanyAdmin = computed(() => this.auth.user()?.role === 'COMPANY_ADMIN');
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin;
 
   readonly logoUrl = computed(() => (isAdminHost() ? null : this.branding.logoUrl()));
 
@@ -498,6 +498,13 @@ export class App implements OnInit {
           { path: '/manage', label: 'Manage', icon: I.manage },
           { path: '/notifications', label: 'Notifications', icon: I.alerts },
           { path: '/settings', label: 'Settings', icon: I.settings },
+        ];
+      case 'STORE_MANAGER':
+        return [
+          { path: '/inventory', label: 'Inventory', icon: I.inventory },
+          { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
+          { path: '/products', label: 'Products', icon: I.products },
+          { path: '/reorders', label: 'Reorders', icon: I.reorders },
         ];
       default:
         return [
@@ -550,16 +557,7 @@ export class App implements OnInit {
     });
   }
 
-  roleLabel(role: Role): string {
-    switch (role) {
-      case 'PLATFORM_ADMIN':
-        return 'Platform Admin';
-      case 'COMPANY_ADMIN':
-        return 'Company Admin';
-      default:
-        return 'Store User';
-    }
-  }
+  readonly roleLabel = roleLabel;
 
   signOut(): void {
     this.auth.logout();

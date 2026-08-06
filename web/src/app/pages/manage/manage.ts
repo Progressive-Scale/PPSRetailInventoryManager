@@ -18,6 +18,7 @@ import {
   CreateStore,
   Invitation,
   Role,
+  roleLabel,
   Store,
   User,
 } from '../../core/models';
@@ -280,6 +281,7 @@ type Tab = 'stores' | 'users' | 'invitations' | 'activity';
                 >
                   <option [ngValue]="null">All</option>
                   <option [ngValue]="'COMPANY_ADMIN'">Company Admin</option>
+                  <option [ngValue]="'STORE_MANAGER'">Store Manager</option>
                   <option [ngValue]="'STORE_USER'">Store User</option>
                 </select>
               </label>
@@ -392,6 +394,7 @@ type Tab = 'stores' | 'users' | 'invitations' | 'activity';
                         <td>
                           <select class="cell-input" [(ngModel)]="userEdit.role" name="u-role-{{ u.id }}">
                             <option value="COMPANY_ADMIN">Company Admin</option>
+                            <option value="STORE_MANAGER">Store Manager</option>
                             <option value="STORE_USER">Store User</option>
                           </select>
                         </td>
@@ -708,6 +711,7 @@ type Tab = 'stores' | 'users' | 'invitations' | 'activity';
                 >
                   <option [ngValue]="null">All</option>
                   <option [ngValue]="'COMPANY_ADMIN'">Company Admin</option>
+                  <option [ngValue]="'STORE_MANAGER'">Store Manager</option>
                   <option [ngValue]="'STORE_USER'">Store User</option>
                 </select>
               </label>
@@ -828,6 +832,7 @@ type Tab = 'stores' | 'users' | 'invitations' | 'activity';
                   Role
                   <select name="mi-role" [(ngModel)]="inviteDraft.role">
                     <option value="STORE_USER">Store User</option>
+                    <option value="STORE_MANAGER">Store Manager</option>
                     <option value="COMPANY_ADMIN">Company Admin</option>
                   </select>
                 </label>
@@ -2219,9 +2224,7 @@ export class ManageComponent implements OnInit {
     return (ids ?? []).map((id) => this.storeName(id)).join(', ');
   }
 
-  roleLabel(role: Role): string {
-    return role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User';
-  }
+  readonly roleLabel = roleLabel;
 
   saveUser(u: User): void {
     this.saving.set(true);

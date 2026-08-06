@@ -45,8 +45,13 @@ export class CreateApiKeyDto {
 
 // ---- cross-company users ---------------------------------------------------
 
-const ALL_ROLES = ['PLATFORM_ADMIN', 'COMPANY_ADMIN', 'STORE_USER'] as const;
-const TENANT_ROLES = ['COMPANY_ADMIN', 'STORE_USER'] as const;
+const ALL_ROLES = [
+  'PLATFORM_ADMIN',
+  'COMPANY_ADMIN',
+  'STORE_MANAGER',
+  'STORE_USER',
+] as const;
+const TENANT_ROLES = ['COMPANY_ADMIN', 'STORE_MANAGER', 'STORE_USER'] as const;
 const USER_STATUSES = ['ACTIVE', 'SUSPENDED'] as const;
 
 export class AdminUserQuery extends PaginationQuery {

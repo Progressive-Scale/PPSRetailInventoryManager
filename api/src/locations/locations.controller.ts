@@ -16,7 +16,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
-import { DataContext } from '../auth/auth.types';
+import {
+  DataContext,
+  INVENTORY_ADMIN_ROLES,
+  TENANT_USER_ROLES,
+} from '../auth/auth.types';
 import { LocationsService } from './locations.service';
 import {
   CreateLocationDto,
@@ -30,28 +34,28 @@ import {
 export class LocationsController {
   constructor(private readonly svc: LocationsService) {}
 
-  // STORE_USER needs to read locations (scanner Move-Items target picker).
+  // Store users need to read locations (scanner Move-Items target picker).
   @Get()
-  @Roles(['COMPANY_ADMIN', 'STORE_USER'])
+  @Roles(TENANT_USER_ROLES)
   list(@Ctx() ctx: DataContext, @Query() query: ListLocationsQuery) {
     return this.svc.list(ctx, query.storeId, query.includeInactive ?? false);
   }
 
   @Post()
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   create(@Ctx() ctx: DataContext, @Body() dto: CreateLocationDto) {
     return this.svc.create(ctx, dto);
   }
 
   @Post('reorder')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   reorder(@Ctx() ctx: DataContext, @Body() dto: ReorderLocationsDto) {
     return this.svc.reorder(ctx, dto);
   }
 
   @Patch(':id')
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   update(
     @Ctx() ctx: DataContext,
     @Param('id', ParseIntPipe) id: number,
@@ -63,7 +67,7 @@ export class LocationsController {
   /** Turn a location off. Blocked by live stock or being the last of a kind. */
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   deactivate(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
     return this.svc.deactivate(ctx, id);
   }
@@ -71,7 +75,7 @@ export class LocationsController {
   /** Turn it back on. Allowed anytime, subject to active-name uniqueness. */
   @Post(':id/reactivate')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   reactivate(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
     return this.svc.reactivate(ctx, id);
   }
@@ -79,7 +83,7 @@ export class LocationsController {
   /** Hard delete — only for a location that was created and never used. */
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   remove(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
     return this.svc.remove(ctx, id);
   }

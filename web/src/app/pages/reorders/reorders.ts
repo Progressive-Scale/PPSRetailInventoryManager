@@ -326,7 +326,7 @@ export class ReordersComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
   readonly stores = signal<Store[]>([]);
   readonly rows = signal<Reorder[]>([]);
   readonly total = signal(0);

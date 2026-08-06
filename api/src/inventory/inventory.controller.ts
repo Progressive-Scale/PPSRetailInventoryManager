@@ -15,7 +15,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
-import { DataContext } from '../auth/auth.types';
+import {
+  DataContext,
+  INVENTORY_ADMIN_ROLES,
+  TENANT_USER_ROLES,
+} from '../auth/auth.types';
 import { InventoryService } from './inventory.service';
 import { ImportChecksService } from '../sync/import-checks.service';
 import {
@@ -33,7 +37,7 @@ import {
 } from './dto/inventory.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(['COMPANY_ADMIN', 'STORE_USER'])
+@Roles(TENANT_USER_ROLES)
 @Controller('inventory')
 export class InventoryController {
   constructor(
@@ -85,7 +89,7 @@ export class InventoryController {
    */
   @Post('items/:itemId/import-check')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   requestImportCheck(@Ctx() ctx: DataContext, @Param('itemId') itemId: string) {
     return this.importChecks.request(ctx, itemId);
   }
@@ -96,7 +100,7 @@ export class InventoryController {
    */
   @Post('items/:itemId/lost')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   markLost(
     @Ctx() ctx: DataContext,
     @Param('itemId') itemId: string,
@@ -137,21 +141,21 @@ export class InventoryController {
   // Admin: set a quantity product's on-hand at a location to an exact value.
   @Post('set-quantity')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   setQuantity(@Ctx() ctx: DataContext, @Body() dto: SetQuantityDto) {
     return this.svc.setQuantity(ctx, dto);
   }
 
   // Admin: bulk-set expiration on serialized items (partial success + audit).
   @Patch('bulk-expiration')
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   bulkExpiration(@Ctx() ctx: DataContext, @Body() dto: BulkExpirationDto) {
     return this.svc.bulkExpiration(ctx, dto);
   }
 
   // Admin: edit a serialized unit's expiration date (data correction).
   @Patch('items/:itemId')
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   updateItem(
     @Ctx() ctx: DataContext,
     @Param('itemId') itemId: string,

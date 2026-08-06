@@ -15,7 +15,7 @@ import {
   storeLocations,
   stores,
 } from '../db/schema';
-import { DataContext } from '../auth/auth.types';
+import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService, diffFields } from '../audit/audit.service';
 import {
   CreateLocationDto,
@@ -68,9 +68,9 @@ export class LocationsService {
     private readonly audit: AuditService,
   ) {}
 
-  /** Store a read/write must target, enforcing STORE_USER scope. */
+  /** Store a read/write must target, enforcing store-scoped users' own store. */
   private storeId(ctx: DataContext, requested?: number): number {
-    if (ctx.role === 'STORE_USER') {
+    if (isStoreScoped(ctx.role)) {
       if (ctx.storeId == null) {
         throw new BadRequestException('User is not assigned to a store.');
       }
@@ -110,7 +110,7 @@ export class LocationsService {
       )
       .limit(1);
     if (!row) throw new NotFoundException('Location not found.');
-    if (ctx.role === 'STORE_USER' && row.storeId !== ctx.storeId) {
+    if (isStoreScoped(ctx.role) && row.storeId !== ctx.storeId) {
       throw new NotFoundException('Location not found.');
     }
     return row;
@@ -302,7 +302,7 @@ export class LocationsService {
   // ---- reads -------------------------------------------------------------
 
   /**
-   * A STORE_USER always gets their own store. A COMPANY_ADMIN may pass storeId for
+   * A store-scoped user always gets their own store. A COMPANY_ADMIN may pass storeId for
    * one store, or omit it to list every store's locations (which the admin UI uses
    * to show a Store column and filter across stores).
    *

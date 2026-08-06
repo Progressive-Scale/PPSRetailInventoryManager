@@ -5,7 +5,7 @@ import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { Company, Invitation, Role, Store } from '../../core/models';
 
-type InviteRole = 'COMPANY_ADMIN' | 'STORE_USER';
+type InviteRole = Exclude<Role, 'PLATFORM_ADMIN'>;
 
 /**
  * Invite people into one company, on that company's behalf.
@@ -39,6 +39,7 @@ type InviteRole = 'COMPANY_ADMIN' | 'STORE_USER';
         />
         <select name="inv-role" [(ngModel)]="role">
           <option value="COMPANY_ADMIN">Company admin</option>
+          <option value="STORE_MANAGER">Store manager</option>
           <option value="STORE_USER">Store user</option>
         </select>
         <button type="submit" [disabled]="saving() || !email">Send invite</button>
@@ -385,7 +386,14 @@ export class PlatformInvitesComponent {
   }
 
   roleLabel(role: Role): string {
-    return role === 'COMPANY_ADMIN' ? 'Company admin' : 'Store user';
+    switch (role) {
+      case 'COMPANY_ADMIN':
+        return 'Company admin';
+      case 'STORE_MANAGER':
+        return 'Store manager';
+      default:
+        return 'Store user';
+    }
   }
 
   storeLabel(i: Invitation): string {

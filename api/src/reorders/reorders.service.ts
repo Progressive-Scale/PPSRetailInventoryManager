@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, sql, SQL } from 'drizzle-orm';
-import { DataContext } from '../auth/auth.types';
+import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
@@ -51,14 +51,14 @@ export class ReordersService {
   /**
    * Which store this request is for.
    *
-   * A STORE_USER is pinned: their own store wins over anything in the body, so a
+   * A store-scoped user is pinned: their own store wins over anything in the body, so a
    * crafted `storeId` cannot raise a request against a store they cannot see. A
    * COMPANY_ADMIN spans stores and therefore has to say which one — there is no
    * sensible default, and guessing "the first one" would silently reorder for the
    * wrong shop.
    */
   private resolveStoreId(ctx: DataContext, requested?: number): number {
-    if (ctx.role === 'STORE_USER') {
+    if (isStoreScoped(ctx.role)) {
       if (ctx.storeId == null) {
         throw new BadRequestException(
           'Your account is not assigned to a store, so it cannot raise a reorder.',
@@ -234,7 +234,7 @@ export class ReordersService {
       const existing = await this.loadRow(tx, ctx.companyId, id);
       if (!existing) throw new NotFoundException('Reorder request not found.');
       // A store user may only touch their own store's requests.
-      if (ctx.role === 'STORE_USER' && existing.storeId !== ctx.storeId) {
+      if (isStoreScoped(ctx.role) && existing.storeId !== ctx.storeId) {
         throw new NotFoundException('Reorder request not found.');
       }
       if (existing.status !== 'OPEN') {
@@ -276,7 +276,7 @@ export class ReordersService {
   ): Promise<Paginated<ReorderRow>> {
     const { limit, offset } = resolvePaging(query);
     // A store user sees their own store, whatever they ask for.
-    const storeId = ctx.role === 'STORE_USER' ? ctx.storeId : (query.storeId ?? null);
+    const storeId = isStoreScoped(ctx.role) ? ctx.storeId : (query.storeId ?? null);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const conds: SQL[] = [eq(reorderRequests.companyId, ctx.companyId)];
       if (storeId != null) conds.push(eq(reorderRequests.storeId, storeId));

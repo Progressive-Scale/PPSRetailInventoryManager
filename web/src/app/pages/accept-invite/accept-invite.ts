@@ -188,7 +188,14 @@ export class AcceptInviteComponent implements OnInit {
   }
 
   roleLabel(): string {
-    return this.role() === 'COMPANY_ADMIN' ? 'a company admin' : 'a store user';
+    switch (this.role()) {
+      case 'COMPANY_ADMIN':
+        return 'a company admin';
+      case 'STORE_MANAGER':
+        return 'a store manager';
+      default:
+        return 'a store user';
+    }
   }
 
   submit(): void {

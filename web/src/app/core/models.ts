@@ -1,4 +1,24 @@
-export type Role = 'PLATFORM_ADMIN' | 'COMPANY_ADMIN' | 'STORE_USER';
+export type Role =
+  | 'PLATFORM_ADMIN'
+  | 'COMPANY_ADMIN'
+  | 'STORE_MANAGER'
+  | 'STORE_USER';
+
+/** The roles a tenant admin may hand out. Never PLATFORM_ADMIN. */
+export type TenantRole = Exclude<Role, 'PLATFORM_ADMIN'>;
+
+export function roleLabel(role: Role | string | null | undefined): string {
+  switch (role) {
+    case 'PLATFORM_ADMIN':
+      return 'Platform Admin';
+    case 'COMPANY_ADMIN':
+      return 'Company Admin';
+    case 'STORE_MANAGER':
+      return 'Store Manager';
+    default:
+      return 'Store User';
+  }
+}
 
 export interface AuthUser {
   id: number;
@@ -567,7 +587,7 @@ export interface AdminUserQuery {
 }
 
 export interface AdminUpdateUser {
-  role?: 'COMPANY_ADMIN' | 'STORE_USER';
+  role?: TenantRole;
   status?: 'ACTIVE' | 'SUSPENDED';
   storeIds?: number[];
 }

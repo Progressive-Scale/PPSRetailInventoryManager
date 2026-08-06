@@ -40,18 +40,19 @@ export const routes: Routes = [
   },
   {
     path: 'inventory',
-    canActivate: [authGuard, roleGuard(['STORE_USER', 'COMPANY_ADMIN'])],
+    canActivate: [authGuard, roleGuard(['STORE_USER', 'STORE_MANAGER', 'COMPANY_ADMIN'])],
     loadComponent: () => import('./pages/inventory/inventory').then((m) => m.InventoryComponent),
   },
   {
     path: 'cycle-counts',
-    canActivate: [authGuard, roleGuard(['STORE_USER', 'COMPANY_ADMIN'])],
+    canActivate: [authGuard, roleGuard(['STORE_USER', 'STORE_MANAGER', 'COMPANY_ADMIN'])],
     loadComponent: () =>
       import('./pages/cycle-counts/cycle-counts').then((m) => m.CycleCountsComponent),
   },
   {
+    // Catalog maintenance, so a store manager gets it too.
     path: 'products',
-    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
+    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN', 'STORE_MANAGER'])],
     loadComponent: () => import('./pages/products/products').then((m) => m.ProductsComponent),
   },
   // Old Review route now lives as a sub-tab of Products.
@@ -69,7 +70,7 @@ export const routes: Routes = [
   {
     // Store users too: whoever raised a request is who wants to know its fate.
     path: 'reorders',
-    canActivate: [authGuard, roleGuard(['STORE_USER', 'COMPANY_ADMIN'])],
+    canActivate: [authGuard, roleGuard(['STORE_USER', 'STORE_MANAGER', 'COMPANY_ADMIN'])],
     loadComponent: () => import('./pages/reorders/reorders').then((m) => m.ReordersComponent),
   },
   {

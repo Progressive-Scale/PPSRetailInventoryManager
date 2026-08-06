@@ -42,7 +42,7 @@ interface ResolutionGroup {
   imports: [DatePipe, FormsModule, CountNeedsReviewComponent, ActivityLogComponent],
   template: `
     <main class="container">
-      @if (isCompanyAdmin) {
+      @if (canManage) {
         <div class="tabs">
           <button [class.active]="tab() === 'counts'" (click)="tab.set('counts')">
             Counts
@@ -225,7 +225,7 @@ interface ResolutionGroup {
                 @if (reviewError()) {
                   <p class="error">{{ reviewError() }}</p>
                 }
-                @if (isCompanyAdmin) {
+                @if (canManage) {
                   <div class="review-actions">
                     <button (click)="approve()" [disabled]="reviewBusy()">
                       {{ reviewBusy() ? 'Applying…' : 'Approve & apply' }}
@@ -633,7 +633,10 @@ export class CycleCountsComponent implements OnInit {
     { key: 'MARKED_SOLD', label: 'Sold' },
   ];
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  /** Scope: only an admin sees more than one store. */
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
+  /** Action gate, shared with the company admin. */
+  readonly canManage = this.auth.canManageInventory();
   readonly stores = signal<Store[]>([]);
 
   // Filtered server-side: the list is paginated, so narrowing the loaded page

@@ -21,7 +21,7 @@ import {
   stores,
 } from '../db/schema';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
-import { DataContext } from '../auth/auth.types';
+import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { resolveOrCreateProduct } from '../products/product-catalog';
@@ -100,7 +100,7 @@ export class CycleCountsService {
   }
 
   private writeStoreId(ctx: DataContext, requested?: number): number {
-    if (ctx.role === 'STORE_USER') {
+    if (isStoreScoped(ctx.role)) {
       if (ctx.storeId == null) {
         throw new BadRequestException('User is not assigned to a store.');
       }
@@ -128,7 +128,7 @@ export class CycleCountsService {
       .limit(1);
     const [cc] = forUpdate ? await q.for('update') : await q;
     if (!cc) throw new NotFoundException('Cycle count not found.');
-    if (ctx.role === 'STORE_USER' && cc.storeId !== ctx.storeId) {
+    if (isStoreScoped(ctx.role) && cc.storeId !== ctx.storeId) {
       throw new NotFoundException('Cycle count not found.');
     }
     return cc;
@@ -1349,7 +1349,7 @@ export class CycleCountsService {
     query: ListCycleCountsQuery,
   ): Promise<Paginated<CycleCount>> {
     const { limit, offset } = resolvePaging(query);
-    const storeId = ctx.role === 'STORE_USER' ? ctx.storeId : (query.storeId ?? null);
+    const storeId = isStoreScoped(ctx.role) ? ctx.storeId : (query.storeId ?? null);
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const conds: SQL[] = [eq(cycleCounts.companyId, ctx.companyId)];
       if (storeId != null) conds.push(eq(cycleCounts.storeId, storeId));

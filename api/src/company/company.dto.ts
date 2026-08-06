@@ -49,7 +49,11 @@ export class UpdateStoreDto {
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
-const COMPANY_ROLES = ['COMPANY_ADMIN', 'STORE_USER'] as const;
+const COMPANY_ROLES = [
+  'COMPANY_ADMIN',
+  'STORE_MANAGER',
+  'STORE_USER',
+] as const;
 const USER_STATUSES = ['ACTIVE', 'SUSPENDED'] as const;
 
 export class UpdateUserDto {

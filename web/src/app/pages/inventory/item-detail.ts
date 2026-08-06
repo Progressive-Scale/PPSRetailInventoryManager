@@ -110,8 +110,8 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
           }
         </section>
 
-        <!-- MANAGEMENT (admin only) -->
-        @if (isCompanyAdmin) {
+        <!-- MANAGEMENT: company admin or store manager -->
+        @if (canManage) {
           <section class="block">
             <h3>Manage</h3>
             @if (mgmtError()) {
@@ -393,7 +393,7 @@ export class ItemDetailComponent implements OnInit {
   private readonly api = inject(ApiService);
 
   @Input({ required: true }) row!: StockRow;
-  @Input() isCompanyAdmin = false;
+  @Input() canManage = false;
   @Input() storeName = '';
   @Input() locations: StoreLocation[] = [];
   @Output() close = new EventEmitter<void>();

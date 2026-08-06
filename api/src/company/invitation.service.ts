@@ -54,7 +54,10 @@ export interface InvitationResult extends PublicInvitation {
 }
 
 /** Role an invitation may grant. Never PLATFORM_ADMIN — that is not a tenant role. */
-export type InvitableRole = Extract<Role, 'COMPANY_ADMIN' | 'STORE_USER'>;
+export type InvitableRole = Extract<
+  Role,
+  'COMPANY_ADMIN' | 'STORE_MANAGER' | 'STORE_USER'
+>;
 
 export interface CreateInvitationInput {
   companyId: number;

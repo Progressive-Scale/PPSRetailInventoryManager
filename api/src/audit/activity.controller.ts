@@ -12,7 +12,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
-import { DataContext } from '../auth/auth.types';
+import {
+  DataContext,
+  isStoreScoped,
+  TENANT_USER_ROLES,
+} from '../auth/auth.types';
 import { Paginated, PaginationQuery, resolvePaging } from '../common/pagination';
 import { ActivityRow, ActivityService, ActivitySource } from './activity.service';
 
@@ -106,7 +110,7 @@ export class ActivityController {
    * field edits interleaved, which is the whole point of the union.
    */
   @Get(':entityType/:entityId')
-  @Roles(['COMPANY_ADMIN', 'STORE_USER'])
+  @Roles(TENANT_USER_ROLES)
   entity(
     @Ctx() ctx: DataContext,
     @Param('entityType') entityType: string,
@@ -114,7 +118,7 @@ export class ActivityController {
     @Query() query: ActivityQuery,
   ): Promise<Paginated<ActivityRow>> {
     const type = entityType.toUpperCase();
-    const storeUser = ctx.role === 'STORE_USER';
+    const storeUser = isStoreScoped(ctx.role);
 
     // A store user gets the history of the things they work with. People-management
     // history — who changed whose role, who was invited — is management information, and

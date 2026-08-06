@@ -76,7 +76,14 @@ function fmtDate(d: Date): string {
 }
 
 function roleLabel(role: string): string {
-  return role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User';
+  switch (role) {
+    case 'COMPANY_ADMIN':
+      return 'Company Admin';
+    case 'STORE_MANAGER':
+      return 'Store Manager';
+    default:
+      return 'Store User';
+  }
 }
 
 function escapeHtml(s: string): string {

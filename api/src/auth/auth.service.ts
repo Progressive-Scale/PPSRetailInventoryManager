@@ -25,7 +25,7 @@ import {
   invitationState,
   invitationStateMessage,
 } from '../company/invitation.util';
-import { AuthUser, JwtPayload } from './auth.types';
+import { AuthUser, JwtPayload, isStoreScoped } from './auth.types';
 import { looksLikeEmail, normaliseUsername } from './username.util';
 
 @Injectable()
@@ -281,7 +281,7 @@ export class AuthService {
       availableStores,
       // True when the user must choose before the app can scope their work.
       storeSelectionRequired:
-        user.role === 'STORE_USER' && activeStoreId == null && availableStores.length > 1,
+        isStoreScoped(user.role) && activeStoreId == null && availableStores.length > 1,
     };
   }
 

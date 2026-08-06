@@ -24,7 +24,7 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
       <div class="section-head">
         <h2>Locations</h2>
         <div class="head-controls">
-          @if (isCompanyAdmin) {
+          @if (canManage) {
             <button (click)="openAdd()">Add location</button>
           }
         </div>
@@ -84,7 +84,7 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                 <th class="sortable col-store" (click)="sort('store')">Store<span class="arrow">{{ icon('store') }}</span></th>
                 <th class="sortable col-type" (click)="sort('kind')">Type<span class="arrow">{{ icon('kind') }}</span></th>
                 <th class="sortable col-status" (click)="sort('active')">Status<span class="arrow">{{ icon('active') }}</span></th>
-                @if (isCompanyAdmin) {
+                @if (canManage) {
                   <th class="actions col-actions"></th>
                 }
               </tr>
@@ -120,7 +120,7 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
                       <span class="muted">{{ loc.isActive ? 'Active' : 'Inactive' }}</span>
                     }
                   </td>
-                  @if (isCompanyAdmin) {
+                  @if (canManage) {
                     <td class="actions">
                       @if (editId() === loc.id) {
                         <button class="sm" (click)="save(loc)" [disabled]="saving()">Save</button>
@@ -166,15 +166,17 @@ type SortField = 'name' | 'store' | 'kind' | 'active';
               <p class="error">{{ addError() }}</p>
             }
             <form class="stacked" (ngSubmit)="create()">
-              <label>
-                Store
-                <select name="a-store" [(ngModel)]="newStoreId">
-                  <option [ngValue]="null">Choose a store…</option>
-                  @for (s of stores(); track s.id) {
-                    <option [ngValue]="s.id">{{ s.name }}</option>
-                  }
-                </select>
-              </label>
+              @if (isCompanyAdmin) {
+                <label>
+                  Store
+                  <select name="a-store" [(ngModel)]="newStoreId">
+                    <option [ngValue]="null">Choose a store…</option>
+                    @for (s of stores(); track s.id) {
+                      <option [ngValue]="s.id">{{ s.name }}</option>
+                    }
+                  </select>
+                </label>
+              }
               <label>
                 Name
                 <input name="a-name" [(ngModel)]="newName" placeholder="e.g. Aisle 3" autofocus />
@@ -613,7 +615,10 @@ export class LocationsComponent implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  /** Scope: only an admin sees more than one store. */
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
+  /** Action: create, rename, reorder, deactivate. */
+  readonly canManage = this.auth.canManageInventory();
 
   /** Asks the parent to show the stock grid filtered to this location. */
   @Output() showStockAt = new EventEmitter<StoreLocation>();

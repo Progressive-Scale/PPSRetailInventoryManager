@@ -6,7 +6,12 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { NotificationStore } from '../../core/notification.store';
 import { messageFor } from '../../core/http-error';
-import { AppNotification, NotificationStatus, Store } from '../../core/models';
+import {
+  AppNotification,
+  NotificationStatus,
+  roleLabel,
+  Store,
+} from '../../core/models';
 
 /** The API rejects a page larger than this. */
 const PAGE_SIZE = 200;
@@ -533,7 +538,7 @@ export class NotificationsComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly store = inject(NotificationStore);
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
 
   readonly rows = signal<AppNotification[]>([]);
   /** Everything in the history, which may exceed the page we loaded. */
@@ -734,7 +739,7 @@ export class NotificationsComponent implements OnInit {
       return `Reorder for ${what} acknowledged — order ${n.payload.externalOrderRef}`;
     }
     if (n.type === 'INVITE_ACCEPTED') {
-      const role = n.payload.role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User';
+      const role = roleLabel(n.payload.role);
       return `${n.payload.email} accepted their invitation as ${role}`;
     }
     const what = `${n.payload.productName} ${n.payload.serial}`;

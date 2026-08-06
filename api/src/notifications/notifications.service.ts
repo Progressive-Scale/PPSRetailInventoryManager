@@ -11,7 +11,7 @@ import {
   notificationSettings,
   stores,
 } from '../db/schema';
-import { DataContext } from '../auth/auth.types';
+import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService, diffFields } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
 import {
@@ -28,7 +28,7 @@ export class NotificationsService {
   ) {}
 
   private storeScope(ctx: DataContext, requested?: number): number | null {
-    if (ctx.role === 'STORE_USER') return ctx.storeId ?? null;
+    if (isStoreScoped(ctx.role)) return ctx.storeId ?? null;
     return requested ?? null;
   }
 
@@ -106,7 +106,7 @@ export class NotificationsService {
         )
         .limit(1);
       if (!existing) throw new NotFoundException('Notification not found.');
-      if (ctx.role === 'STORE_USER' && existing.storeId !== ctx.storeId) {
+      if (isStoreScoped(ctx.role) && existing.storeId !== ctx.storeId) {
         throw new NotFoundException('Notification not found.');
       }
       const [row] = await tx
@@ -147,7 +147,7 @@ export class NotificationsService {
 
   /**
    * Permanently remove notifications from the history. Ids outside the caller's
-   * company — or, for a STORE_USER, outside their own store — are simply not
+   * company — or, for a store-scoped user, outside their own store — are simply not
    * matched, so nothing leaks and the count reflects what was actually removed.
    */
   async remove(ctx: DataContext, ids: number[]): Promise<{ deleted: number }> {

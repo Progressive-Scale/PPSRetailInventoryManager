@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { messageFor } from '../../core/http-error';
-import { Profile, Role } from '../../core/models';
+import { Profile, roleLabel } from '../../core/models';
 import { USERNAME_INPUT_PATTERN, USERNAME_RULE } from '../../core/username';
 
 /**
@@ -350,8 +350,5 @@ export class ProfileComponent implements OnInit {
     });
   }
 
-  roleLabel(role: Role): string {
-    if (role === 'PLATFORM_ADMIN') return 'Platform Admin';
-    return role === 'COMPANY_ADMIN' ? 'Company Admin' : 'Store User';
-  }
+  readonly roleLabel = roleLabel;
 }

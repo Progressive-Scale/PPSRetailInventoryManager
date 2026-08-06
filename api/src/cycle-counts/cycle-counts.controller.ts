@@ -14,7 +14,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
-import { DataContext } from '../auth/auth.types';
+import {
+  DataContext,
+  INVENTORY_ADMIN_ROLES,
+  TENANT_USER_ROLES,
+} from '../auth/auth.types';
 import { CycleCountsService } from './cycle-counts.service';
 import {
   ListCycleCountsQuery,
@@ -24,7 +28,7 @@ import {
 } from './dto/cycle-counts.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(['COMPANY_ADMIN', 'STORE_USER'])
+@Roles(TENANT_USER_ROLES)
 @Controller('cycle-counts')
 export class CycleCountsController {
   constructor(private readonly svc: CycleCountsService) {}
@@ -104,7 +108,7 @@ export class CycleCountsController {
    */
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   approve(@Ctx() ctx: DataContext, @Param('id', ParseIntPipe) id: number) {
     return this.svc.approve(ctx, id);
   }
@@ -112,7 +116,7 @@ export class CycleCountsController {
   /** Send it back for a recount. Discards the proposals; nothing was applied. */
   @Post(':id/reject')
   @HttpCode(HttpStatus.OK)
-  @Roles(['COMPANY_ADMIN'])
+  @Roles(INVENTORY_ADMIN_ROLES)
   reject(
     @Ctx() ctx: DataContext,
     @Param('id', ParseIntPipe) id: number,

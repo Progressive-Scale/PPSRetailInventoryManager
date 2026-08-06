@@ -23,10 +23,16 @@ import {
 // ---------------------------------------------------------------------------
 
 export const companyStatus = pgEnum('company_status', ['ACTIVE', 'SUSPENDED']);
+// STORE_MANAGER sits between the other two: pinned to one store like a STORE_USER,
+// but allowed to correct what is on its shelves — edit a unit, set an absolute
+// quantity, approve a cycle count, maintain locations and the product catalog. It
+// gets none of the company-level administration (users, stores, invitations,
+// settings), which is the whole difference from COMPANY_ADMIN.
 export const userRole = pgEnum('user_role', [
   'PLATFORM_ADMIN',
   'COMPANY_ADMIN',
   'STORE_USER',
+  'STORE_MANAGER',
 ]);
 export const userStatus = pgEnum('user_status', ['ACTIVE', 'SUSPENDED']);
 // How a product's inventory is tracked. Immutable once a product exists.

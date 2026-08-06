@@ -285,6 +285,16 @@ async function main(): Promise<void> {
   const demoLoc = await ensureSystemLocations(db, demo.id, store.id);
   await ensureUser(db, demo.id, null, 'admin@demo.test', 'admin123', 'COMPANY_ADMIN');
   await ensureUser(db, demo.id, store.id, 'user@demo.test', 'store123', 'STORE_USER');
+  // Pinned to the same store as the store user, so the two accounts differ only in
+  // what they are allowed to do — which is the point of having both.
+  await ensureUser(
+    db,
+    demo.id,
+    store.id,
+    'manager@demo.test',
+    'manager123',
+    'STORE_MANAGER',
+  );
   const [storeUser] = await db
     .select()
     .from(users)

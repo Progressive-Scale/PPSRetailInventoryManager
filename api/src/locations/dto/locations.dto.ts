@@ -13,7 +13,7 @@ import {
 } from 'class-validator';
 
 export class ListLocationsQuery {
-  // Optional for COMPANY_ADMIN (omit for every store); ignored for STORE_USER.
+  // Optional for COMPANY_ADMIN (omit for every store); ignored for a store-scoped user.
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() storeId?: number;
 
   /**

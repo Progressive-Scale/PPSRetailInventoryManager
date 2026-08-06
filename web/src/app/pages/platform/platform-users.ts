@@ -11,6 +11,7 @@ import {
   Company,
   Role,
   Store,
+  TenantRole,
 } from '../../core/models';
 
 const PAGE = 50;
@@ -47,6 +48,7 @@ const PAGE = 50;
         <select name="u-role" [(ngModel)]="role" (ngModelChange)="reload(true)">
           <option [ngValue]="null">Any role</option>
           <option value="COMPANY_ADMIN">Company admin</option>
+          <option value="STORE_MANAGER">Store manager</option>
           <option value="STORE_USER">Store user</option>
           <option value="PLATFORM_ADMIN">Platform admin</option>
         </select>
@@ -186,6 +188,7 @@ const PAGE = 50;
             Role
             <select name="e-role" [(ngModel)]="editRole">
               <option value="COMPANY_ADMIN">Company admin</option>
+              <option value="STORE_MANAGER">Store manager</option>
               <option value="STORE_USER">Store user</option>
             </select>
           </label>
@@ -403,7 +406,7 @@ export class PlatformUsersComponent {
   readonly editStores = signal<Store[]>([]);
   readonly editPicked = signal<Set<number>>(new Set());
   readonly editError = signal<string | null>(null);
-  editRole: 'COMPANY_ADMIN' | 'STORE_USER' = 'STORE_USER';
+  editRole: TenantRole = 'STORE_USER';
   editStatus: 'ACTIVE' | 'SUSPENDED' = 'ACTIVE';
 
   companyId: number | null = null;
@@ -482,12 +485,21 @@ export class PlatformUsersComponent {
   }
 
   roleLabel(role: Role): string {
-    if (role === 'PLATFORM_ADMIN') return 'Platform admin';
-    return role === 'COMPANY_ADMIN' ? 'Company admin' : 'Store user';
+    switch (role) {
+      case 'PLATFORM_ADMIN':
+        return 'Platform admin';
+      case 'COMPANY_ADMIN':
+        return 'Company admin';
+      case 'STORE_MANAGER':
+        return 'Store manager';
+      default:
+        return 'Store user';
+    }
   }
 
   storeLabel(u: AdminUser): string {
-    if (u.role !== 'STORE_USER') return 'All (admin)';
+    if (u.role !== 'STORE_USER' && u.role !== 'STORE_MANAGER')
+      return 'All (admin)';
     if (u.storeNames.length === 0) return 'none';
     return u.storeNames.join(', ');
   }
@@ -538,7 +550,8 @@ export class PlatformUsersComponent {
   edit(u: AdminUser): void {
     this.editing.set(u);
     this.editError.set(null);
-    this.editRole = u.role === 'COMPANY_ADMIN' ? 'COMPANY_ADMIN' : 'STORE_USER';
+    // PLATFORM_ADMIN has no tenant role to edit; anything else round-trips as itself.
+    this.editRole = u.role === 'PLATFORM_ADMIN' ? 'STORE_USER' : u.role;
     this.editStatus = u.status;
     this.editPicked.set(new Set(u.storeIds));
     this.editStores.set([]);

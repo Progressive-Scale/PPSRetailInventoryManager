@@ -99,7 +99,7 @@ const PAGE_SIZE = 200;
                 <th class="col-store">Store</th>
                 <th class="col-when">Handed off</th>
                 <th class="col-days num">Waiting</th>
-                @if (isCompanyAdmin) {
+                @if (canManage) {
                   <th class="col-act actions"></th>
                 }
               </tr>
@@ -120,7 +120,7 @@ const PAGE_SIZE = 200;
                   <td class="num" [class.warn]="(r.daysPending ?? 0) >= 7">
                     {{ dayLabel(r.daysPending) }}
                   </td>
-                  @if (isCompanyAdmin) {
+                  @if (canManage) {
                     <td class="actions">
                       <button class="sm ghost" (click)="askLost(r)">Mark lost</button>
                     </td>
@@ -417,7 +417,10 @@ export class PendingArrivalsComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  /** Scope: only an admin sees more than one store. */
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
+  /** Action gate, shared with the company admin. */
+  readonly canManage = this.auth.canManageInventory();
 
   readonly rows = signal<ExpiringItem[]>([]);
   readonly total = signal(0);

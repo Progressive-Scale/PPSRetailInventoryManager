@@ -271,7 +271,7 @@ export class ReorderNewDialogComponent implements OnInit {
   /** True when anything was raised or cancelled, so the caller reloads. */
   @Output() close = new EventEmitter<boolean>();
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
 
   /** Long lists are pointless to render in full; the search box is the way through. */
   readonly maxRows = 60;

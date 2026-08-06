@@ -17,7 +17,7 @@ import {
 import { PaginationQuery } from '../../common/pagination';
 
 export class OpenCycleCountDto {
-  // Required for COMPANY_ADMIN; ignored for STORE_USER (uses their store).
+  // Required for COMPANY_ADMIN; ignored for a store-scoped user (uses their store).
   @IsOptional() @IsInt() @IsPositive() storeId?: number;
 
   /**

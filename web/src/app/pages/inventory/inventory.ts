@@ -191,7 +191,7 @@ interface Column {
             </div>
           </form>
 
-          @if (isCompanyAdmin && selectionCount() > 0) {
+          @if (canManage && selectionCount() > 0) {
             <div class="bulk-bar">
               <span class="bulk-actions">
                 <button type="button" class="icon-btn" (click)="openMove()" [disabled]="busy()" title="Move to location">
@@ -257,7 +257,7 @@ interface Column {
               <table>
                 <thead>
                   <tr>
-                    @if (isCompanyAdmin) {
+                    @if (canManage) {
                       <th class="sel-col">
                         <input
                           type="checkbox"
@@ -284,7 +284,7 @@ interface Column {
                   @if (viewMode() === 'allItems') {
                     @for (row of flatRows(); track row.rowId) {
                       <tr class="clickable" (click)="openRow(row)">
-                        @if (isCompanyAdmin) {
+                        @if (canManage) {
                           <td class="sel-col" (click)="$event.stopPropagation()">
                             <input
                               type="checkbox"
@@ -334,7 +334,7 @@ interface Column {
                     <!-- Tier one: the product. The same columns as the rows beneath it,
                          each rolled up over whatever the filters admit. -->
                     <tr class="clickable prod-row" [class.open]="isExpanded(p)" (click)="onProductClick(p)">
-                      @if (isCompanyAdmin) {
+                      @if (canManage) {
                         <td class="sel-col" (click)="$event.stopPropagation()">
                           <input
                             type="checkbox"
@@ -393,7 +393,7 @@ interface Column {
                       } @else {
                         @for (row of unitsFor(p); track row.rowId) {
                           <tr class="clickable sub-row" (click)="openRow(row)">
-                            @if (isCompanyAdmin) {
+                            @if (canManage) {
                               <td class="sel-col" (click)="$event.stopPropagation()">
                                 <input
                                   type="checkbox"
@@ -460,7 +460,7 @@ interface Column {
     @if (selectedRow(); as row) {
       <app-item-detail
         [row]="row"
-        [isCompanyAdmin]="isCompanyAdmin"
+        [canManage]="canManage"
         [storeName]="storeName(row.storeId)"
         [locations]="rowLocations()"
         (close)="selectedRow.set(null)"
@@ -1093,7 +1093,16 @@ export class InventoryComponent implements OnInit {
   /** Unit id from a notification link, selected once its row loads. */
   private pendingItemId: string | null = null;
 
-  readonly isCompanyAdmin = this.auth.user()?.role === 'COMPANY_ADMIN';
+  /**
+   * Two different questions, deliberately not one flag.
+   *
+   * isCompanyAdmin is about SCOPE — the store filter and the Store column only mean
+   * something to somebody who can see more than one store. canManage is about ACTION
+   * — the bulk bar, the selection checkboxes, the Manage block in the detail panel.
+   * A store manager gets the second and not the first.
+   */
+  readonly isCompanyAdmin = this.auth.isCompanyAdmin();
+  readonly canManage = this.auth.canManageInventory();
 
   readonly tab = signal<SubTab>('stock');
 
@@ -1258,7 +1267,7 @@ export class InventoryComponent implements OnInit {
   );
 
   readonly columnCount = computed(
-    () => this.columns().length + (this.isCompanyAdmin ? 1 : 0),
+    () => this.columns().length + (this.canManage ? 1 : 0),
   );
 
   readonly hasNext = computed(() => this.offset() + this.shownRowCount() < this.total());

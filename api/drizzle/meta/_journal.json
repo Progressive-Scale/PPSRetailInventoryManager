@@ -232,6 +232,13 @@
       "when": 1785950002394,
       "tag": "0032_blank_description_is_null",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1785950062394,
+      "tag": "0033_store_manager_role",
+      "breakpoints": true
     }
   ]
 }

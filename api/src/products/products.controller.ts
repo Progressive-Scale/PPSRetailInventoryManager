@@ -20,7 +20,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
-import { DataContext } from '../auth/auth.types';
+import {
+  DataContext,
+  INVENTORY_ADMIN_ROLES,
+  TENANT_USER_ROLES,
+} from '../auth/auth.types';
 import { AuditService, diffFields } from '../audit/audit.service';
 import { blankToNull } from './product-catalog';
 import { TenantDbService } from '../db/tenant-db.service';
@@ -32,7 +36,7 @@ import {
 } from './products.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(['COMPANY_ADMIN'])
+@Roles(INVENTORY_ADMIN_ROLES)
 @Controller('products')
 export class ProductsController {
   constructor(
@@ -43,10 +47,10 @@ export class ProductsController {
   /**
    * Readable by a STORE_USER as well: the reorder picker needs the catalog to search,
    * and a store user can already see most of it through Inventory. Everything that
-   * WRITES the catalog stays COMPANY_ADMIN via the class-level guard.
+   * WRITES the catalog needs COMPANY_ADMIN or STORE_MANAGER, via the class guard.
    */
   @Get()
-  @Roles(['COMPANY_ADMIN', 'STORE_USER'])
+  @Roles(TENANT_USER_ROLES)
   list(@Ctx() ctx: DataContext, @Query() query: ListProductsQuery) {
     return this.tenantDb.withCompany(ctx.companyId, (tx) => {
       const conds: SQL[] = [eq(products.companyId, ctx.companyId)];

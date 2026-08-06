@@ -24,7 +24,7 @@ export class CreateReorderDto {
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 
   /**
-   * Required for a COMPANY_ADMIN, who has no single store to infer. A STORE_USER's
+   * Required for a COMPANY_ADMIN, who has no single store to infer. A store-scoped user's
    * own store always wins over whatever is sent here — see the service.
    */
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() storeId?: number;

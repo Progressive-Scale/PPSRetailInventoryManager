@@ -6,7 +6,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { Ctx } from '../auth/current-user.decorator';
-import { DataContext } from '../auth/auth.types';
+import {
+  DataContext,
+  isStoreScoped,
+  TENANT_USER_ROLES,
+} from '../auth/auth.types';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryTransactions } from '../db/schema';
 import { Paginated, PaginationQuery, resolvePaging } from '../common/pagination';
@@ -44,7 +48,7 @@ class ListTransactionsQuery extends PaginationQuery {
 }
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(['COMPANY_ADMIN', 'STORE_USER'])
+@Roles(TENANT_USER_ROLES)
 @Controller('transactions')
 export class TransactionsController {
   constructor(private readonly tenantDb: TenantDbService) {}
@@ -56,9 +60,9 @@ export class TransactionsController {
   ): Promise<Paginated<unknown>> {
     const { limit, offset } = resolvePaging(query);
 
-    // STORE_USER pinned to their store; COMPANY_ADMIN may filter by store.
+    // Store-scoped users pinned to their store; COMPANY_ADMIN may filter by store.
     const storeId =
-      ctx.role === 'STORE_USER' ? ctx.storeId : (query.storeId ?? null);
+      isStoreScoped(ctx.role) ? ctx.storeId : (query.storeId ?? null);
 
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
       const conds: SQL[] = [eq(inventoryTransactions.companyId, ctx.companyId)];

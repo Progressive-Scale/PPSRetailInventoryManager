@@ -35,7 +35,7 @@ import {
   storeInventory,
   storeLocations,
 } from '../db/schema';
-import { DataContext } from '../auth/auth.types';
+import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import {
   InventoryActionDto,
@@ -63,9 +63,9 @@ export class InventoryService {
 
   // ---- scope helpers -----------------------------------------------------
 
-  /** Effective store filter for reads (STORE_USER pinned; COMPANY_ADMIN optional). */
+  /** Effective store filter for reads (store-scoped pinned; COMPANY_ADMIN optional). */
   private readStoreId(ctx: DataContext, requested?: number): number | null {
-    if (ctx.role === 'STORE_USER') {
+    if (isStoreScoped(ctx.role)) {
       if (ctx.storeId == null) {
         throw new BadRequestException('User is not assigned to a store.');
       }
@@ -76,7 +76,7 @@ export class InventoryService {
 
   /** Store a write must target, enforcing scope. */
   private writeStoreId(ctx: DataContext, requested?: number): number {
-    if (ctx.role === 'STORE_USER') {
+    if (isStoreScoped(ctx.role)) {
       if (ctx.storeId == null) {
         throw new BadRequestException('User is not assigned to a store.');
       }
@@ -100,7 +100,7 @@ export class InventoryService {
       eq(inventoryItems.id, id),
       eq(inventoryItems.companyId, ctx.companyId),
     ];
-    if (ctx.role === 'STORE_USER' && ctx.storeId != null) {
+    if (isStoreScoped(ctx.role) && ctx.storeId != null) {
       conds.push(eq(inventoryItems.storeId, ctx.storeId));
     }
     const [item] = await tx
@@ -510,7 +510,7 @@ export class InventoryService {
   }
 
   private assertStoreScope(ctx: DataContext, storeId: number): void {
-    if (ctx.role === 'STORE_USER' && ctx.storeId !== storeId) {
+    if (isStoreScoped(ctx.role) && ctx.storeId !== storeId) {
       throw new BadRequestException('Cannot act on another store.');
     }
   }
