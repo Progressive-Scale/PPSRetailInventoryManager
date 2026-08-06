@@ -239,6 +239,8 @@ Schema lives in [`api/src/db/schema.ts`](api/src/db/schema.ts).
 - `npm run db:generate` — generate SQL from the schema into `api/drizzle/`.
 - `npm run db:migrate` — apply (dev, via drizzle-kit).
 - `npm run db:migrate:prod` — apply in production (compiled migrator, no dev deps).
+  Exists at the repo root as well as in `api/`, because a deploy host runs its
+  start command from the root.
 
 RLS + the `app_user` role live in the custom migration
 `api/drizzle/0001_enable_rls.sql`. Commit all generated files — they are the
