@@ -19,6 +19,6 @@
     "start": "npm --prefix api run start:prod"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": "20.x"
   }
 }
