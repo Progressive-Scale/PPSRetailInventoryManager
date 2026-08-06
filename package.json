@@ -1,6 +1,6 @@
 {
   "name": "pps-retail-inventory-manager",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Multi-store retail inventory portal (NestJS API + Angular web, single Railway service).",
   "scripts": {
