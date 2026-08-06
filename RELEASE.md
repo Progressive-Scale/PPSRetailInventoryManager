@@ -29,7 +29,25 @@ marked `«like this»`.
 | `«COMPANY_SLUG»` | tenant URL | Lowercase letters, digits, hyphens. Becomes a hostname. `admin`, `www`, `api`, `app`, `mail`, `static` are reserved. |
 | `«pilot store»` | cutover | The one store going live first. |
 
-Nothing else in this document can be finished without the domain.
+### No domain? There is a supported single-host path
+
+You do not need to buy a domain to run this. On a host that gives you one name and
+no subdomains of it (a `*.up.railway.app`, an internal server), set `ROOT_DOMAIN`
+to that name and register it as the company's `COMPANY_CUSTOM_DOMAIN` at bootstrap.
+The whole app then answers on that one URL.
+
+| | With a wildcard domain | Single host |
+| --- | --- | --- |
+| Web app + API | ✅ | ✅ |
+| Scanner | ✅ release build | ✅ debug build with a custom base URL |
+| Sync agent | ✅ | ✅ (`CREATE_SYNC_API_KEY=1` at bootstrap) |
+| Companies per deployment | many | **one** |
+| Platform admin console | ✅ | ❌ needs `admin.«ROOT_DOMAIN»` |
+| Invitation email links | automatic | need `APP_BASE_URL` set to the host |
+
+Moving to a real domain later is environment variables and DNS, not a rebuild:
+point the wildcard at the same service, change `ROOT_DOMAIN`, clear the custom
+domain. The data is untouched.
 
 ---
 

@@ -23,19 +23,34 @@
 //   COMPANY_ADMIN_PASSWORD    (>= 12 chars)
 //   COMPANY_ADMIN_USERNAME    optional, defaults to the email local part
 //
+// Optional, for a deployment with ONE host and no wildcard domain (a
+// *.up.railway.app, an internal server):
+//
+//   COMPANY_CUSTOM_DOMAIN     the exact hostname this company answers on, e.g.
+//                             pps-retail-production.up.railway.app. Without a
+//                             wildcard there is no {slug}.{ROOT_DOMAIN} to reach,
+//                             so this is the only way in.
+//   CREATE_SYNC_API_KEY=1     mint the sync agent's key here and print it ONCE.
+//                             Normally a platform admin issues this from the
+//                             admin console — which lives on admin.{ROOT_DOMAIN}
+//                             and is unreachable on a single-host deployment.
+//
 // Idempotent, and refuses by default to touch a database that already holds
 // companies — a second run against a live tenant is far more likely to be a
 // mistake than an intention. BOOTSTRAP_ALLOW_EXISTING=1 overrides that once you
 // have decided otherwise (adding a second company to a running platform).
 import 'dotenv/config';
 import { hash } from 'bcryptjs';
-import { and, asc, eq } from 'drizzle-orm';
+import { createHash, randomBytes } from 'node:crypto';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { DEFAULT_LOCATION_NAMES } from '../src/locations/location-names';
 import * as schema from '../src/db/schema';
 
-const { companies, stores, storeLocations, users, userStores } = schema;
+const { apiKeys, companies, stores, storeLocations, users, userStores } = schema;
+
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -89,6 +104,12 @@ async function main(): Promise<void> {
   const companyUsername =
     process.env.COMPANY_ADMIN_USERNAME?.trim().toLowerCase() ||
     localPart(companyEmail);
+
+  // Optional single-host settings.
+  const customDomain =
+    process.env.COMPANY_CUSTOM_DOMAIN?.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '') ||
+    null;
+  const wantApiKey = process.env.CREATE_SYNC_API_KEY === '1';
 
   if (!SLUG_RE.test(companySlug)) {
     throw new Error(
@@ -149,6 +170,7 @@ async function main(): Promise<void> {
       .values({
         name: companyName,
         slug: companySlug,
+        customDomain,
         branding: { logoUrl: null, primaryColor: '#2563eb' },
         status: 'ACTIVE',
       })
@@ -160,6 +182,18 @@ async function main(): Promise<void> {
       .limit(1);
     if (!company) throw new Error(`Failed to create company '${companySlug}'.`);
     console.log(`Company: ${company.name} (#${company.id}, slug ${company.slug})`);
+
+    // Set on a re-run too: the host is usually only known once the platform has
+    // been deployed and told you its name, which is after the first bootstrap.
+    if (customDomain && company.customDomain !== customDomain) {
+      await db
+        .update(companies)
+        .set({ customDomain })
+        .where(eq(companies.id, company.id));
+      console.log(`Custom domain: ${customDomain}`);
+    } else if (customDomain) {
+      console.log(`Custom domain: ${customDomain} — already set`);
+    }
 
     // ---- store ----------------------------------------------------------
     // Look first rather than lean on onConflictDoNothing: stores has no unique
@@ -250,12 +284,51 @@ async function main(): Promise<void> {
       .onConflictDoNothing({ target: [userStores.userId, userStores.storeId] });
     console.log(`Company admin: ${companyEmail} (${admin.username})`);
 
+    // ---- the sync agent's key, when there is no admin console to issue it --
+    if (wantApiKey) {
+      const [existingKey] = await db
+        .select({ id: apiKeys.id })
+        .from(apiKeys)
+        .where(and(eq(apiKeys.companyId, company.id), isNull(apiKeys.revokedAt)))
+        .limit(1);
+      if (existingKey) {
+        console.log(
+          'Sync API key: one already exists for this company and was left alone ' +
+            '(the plaintext of an existing key cannot be recovered — revoke it and ' +
+            're-run if it was lost).',
+        );
+      } else {
+        const plaintext = `pps_${randomBytes(24).toString('hex')}`;
+        await db.insert(apiKeys).values({
+          companyId: company.id,
+          name: 'PPS sync agent',
+          keyHash: sha256(plaintext),
+        });
+        console.log('\nSync agent API key — SHOWN ONCE, copy it now:');
+        console.log(`  ${plaintext}`);
+        console.log(
+          '  Put it in the agent\'s Agent:Cloud:ApiKey, or the environment\n' +
+            '  override PPSSYNC_Agent__Cloud__ApiKey. Only its hash is stored here.',
+        );
+      }
+    }
+
     const domain = process.env.ROOT_DOMAIN?.trim();
     console.log('\nDone. Sign in at:');
-    console.log(
-      `  company : https://${company.slug}.${domain ?? '<ROOT_DOMAIN>'}`,
-    );
+    if (customDomain) {
+      console.log(`  company : https://${customDomain}`);
+    } else {
+      console.log(
+        `  company : https://${company.slug}.${domain ?? '<ROOT_DOMAIN>'}`,
+      );
+    }
     console.log(`  platform: https://admin.${domain ?? '<ROOT_DOMAIN>'}`);
+    if (customDomain && domain && customDomain !== `admin.${domain}`) {
+      console.log(
+        '            (unreachable on a single-host deployment — that is expected;\n' +
+          '             CREATE_SYNC_API_KEY=1 exists so it is not needed)',
+      );
+    }
     console.log(
       '\nPasswords are not printed. Both accounts should change theirs on first ' +
         'sign-in (Profile), and every further user should arrive by invitation.',

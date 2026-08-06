@@ -23,9 +23,10 @@ export class TenantService {
     if (!host) return { kind: 'unknown' };
 
     if (host === `admin.${root}`) return { kind: 'admin' };
-    if (host === root) return { kind: 'unknown' }; // apex is not a tenant
 
-    if (host.endsWith(`.${root}`)) {
+    // A subdomain of the root is a slug, and only a slug: an unmatched one is
+    // unknown rather than something to keep looking for.
+    if (host !== root && host.endsWith(`.${root}`)) {
       const slug = host.slice(0, host.length - (root.length + 1));
       if (!slug || slug === 'www' || slug.includes('.')) {
         return { kind: 'unknown' };
@@ -34,7 +35,16 @@ export class TenantService {
       return company ? { kind: 'company', company } : { kind: 'unknown' };
     }
 
-    // Otherwise treat the whole host as a custom domain.
+    // Any other host, INCLUDING the root itself, may be registered as a company's
+    // custom domain.
+    //
+    // The root used to be rejected outright as "not a tenant", which is right when
+    // companies live on subdomains — but it made a single-host deployment
+    // impossible. On a host that gives you one name and no subdomains of it (a
+    // *.up.railway.app, an internal server), the only way to reach a company is to
+    // register that exact name, and ROOT_DOMAIN can then honestly be that name
+    // instead of a domain nobody owns. An explicit registration is a decision
+    // somebody made; the default is still "unknown".
     const company = await this.findByCustomDomain(host);
     return company ? { kind: 'company', company } : { kind: 'unknown' };
   }
