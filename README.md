@@ -330,6 +330,11 @@ with a catch-all fallback to `index.html`, so the frontend + API share one origi
 
 Deploy as **one service** from the repo root, plus a managed Postgres.
 
+> Shipping to real users? [RELEASE.md](RELEASE.md) is the ordered runbook for all
+> three repos — cloud, sync agent, scanner — including DNS, the credentials that
+> must be freshly generated, the pilot cutover and rollback. This section covers
+> only the cloud service.
+
 1. **Add a Postgres database** in the Railway project → gives `DATABASE_URL`.
 2. **Create a restricted runtime role** for RLS and set `APP_DATABASE_URL`:
    ```sql
