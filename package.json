@@ -15,6 +15,7 @@
     "db:generate": "npm --prefix api run db:generate",
     "db:migrate": "npm --prefix api run db:migrate",
     "db:seed": "npm --prefix api run db:seed",
+    "db:bootstrap": "npm --prefix api run db:bootstrap",
     "start": "npm --prefix api run start:prod"
   },
   "engines": {

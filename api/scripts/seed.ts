@@ -195,18 +195,37 @@ async function ensureUser(
    */
   username = email.split('@')[0].toLowerCase(),
 ) {
-  await db
-    .insert(users)
-    .values({
-      companyId,
-      storeId,
-      email,
-      username,
-      passwordHash: await hash(password, 10),
-      role,
-      status: 'ACTIVE',
-    })
-    .onConflictDoNothing({ target: [users.companyId, users.email] });
+  // Look before inserting rather than relying only on the conflict target.
+  //
+  // That target is (company_id, email), and a PLATFORM_ADMIN has company_id NULL —
+  // which no unique index can ever match, because NULL is not equal to NULL. The
+  // insert therefore did not conflict, reached the username index, and the whole
+  // seed died on its very first statement the moment a second platform admin row
+  // existed. Matching on email alone when there is no company fixes it.
+  const [existing] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      companyId == null
+        ? and(isNull(users.companyId), eq(users.email, email))
+        : and(eq(users.companyId, companyId), eq(users.email, email)),
+    )
+    .limit(1);
+
+  if (!existing) {
+    await db
+      .insert(users)
+      .values({
+        companyId,
+        storeId,
+        email,
+        username,
+        passwordHash: await hash(password, 10),
+        role,
+        status: 'ACTIVE',
+      })
+      .onConflictDoNothing({ target: [users.companyId, users.email] });
+  }
 
   // Grant access to the pinned store via the permitted-stores junction.
   if (companyId != null && storeId != null) {
@@ -345,6 +364,24 @@ async function main(): Promise<void> {
   for (const u of demoUnits) {
     const product = demoBySku.get(u.sku)!;
     const locationId = u.location === 'ONFLOOR' ? demoLoc.onfloor : demoLoc.backroom;
+    // Checked rather than left to ON CONFLICT. Serial uniqueness is enforced by two
+    // PARTIAL indexes — (company, product, serial) WHERE product_id IS NOT NULL and
+    // (company, serial) WHERE it IS NULL — and Postgres cannot infer an arbiter from
+    // a bare column list when the index carries a WHERE clause. The old target named
+    // an index that stopped existing when dual tracking split it in two, so this
+    // statement failed to plan on every run, seeded or not.
+    const [seeded] = await db
+      .select({ id: inventoryItems.id })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, demo.id),
+          eq(inventoryItems.serial, u.serial),
+        ),
+      )
+      .limit(1);
+    if (seeded) continue;
+
     const [item] = await db
       .insert(inventoryItems)
       .values({
@@ -626,24 +663,34 @@ async function main(): Promise<void> {
   ]);
   {
     const widget = acmeBySku.get('ACME-WIDGET')!;
-    const [wUnit] = await db
-      .insert(inventoryItems)
-      .values({
-        companyId: acme.id,
-        storeId: acmeStore.id,
-        productId: widget.id,
-        locationId: acmeLoc.backroom,
-        serial: 'SN-A1',
-        status: 'ON_HAND',
-        // A weighed unit in the OTHER tenant. If a cross-company read ever leaked, it
-        // would show up as a wrong total rather than as nothing at all.
-        weightLbs: '4.75',
-        receivedAt: now,
-      })
-      .onConflictDoNothing({
-        target: [inventoryItems.companyId, inventoryItems.serial],
-      })
-      .returning();
+    // Same partial-index reason as the demo units above: check, then insert.
+    const [priorWidget] = await db
+      .select({ id: inventoryItems.id })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, acme.id),
+          eq(inventoryItems.serial, 'SN-A1'),
+        ),
+      )
+      .limit(1);
+    const [wUnit] = priorWidget
+      ? [null]
+      : await db
+          .insert(inventoryItems)
+          .values({
+            companyId: acme.id,
+            storeId: acmeStore.id,
+            productId: widget.id,
+            locationId: acmeLoc.backroom,
+            serial: 'SN-A1',
+            status: 'ON_HAND',
+            // A weighed unit in the OTHER tenant. If a cross-company read ever leaked,
+            // it would show up as a wrong total rather than as nothing at all.
+            weightLbs: '4.75',
+            receivedAt: now,
+          })
+          .returning();
     if (wUnit) {
       await db.insert(inventoryTransactions).values({
         companyId: acme.id,
@@ -695,6 +742,7 @@ async function main(): Promise<void> {
   console.log('  admin@platform.test / platform123\n');
   console.log('Demo company (slug "demo"):');
   console.log('  Company admin: admin@demo.test / admin123');
+  console.log('  Store manager: manager@demo.test / manager123');
   console.log('  Store user:    user@demo.test  / store123\n');
   console.log('Acme company (slug "acme"):');
   console.log('  Company admin: admin@acme.test / admin123\n');

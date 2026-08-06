@@ -184,12 +184,18 @@ npm run db:migrate      # apply migrations (creates tables, app_user, RLS)
 npm run db:seed         # demo data (prints a sync API key ONCE)
 ```
 
+> `db:seed` is for DEVELOPMENT ONLY. It builds a whole demo world — two
+> companies, sample inventory, and the accounts in the table below, whose
+> passwords are printed here in the README. A live deployment uses
+> **`npm run db:bootstrap`** instead (see *Production first run*).
+
 **Seed logins**
 
 | Who            | Host                    | Email / password                 |
 | -------------- | ----------------------- | -------------------------------- |
 | Platform admin | `admin.<ROOT_DOMAIN>`   | `admin@platform.test` / `platform123` |
 | Company admin  | `demo.<ROOT_DOMAIN>`    | `admin@demo.test` / `admin123`   |
+| Store manager  | `demo.<ROOT_DOMAIN>`    | `manager@demo.test` / `manager123` |
 | Store user     | `demo.<ROOT_DOMAIN>`    | `user@demo.test` / `store123`    |
 
 ### 4. Multi-tenant hosting locally — pick one
@@ -346,10 +352,56 @@ Deploy as **one service** from the repo root, plus a managed Postgres.
    `admin.yourapp.com` subdomain, all pointing at this service. Each company's
    `slug` (or its `custom_domain`) resolves to its tenant; `admin.yourapp.com`
    is the platform console.
-6. After the first deploy, seed a platform admin + first company (run the seed
-   once, or create them via the admin module).
+6. **First run:** create the platform admin and the first company with
+   `npm run db:bootstrap` — see *Production first run* below. Do **not** run
+   `db:seed` against production; it creates demo tenants and accounts whose
+   passwords are published in this file.
 
 > Never commit real secrets — `.env` is git-ignored; use `api/.env.example`.
+
+## Production first run
+
+`db:seed` must never touch production. Use the bootstrap instead — it creates
+exactly one platform admin, one company, one store, that store's Backroom and On
+Floor locations, and one company admin for the customer. No demo tenants, no
+sample inventory, and no password that exists anywhere in this repository.
+
+Everything comes from the environment, so nothing lands in a shell history:
+
+```bash
+DATABASE_URL=…                      # the OWNER role: bootstrap writes across tenants
+ROOT_DOMAIN=example.com             # only used to print the sign-in URLs
+PLATFORM_ADMIN_EMAIL=ops@you.com
+PLATFORM_ADMIN_PASSWORD=…           # 12+ chars
+COMPANY_NAME="Acme Grocery"
+COMPANY_SLUG=acme                   # becomes acme.example.com
+STORE_NAME="Main Street"
+COMPANY_ADMIN_EMAIL=owner@acme.com
+COMPANY_ADMIN_PASSWORD=…            # 12+ chars
+npm run db:bootstrap
+```
+
+It refuses to run against a database that already holds companies — a second run
+against a live tenant is far more likely to be a mistake than an intention. Pass
+`BOOTSTRAP_ALLOW_EXISTING=1` when you genuinely mean to add another company to a
+running platform. Repeat runs create nothing twice.
+
+Passwords are never printed. Both accounts should change theirs on first sign-in
+(Profile), and every further user arrives by invitation.
+
+### The API refuses to start on a development configuration
+
+In `NODE_ENV=production` the process exits at boot rather than serve traffic when:
+
+| Condition | Why it is fatal |
+| --------- | --------------- |
+| `APP_DATABASE_URL` unset | The fallback is the owner role. Owners are superusers here, RLS does not apply to them, and every tenant would read every other tenant. |
+| the runtime role is `SUPERUSER` or has `BYPASSRLS` | The same exposure, reached by pointing the variable at the wrong role. Checked by asking Postgres, not by trusting the value. |
+| `JWT_SECRET` is a published example value, or under 32 chars | The example values are in git, so anyone could mint a valid token. |
+| `ROOT_DOMAIN` unset or a placeholder (`yourapp.com`, `yourapp.local`, …) | No customer subdomain would resolve, and every invitation link would point at a domain nobody owns. |
+
+None of these fire outside production — they are exactly what a laptop is
+supposed to look like.
 
 ## A fixture for testing counts by hand
 

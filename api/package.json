@@ -13,6 +13,7 @@
     "db:migrate:prod": "node dist/db/migrate.js",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:bootstrap": "tsx scripts/bootstrap.ts",
     "db:fixture": "tsx scripts/test-fixture.ts"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.38.0",
+    "helmet": "^8.3.0",
     "pg": "^8.13.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
