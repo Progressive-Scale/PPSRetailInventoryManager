@@ -404,6 +404,7 @@ In `NODE_ENV=production` the process exits at boot rather than serve traffic whe
 | the runtime role is `SUPERUSER` or has `BYPASSRLS` | The same exposure, reached by pointing the variable at the wrong role. Checked by asking Postgres, not by trusting the value. |
 | `JWT_SECRET` is a published example value, or under 32 chars | The example values are in git, so anyone could mint a valid token. |
 | `ROOT_DOMAIN` unset or a placeholder (`yourapp.com`, `yourapp.local`, …) | No customer subdomain would resolve, and every invitation link would point at a domain nobody owns. |
+| mail would resolve to `console` | Invitations and password resets go to the log, the API answers 200, and the person waits forever for mail that was never sent. |
 
 None of these fire outside production — they are exactly what a laptop is
 supposed to look like.

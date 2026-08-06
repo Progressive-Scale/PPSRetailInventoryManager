@@ -92,9 +92,12 @@ network one.
 
 ### 1.5 Mail
 
-Invitations and password resets are the only mail. With `MAIL_PROVIDER=console`
-nothing is sent and the accept link is only written to the log, which means a
-customer's invitation never arrives. Before launch:
+Invitations and password resets are the only mail. Console mode sends nothing and
+writes the accept link to the log, so a customer's invitation never arrives — and
+because the API still answers 200, nothing anywhere reports a problem. **The API
+therefore refuses to start in production if mail would resolve to console**, by
+any route: `MAIL_MODE=console`, no `MAIL_PROVIDER`, or a provider whose token is
+missing. Before launch:
 
 1. Verify the sender signature (or domain) in Postmark.
 2. Set `MAIL_PROVIDER=postmark` and a fresh `POSTMARK_TOKEN`.

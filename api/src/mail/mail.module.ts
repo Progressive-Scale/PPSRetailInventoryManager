@@ -35,6 +35,23 @@ export function resolveMailService(config: ConfigService): MailService {
     config.get<string>('MAIL_FROM') || `${PRODUCT_NAME} <onboarding@resend.dev>`;
 
   const useConsole = (why: string): MailService => {
+    // Every route to console passes through here — the kill switch, a missing
+    // token, an unrecognised provider name — which is why the production check
+    // lives in this function rather than beside the other boot guards. There is
+    // no way to reach console in production without tripping it, and no
+    // precedence rules to keep in sync anywhere else.
+    //
+    // Fatal because console mail in production has NO symptom. Invitations and
+    // password resets are written to the log and never delivered; the API answers
+    // 200, the admin sees "invitation sent", and the person waits forever.
+    if (config.get<string>('NODE_ENV') === 'production') {
+      throw new Error(
+        `Mail would fall back to the console in production (${why}). Invitations ` +
+          'and password resets would be logged and never delivered, with no error ' +
+          'anywhere. Set MAIL_PROVIDER (postmark) and its token, and do not set ' +
+          'MAIL_MODE=console. Refusing to start.',
+      );
+    }
     logger.log(`Mail provider: console — ${why}. No mail will be sent.`);
     return new ConsoleMailService(from);
   };
