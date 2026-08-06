@@ -5,6 +5,12 @@
   <title>PPS Retail Inventory</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- This app is a light-mode design with no dark palette. Saying so stops a
+       browser in dark mode from inventing one: auto-dark rewrites colours it
+       decides are unset, and the visible casualties are the transparent .ghost
+       buttons in the header, which come out as dark grey boxes. Declared here as
+       well as in CSS because it must be known before the first paint. -->
+  <meta name="color-scheme" content="light">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 <body>

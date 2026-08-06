@@ -1,4 +1,9 @@
 :root {
+  /* Mirrors the meta tag in index.html. Both earn their place: the meta applies
+     before this stylesheet is fetched, this survives if the meta is ever dropped,
+     and this is what makes form controls and scrollbars render light as well. */
+  color-scheme: light;
+
   --bg: #f5f6f8;
   --surface: #ffffff;
   --border: #e3e6ea;
