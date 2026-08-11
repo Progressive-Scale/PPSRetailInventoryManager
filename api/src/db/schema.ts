@@ -567,6 +567,24 @@ export const inventoryItems = pgTable(
      * than record what the ERP says. Null means nobody has weighed it.
      */
     weightLbs: numeric('weight_lbs'),
+    /**
+     * Price of THIS unit, overriding the catalog price on its product.
+     *
+     * NULL is not "free" and not "zero" — it means "no override, use the product's
+     * price". That distinction is the whole design: clearing an override has to be
+     * possible, and a copied-down value could not express it. Effective price is
+     * therefore `inventory_items.price ?? products.price`, resolved on read.
+     *
+     * Per unit for the same reason weight is: random-weight goods. A chuck roll
+     * priced by the pound cannot share one number with every other chuck roll, and
+     * the unit is the only place that fact fits. inventory_stock deliberately has
+     * no equivalent — a quantity counter has no individual unit to price, so those
+     * products simply use the catalog price.
+     *
+     * Same precision as products.price so an override and the value it overrides
+     * can never disagree by rounding.
+     */
+    price: numeric('price', { precision: 12, scale: 2 }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     /**
      * When this unit was sold. Set on every transition into SOLD and CLEARED on

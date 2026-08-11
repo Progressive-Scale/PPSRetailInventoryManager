@@ -1,0 +1,14 @@
+-- Per-unit price override.
+--
+-- Nullable with no default and no backfill, deliberately: NULL means "no override,
+-- inherit the product's price", which is a different statement from any number we
+-- could have written here. Every existing unit therefore starts out inheriting,
+-- which is exactly the behaviour that existed before this column.
+--
+-- numeric(12,2) matches products.price so an override and the value it overrides
+-- cannot disagree by rounding.
+--
+-- No CHECK (price >= 0). products.price has none either, and a negative price is a
+-- credit — refusing to store one would leave the retail system unable to represent
+-- something the ERP can already say.
+ALTER TABLE "inventory_items" ADD COLUMN IF NOT EXISTS "price" numeric(12, 2);

@@ -239,6 +239,13 @@
       "when": 1785950062394,
       "tag": "0033_store_manager_role",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785950122394,
+      "tag": "0034_item_price",
+      "breakpoints": true
     }
   ]
 }
