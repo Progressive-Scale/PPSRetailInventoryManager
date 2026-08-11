@@ -221,6 +221,9 @@ export class InventoryService {
             status: inventoryItems.status,
             expirationDate: inventoryItems.expirationDate,
             weightLbs: inventoryItems.weightLbs,
+            // The unit's own override; null means it inherits product.price, which the
+            // caller already has on `product`.
+            price: inventoryItems.price,
             receivedAt: inventoryItems.receivedAt,
             updatedAt: inventoryItems.updatedAt,
           })
@@ -744,6 +747,7 @@ export class InventoryService {
           // Carried here too so a PENDING arrival shows its weight before it is
           // received — the ERP already said what it weighs.
           weightLbs: inventoryItems.weightLbs,
+          price: inventoryItems.price,
           receivedAt: inventoryItems.receivedAt,
           needsReview: inventoryItems.needsReview,
           importCheckStatus: inventoryItems.importCheckStatus,
@@ -828,7 +832,10 @@ export class InventoryService {
                -- Nor a weight: there is no unit to weigh, only a number of them. NULL
                -- rather than 0, so the UI can render "—" instead of claiming zero pounds.
                NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text,
-               NULL::numeric
+               NULL::numeric,
+               -- No unit means no override to hold, so effective IS the catalog price.
+               -- Positionally matched to the unit branch's three price columns.
+               NULL::numeric, p.price, p.price
         FROM inventory_stock s
         JOIN products p ON p.id = s.product_id
         JOIN store_locations l ON l.id = s.location_id
@@ -846,7 +853,13 @@ export class InventoryService {
                i.status::text AS status,
                -- Per-unit weight (random-weight goods). Positionally matched by the
                -- stock branch below, which has none.
-               i.weight_lbs
+               i.weight_lbs,
+               -- Three columns, not one, because the grid has to distinguish a unit
+               -- priced deliberately from one riding the catalog: i.price is the
+               -- override (NULL = none), p.price is what it would inherit, and the
+               -- COALESCE is what the unit actually sells for.
+               i.price, p.price AS catalog_price,
+               COALESCE(i.price, p.price) AS effective_price
         FROM inventory_items i
         JOIN products p ON p.id = i.product_id
         JOIN store_locations l ON l.id = i.location_id
@@ -911,6 +924,8 @@ export class InventoryService {
       // Sorts by the same total the row displays, not by an end of a range: a product's
       // weight column IS a sum, so ascending means "lightest shelf-load first".
       weight: sql`sum(c.weight_lbs) FILTER (WHERE c.on_hand = 1)`,
+      // The catalog price — the same single value the row shows.
+      price: sql`min(c.catalog_price)`,
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = desc ? sql`DESC` : sql`ASC`;
@@ -932,6 +947,16 @@ export class InventoryService {
                max(c.created_at)                AS created_to,
                min(c.sold_at)                   AS sold_from,
                max(c.sold_at)                   AS sold_to,
+               -- The CATALOG price, which is one value per product by definition, so
+               -- min() here is picking the only value rather than an end of a range.
+               -- Deliberately NOT a rollup of effective prices: a product row showing
+               -- an average of its units' overrides would be a number nothing sells
+               -- for. Per-unit prices belong on the unit rows underneath.
+               min(c.catalog_price)             AS price,
+               -- How many of this product's units carry their own price, so the row
+               -- can say "some of these are priced individually" without pretending
+               -- to summarise them.
+               count(*) FILTER (WHERE c.price IS NOT NULL)::int AS overridden_count,
                -- Weight rolls up as a TOTAL, not a range: what a shop wants off a
                -- product row is how many pounds are sitting there.
                --
@@ -992,6 +1017,8 @@ export class InventoryService {
         // numeric → string, like every other numeric in this API. Null when no unit of
         // the product has a weight at all, which the UI shows as "—" rather than 0.
         totalWeightLbs: r.total_weight_lbs,
+        price: r.price,
+        overriddenCount: r.overridden_count,
         // How many of those units have no weight recorded, so a partial sum is never
         // presented as a complete one.
         unweightedCount: r.unweighted_count,
@@ -1017,6 +1044,8 @@ export class InventoryService {
       created: sql`c.created_at`,
       sold: sql`c.sold_at`,
       weight: sql`c.weight_lbs`,
+      // Sorting by what it sells for, not by whether somebody overrode it.
+      price: sql`c.effective_price`,
     };
     const sortCol = sortCols[query.sortBy ?? 'name'] ?? sortCols['name'];
     const sortDir = query.sortDir === 'desc' ? sql`DESC` : sql`ASC`;
@@ -1066,6 +1095,12 @@ export class InventoryService {
         soldAt: r.sold_at,
         // Null on a quantity stock row (nothing to weigh) and on a unit nobody weighed.
         weightLbs: r.weight_lbs,
+        // price = this unit's override, null when it inherits. effectivePrice is what
+        // it sells for either way, so the grid never has to do the COALESCE itself and
+        // cannot get it wrong in one place and right in another.
+        price: r.price,
+        catalogPrice: r.catalog_price,
+        effectivePrice: r.effective_price,
         status: r.status,
         reorderOpen: r.reorder_open,
       }));
@@ -1087,6 +1122,7 @@ export class InventoryService {
     dto: {
       expirationDate?: string | null;
       weightLbs?: number | null;
+      price?: number | null;
       productId?: number;
     },
   ) {
@@ -1099,6 +1135,11 @@ export class InventoryService {
       if (dto.weightLbs !== undefined) {
         // numeric column: drizzle wants a string, and null clears it back to "not weighed".
         patch.weightLbs = dto.weightLbs === null ? null : String(dto.weightLbs);
+      }
+      if (dto.price !== undefined) {
+        // null clears the override, so the unit inherits its product's price again.
+        // That is a real state, not an absent one — see the column's comment.
+        patch.price = dto.price === null ? null : String(dto.price);
       }
 
       // Manual identification: attach a catalog product to an unidentified unit.
@@ -1173,6 +1214,31 @@ export class InventoryService {
           );
         }
       }
+      if (dto.price !== undefined) {
+        // Same string-vs-number trap as weight: '9.5' and '9.50' are one price and
+        // must not read as a change in the audit trail. Setting an override and
+        // clearing one are both real changes and both get logged — "who priced this
+        // unit" and "who put it back on the catalog price" are the same question.
+        const before = item.price ?? null;
+        const after = dto.price === null ? null : String(dto.price);
+        const changed =
+          before === null || after === null
+            ? before !== after
+            : Number(before) !== Number(after);
+        if (changed) {
+          await this.writeFieldAudit(
+            tx,
+            ctx,
+            item.id,
+            'price',
+            before,
+            after,
+            'SINGLE_EDIT',
+            undefined,
+            item.storeId,
+          );
+        }
+      }
       return row;
     });
   }
@@ -1191,7 +1257,7 @@ export class InventoryService {
     tx: Tx,
     ctx: DataContext,
     itemId: string,
-    field: 'expiration_date' | 'weight_lbs',
+    field: 'expiration_date' | 'weight_lbs' | 'price',
     oldValue: string | null,
     newValue: string | null,
     editKind: 'BULK_EDIT' | 'SINGLE_EDIT' | 'SYNC',
@@ -1281,6 +1347,89 @@ export class InventoryService {
             ctx,
             it.id,
             'expiration_date',
+            oldValue,
+            newValue,
+            'BULK_EDIT',
+            undefined,
+            it.storeId,
+          );
+        }
+        results.push({ itemId: it.id, ok: true });
+      }
+      return { results };
+    });
+  }
+
+  /**
+   * Bulk price serialized items (partial success), mirroring bulk-expiration: an
+   * unknown or cross-tenant id fails the whole request because it means a client
+   * bug, while a non-ON_HAND unit is refused individually and the rest proceed.
+   *
+   * `price: null` clears the override on every selected unit, putting them back on
+   * their products' catalog prices. That is the useful bulk action after a catalog
+   * change, not merely an undo.
+   *
+   * Units already at the requested price are skipped silently — no write, no audit
+   * row — so re-running over a selection does not manufacture history.
+   */
+  async bulkPrice(
+    ctx: DataContext,
+    dto: { itemIds: string[]; price: number | null },
+  ): Promise<{ results: Array<{ itemId: string; ok: boolean; reason?: string }> }> {
+    const ids = [...new Set(dto.itemIds)];
+    return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const items = await tx
+        .select({
+          id: inventoryItems.id,
+          storeId: inventoryItems.storeId,
+          status: inventoryItems.status,
+          price: inventoryItems.price,
+        })
+        .from(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.companyId, ctx.companyId),
+            inArray(inventoryItems.id, ids),
+          ),
+        );
+      const found = new Map(items.map((i) => [i.id, i]));
+      const offending = ids.filter((id) => !found.has(id));
+      if (offending.length > 0) {
+        throw new BadRequestException({
+          message:
+            'Every id must be a serialized item in your company. Offending ids indicate a client bug.',
+          offendingIds: offending,
+        });
+      }
+
+      const newValue = dto.price === null ? null : String(dto.price);
+      const results: Array<{ itemId: string; ok: boolean; reason?: string }> = [];
+      for (const it of items) {
+        if (it.status !== 'ON_HAND') {
+          results.push({
+            itemId: it.id,
+            ok: false,
+            reason: `item is ${it.status}, only ON_HAND items can be edited`,
+          });
+          continue;
+        }
+        const oldValue = it.price ?? null;
+        // Numeric columns round-trip as strings, so compare as numbers where both
+        // exist: '9.5' and '9.50' are one price and must not write or audit.
+        const changed =
+          oldValue === null || newValue === null
+            ? oldValue !== newValue
+            : Number(oldValue) !== Number(newValue);
+        if (changed) {
+          await tx
+            .update(inventoryItems)
+            .set({ price: newValue, updatedAt: new Date() })
+            .where(eq(inventoryItems.id, it.id));
+          await this.writeFieldAudit(
+            tx,
+            ctx,
+            it.id,
+            'price',
             oldValue,
             newValue,
             'BULK_EDIT',

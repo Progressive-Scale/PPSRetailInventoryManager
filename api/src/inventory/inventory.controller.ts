@@ -24,6 +24,7 @@ import { InventoryService } from './inventory.service';
 import { ImportChecksService } from '../sync/import-checks.service';
 import {
   BulkExpirationDto,
+  BulkPriceDto,
   BulkSellDto,
   InventoryActionDto,
   ListInventoryQuery,
@@ -151,6 +152,13 @@ export class InventoryController {
   @Roles(INVENTORY_ADMIN_ROLES)
   bulkExpiration(@Ctx() ctx: DataContext, @Body() dto: BulkExpirationDto) {
     return this.svc.bulkExpiration(ctx, dto);
+  }
+
+  /** Price many units at once. null clears each override back to the catalog price. */
+  @Patch('bulk-price')
+  @Roles(INVENTORY_ADMIN_ROLES)
+  bulkPrice(@Ctx() ctx: DataContext, @Body() dto: BulkPriceDto) {
+    return this.svc.bulkPrice(ctx, dto);
   }
 
   // Admin: edit a serialized unit's expiration date (data correction).

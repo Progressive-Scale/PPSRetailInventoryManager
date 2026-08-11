@@ -134,6 +134,9 @@ const STOCK_SORT_FIELDS = [
   // Per-unit lbs on the flat grid; the product TOTAL in the by-product view, since that
   // is the number that view actually shows.
   'weight',
+  // Effective price on the flat grid (what the unit sells for, override or not); the
+  // CATALOG price in the by-product view, which is the number that view shows.
+  'price',
 ] as const;
 
 // Combined flat stock listing: one row per serialized unit + one row per
@@ -219,6 +222,20 @@ export class UpdateItemDto {
   weightLbs?: number | null;
 
   /**
+   * This unit's price, or null to clear the override so it inherits the catalog
+   * price again. Omitting the field leaves whatever is there alone — the three
+   * states are distinct and all three are needed.
+   *
+   * No @Min(0), matching products.price: a negative price is a credit, and a
+   * constraint here would make the retail system unable to record something the
+   * ERP can already say.
+   */
+  @IsOptional()
+  @ValidateIf((o: UpdateItemDto) => o.price !== null)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  price?: number | null;
+
+  /**
    * Identify an unidentified unit by attaching it to a catalog product. This is the
    * manual counterpart to a PPS import match, and clears the unit's needs_review —
    * a unit with a product is, by definition, identified.
@@ -249,6 +266,22 @@ export class BulkExpirationDto {
   @ValidateIf((o: BulkExpirationDto) => o.expirationDate !== null)
   @IsISO8601()
   expirationDate!: string | null;
+}
+
+// Admin bulk edit of serialized items' price. null clears the override on every
+// selected unit, putting them all back on their products' catalog prices — which is
+// a genuinely useful bulk action after a catalog change, not just an undo.
+export class BulkPriceDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  itemIds!: string[];
+
+  // No @Min(0), matching products.price and the single-item edit: a negative price is
+  // a credit, and the retail system must be able to say what the ERP can.
+  @ValidateIf((o: BulkPriceDto) => o.price !== null)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  price!: number | null;
 }
 
 // Admin set of a quantity product's on-hand at a specific location.
