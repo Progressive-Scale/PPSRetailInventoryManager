@@ -132,6 +132,11 @@ export interface InventoryItem {
   expirationDate: string | null;
   /** Pounds, as a numeric string. Null when nobody has weighed this unit. */
   weightLbs: string | null;
+  /**
+   * This unit's price override, as a numeric string. NULL is not zero — it means
+   * "no override, use the product's price", which is the only way to say that.
+   */
+  price: string | null;
   receivedAt: string | null;
   updatedAt: string;
   createdAt: string;
@@ -172,6 +177,11 @@ export interface DetailUnit {
   expirationDate: string | null;
   /** Pounds, as a numeric string. Null when nobody has weighed this unit. */
   weightLbs: string | null;
+  /**
+   * This unit's price override, as a numeric string. NULL is not zero — it means
+   * "no override, use the product's price", which is the only way to say that.
+   */
+  price: string | null;
   receivedAt: string | null;
   updatedAt: string;
 }
@@ -230,6 +240,16 @@ export interface StockRow {
    * no unit to weigh) and on a unit nobody has weighed — both render as "—", never 0.
    */
   weightLbs: string | null;
+  /**
+   * price       — this unit's override; null means it inherits (and always null on a
+   *               quantity row, which has no unit to price).
+   * catalogPrice— what the product says, i.e. what it would inherit.
+   * effectivePrice — what it actually sells for. The server does the COALESCE so the
+   *               grid, the detail panel and any future consumer cannot disagree.
+   */
+  price: string | null;
+  catalogPrice: string | null;
+  effectivePrice: string | null;
   // When this unit was sold; null while on hand and always null for quantity rows.
   soldAt: string | null;
   /** This store already has a live reorder for this product. */
@@ -258,6 +278,13 @@ export interface ProductStockRow {
   /** 1 → storeId names the single store; more → "N stores". */
   storeCount: number;
   storeId: number;
+  /**
+   * The product's CATALOG price. Not a rollup of its units' effective prices — an
+   * average of overrides is a number nothing sells for. `overriddenCount` says how
+   * many units underneath carry their own instead.
+   */
+  price: string | null;
+  overriddenCount: number;
   /** 1 → locationName names it; more → "N locations". */
   locationCount: number;
   locationName: string | null;
@@ -296,7 +323,9 @@ export type StockSortField =
   | 'created'
   | 'sold'
   /** Per-unit lbs on the flat grid; the product total in the by-product view. */
-  | 'weight';
+  | 'weight'
+  /** Effective price on the flat grid; the catalog price in the by-product view. */
+  | 'price';
 
 export type StockStatusFilter = 'ON_HAND' | 'SOLD' | 'ALL';
 

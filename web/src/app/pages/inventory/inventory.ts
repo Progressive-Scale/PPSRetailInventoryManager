@@ -35,6 +35,7 @@ import {
 import { LocationsComponent } from './locations';
 import { PendingArrivalsComponent } from './pending-arrivals';
 import { ItemDetailComponent } from './item-detail';
+import { MaxDecimalsDirective } from '../../shared/max-decimals';
 
 type SubTab = 'stock' | 'locations' | 'pending';
 
@@ -63,6 +64,7 @@ interface Column {
     LocationsComponent,
     PendingArrivalsComponent,
     ItemDetailComponent,
+    MaxDecimalsDirective,
   ],
   template: `
     <main class="container">
@@ -212,6 +214,18 @@ interface Column {
                   </button>
                   <span class="tip-bubble">{{ expLabel() }}</span>
                 </span>
+                <span class="tip-wrap">
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    (click)="openPrice()"
+                    [disabled]="busy() || !priceEnabled()"
+                    [attr.aria-label]="priceBulkLabel()"
+                  >
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z" /></svg>
+                  </button>
+                  <span class="tip-bubble">{{ priceBulkLabel() }}</span>
+                </span>
                 <button type="button" class="icon-btn clear-btn" (click)="clearSelection()" title="Clear selection">✕</button>
               </span>
               <span class="bulk-count">{{ selectionCount() }} selected</span>
@@ -327,6 +341,7 @@ interface Column {
                         <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
                         <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
                         <td class="num">{{ unitWeight(row) }}</td>
+                        <td class="num" [title]="priceTitle(row)">{{ unitPrice(row) }}</td>
                       </tr>
                     }
                   } @else {
@@ -378,6 +393,7 @@ interface Column {
                       <td class="num" [title]="weightTitle(p)">
                         {{ productWeight(p) }}
                       </td>
+                      <td class="num">{{ productPrice(p) }}</td>
                     </tr>
 
                     <!-- Tier two: the actual rows, in the same columns. -->
@@ -437,6 +453,7 @@ interface Column {
                             <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
                             <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
                             <td class="num">{{ unitWeight(row) }}</td>
+                            <td class="num" [title]="priceTitle(row)">{{ unitPrice(row) }}</td>
                           </tr>
                         }
                       }
@@ -530,6 +547,36 @@ interface Column {
               {{ busy() ? 'Saving…' : 'Save' }}
             </button>
             <button class="ghost" (click)="expOpen.set(false)" [disabled]="busy()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    @if (priceOpen()) {
+      <div class="overlay" (click)="priceOpen.set(false)">
+        <div class="modal" (click)="$event.stopPropagation()">
+          <h3>Edit price</h3>
+          @if (dialogError()) {
+            <p class="error">{{ dialogError() }}</p>
+          }
+          <label class="chk">
+            <input type="checkbox" [(ngModel)]="priceClear" name="price-clear" />
+            Use default price
+          </label>
+          @if (!priceClear) {
+            <label class="dlg-label">
+              Price
+              <input type="number" step="0.01" appMaxDecimals="2" [(ngModel)]="priceValue" name="price-value" />
+            </label>
+          }
+          <p class="preview">
+            {{ selectionCount() }} serialized items &rarr; {{ pricePreview() }}
+          </p>
+          <div class="modal-actions">
+            <button (click)="commitPrice()" [disabled]="busy() || !priceReady()">
+              {{ busy() ? 'Saving…' : 'Save' }}
+            </button>
+            <button class="ghost" (click)="priceOpen.set(false)" [disabled]="busy()">Cancel</button>
           </div>
         </div>
       </div>
@@ -1187,6 +1234,12 @@ export class InventoryComponent implements OnInit {
   expDate = '';
   expClear = false;
 
+  // Price dialog. priceValue starts as '' so an empty box stays distinguishable
+  // from a deliberate 0; appMaxDecimals writes a number back once one is typed.
+  readonly priceOpen = signal(false);
+  priceValue: string | number = '';
+  priceClear = false;
+
   // Sold confirmation dialog.
   readonly soldOpen = signal(false);
   readonly soldLoading = signal(false);
@@ -1238,6 +1291,12 @@ export class InventoryComponent implements OnInit {
     () => this.selectionCount() > 0 && !this.hasQuantitySelected(),
   );
 
+  // Price lives on the serialized unit, same as expiration: a quantity row has no
+  // single unit to price, so a selection containing one disables the button.
+  readonly priceEnabled = computed(
+    () => this.selectionCount() > 0 && !this.hasQuantitySelected(),
+  );
+
   readonly columns = computed<Column[]>(() => {
     const cols: Column[] = [
       { label: 'SKU', field: 'sku' },
@@ -1256,6 +1315,10 @@ export class InventoryComponent implements OnInit {
       // unit row, the product's total on a product row. Quantity stock has no weight in
       // either tier and shows an em dash.
       { label: 'Weight', field: 'weight', num: true },
+      // Like Weight, one column serving both tiers: what a unit sells for on a unit
+      // row, the catalog price on a product row. An overridden unit is marked rather
+      // than coloured — the number is the point, the override is the footnote.
+      { label: 'Price', field: 'price', num: true },
     );
     return cols;
   });
@@ -1776,6 +1839,69 @@ export class InventoryComponent implements OnInit {
     }
   }
 
+  // ---- bulk: price ----
+  openPrice(): void {
+    this.dialogError.set(null);
+    this.priceClear = false;
+    this.priceValue = '';
+    this.priceOpen.set(true);
+  }
+
+  /** Save goes live once there is something to send: a real number, or "use catalog". */
+  priceReady(): boolean {
+    return this.priceClear || (this.priceValue !== '' && Number.isFinite(Number(this.priceValue)));
+  }
+
+  pricePreview(): string {
+    if (this.priceClear) return 'the default price of each product';
+    return this.priceReady() ? this.formatMoney(String(this.priceValue)) : '…';
+  }
+
+  priceBulkLabel(): string {
+    return this.priceEnabled() ? 'Edit price' : 'UPC items are priced on the product.';
+  }
+
+  async commitPrice(): Promise<void> {
+    this.busy.set(true);
+    this.dialogError.set(null);
+    try {
+      const rows = (await this.resolveSelection()).filter(
+        (r) => r.rowKind === 'unit' && r.itemId,
+      );
+      if (rows.length === 0) {
+        this.busy.set(false);
+        this.dialogError.set('No serialized items in the selection.');
+        return;
+      }
+      const byId = new Map(rows.map((r) => [r.itemId as string, r]));
+      const ids = [...byId.keys()];
+      // Round here rather than let the API reject the batch: a number input yields
+      // things like 1.005 from arrow keys, and maxDecimalPlaces would 400 all of it.
+      const price = this.priceClear ? null : Math.round(Number(this.priceValue) * 100) / 100;
+      let ok = 0;
+      const failures: string[] = [];
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        const res = await firstValueFrom(this.api.bulkPrice(chunk, price));
+        for (const r of res.results) {
+          if (r.ok) ok++;
+          else failures.push(`${byId.get(r.itemId)?.serial ?? r.itemId}: ${r.reason ?? 'skipped'}`);
+        }
+      }
+      this.busy.set(false);
+      this.priceOpen.set(false);
+      this.bulkFailures.set(failures);
+      this.bulkMessage.set(
+        `Priced ${ok} item(s)${failures.length ? `, ${failures.length} skipped` : ''}.`,
+      );
+      this.clearSelection();
+      this.reload();
+    } catch (e) {
+      this.busy.set(false);
+      this.dialogError.set(messageFor(e));
+    }
+  }
+
   // ---- bulk: mark sold ----
   async openSold(): Promise<void> {
     this.dialogError.set(null);
@@ -1916,6 +2042,40 @@ export class InventoryComponent implements OnInit {
   unitWeight(row: StockRow): string {
     if (row.weightLbs == null) return '—';
     return `${this.formatLbs(row.weightLbs)} lbs`;
+  }
+
+  /**
+   * What this unit actually sells for. The server already resolved the fallback, so
+   * this never re-implements it — it only marks WHICH of the two it is.
+   *
+   * The dot means "somebody priced this unit deliberately"; without it the number is
+   * the catalog's. Deliberately not a colour: an overridden price is not a warning,
+   * and the grid already spends its colours on stock states that are.
+   */
+  unitPrice(row: StockRow): string {
+    if (row.effectivePrice == null) return '—';
+    const money = this.formatMoney(row.effectivePrice);
+    return row.price != null ? `${money} •` : money;
+  }
+
+  /** Spells out what the dot means, and what it is overriding. */
+  priceTitle(row: StockRow): string {
+    if (row.effectivePrice == null) return 'No price set on this product';
+    if (row.price == null) return 'Default price';
+    const catalog =
+      row.catalogPrice == null ? 'no default price' : this.formatMoney(row.catalogPrice);
+    return `Priced on this unit — overrides ${catalog}`;
+  }
+
+  /** A product row shows the catalog price; its units may each differ underneath. */
+  productPrice(p: ProductStockRow): string {
+    return p.price == null ? '—' : this.formatMoney(p.price);
+  }
+
+  /** Currency-agnostic on purpose: no company currency exists yet to be wrong about. */
+  private formatMoney(value: string): string {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(2) : value;
   }
 
   /**

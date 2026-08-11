@@ -5,6 +5,7 @@ import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
 import { CreateProduct, Product, TrackingType, UpdateProduct } from '../../core/models';
 import { ActivityDialogComponent } from '../../shared/activity-dialog';
+import { MaxDecimalsDirective } from '../../shared/max-decimals';
 
 // The Review sub-tab moved to Cycle Counts -> Review: everything in it
 // originates from a count, so it belongs beside the counts, not the catalog.
@@ -15,7 +16,7 @@ import { ActivityDialogComponent } from '../../shared/activity-dialog';
 
 @Component({
   selector: 'app-products',
-  imports: [FormsModule, ActivityDialogComponent],
+  imports: [FormsModule, ActivityDialogComponent, MaxDecimalsDirective],
   template: `
     <main class="container">
       @if (error()) {
@@ -78,6 +79,9 @@ import { ActivityDialogComponent } from '../../shared/activity-dialog';
                   <th class="col-name">Name</th>
                   <th class="col-type">Type</th>
                   <th class="col-upc">UPC</th>
+                  <th class="col-num num" title="Default price. A unit in inventory may override it.">
+                    Price
+                  </th>
                   <th class="col-num num" title="Flag the product as low at or below this level">
                     Low at
                   </th>
@@ -97,6 +101,17 @@ import { ActivityDialogComponent } from '../../shared/activity-dialog';
                         </span>
                       </td>
                       <td><input class="cell-input" name="ep-upc" [(ngModel)]="productEdit.upc" /></td>
+                      <td>
+                        <input
+                          class="cell-input num"
+                          type="number"
+                          step="0.01"
+                          appMaxDecimals="2"
+                          name="ep-price"
+                          placeholder="none"
+                          [(ngModel)]="productEdit.price"
+                        />
+                      </td>
                       <td>
                         <input
                           class="cell-input num"
@@ -129,6 +144,7 @@ import { ActivityDialogComponent } from '../../shared/activity-dialog';
                         </span>
                       </td>
                       <td class="muted">{{ p.upc || '—' }}</td>
+                      <td class="num">{{ productPrice(p) }}</td>
                       <td class="num muted">{{ p.reorderThreshold ?? '—' }}</td>
                       <td>{{ p.active ? 'Active' : 'Inactive' }}</td>
                       <td class="actions">
@@ -730,6 +746,17 @@ export class ProductsComponent implements OnInit {
       active: p.active,
       reorderThreshold: p.reorderThreshold,
     };
+  }
+
+  /**
+   * The catalog price — what a unit sells for unless it carries its own. Formatted
+   * to two places without a currency symbol: no company currency exists yet, and an
+   * assumed one would be wrong for the first customer who is not in dollars.
+   */
+  productPrice(p: Product): string {
+    if (p.price == null) return '—';
+    const n = Number(p.price);
+    return Number.isFinite(n) ? n.toFixed(2) : String(p.price);
   }
 
   saveProduct(p: Product): void {

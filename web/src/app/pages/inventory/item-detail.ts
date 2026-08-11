@@ -14,12 +14,13 @@ import { messageFor } from '../../core/http-error';
 import { ReorderDialogComponent } from '../reorders/reorder-dialog';
 import { StockRow, StoreLocation, Transaction } from '../../core/models';
 import { ActivityLogComponent } from '../../shared/activity-log';
+import { MaxDecimalsDirective } from '../../shared/max-decimals';
 
-type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
+type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'price' | 'setqty' | null;
 
 @Component({
   selector: 'app-item-detail',
-  imports: [FormsModule, DatePipe, ReorderDialogComponent, ActivityLogComponent],
+  imports: [FormsModule, DatePipe, ReorderDialogComponent, ActivityLogComponent, MaxDecimalsDirective],
   template: `
     <div class="overlay" (click)="close.emit()">
       <div class="modal" (click)="$event.stopPropagation()">
@@ -69,6 +70,10 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
               <div><dt>Expiration</dt><dd [class]="expClass(row.expirationDate)">{{ row.expirationDate ? (row.expirationDate | date: 'mediumDate') : '—' }}</dd></div>
               <!-- Random-weight goods: this unit's own weight, not the product's. -->
               <div><dt>Weight</dt><dd>{{ weightLabel() }}</dd></div>
+              <!-- What it sells for, and whether that came from this unit or the
+                   catalog. The distinction matters more than the number when
+                   somebody is deciding whether to change it. -->
+              <div><dt>Price</dt><dd>{{ priceLabel() }}</dd></div>
             }
             <div><dt>Created</dt><dd>{{ row.createdAt | date: 'medium' }}</dd></div>
           </dl>
@@ -125,6 +130,7 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
                 }
                 <button class="ghost sm" (click)="open('expiration')">Edit expiration</button>
                 <button class="ghost sm" (click)="open('weight')">Edit weight</button>
+                <button class="ghost sm" (click)="open('price')">Edit price</button>
               } @else {
                 <button class="ghost sm" (click)="open('setqty')">Set on-hand</button>
                 <button class="ghost sm" (click)="open('move')">Move</button>
@@ -166,6 +172,16 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'setqty' | null;
                 <input class="qty" type="number" step="0.001" [(ngModel)]="weightLbs" name="m-wt" />
                 <button type="submit" [disabled]="saving()">Save</button>
                 <button type="button" class="ghost" (click)="clearWeight()" [disabled]="saving()">Clear</button>
+                <button type="button" class="ghost" (click)="mgmt.set(null)">Cancel</button>
+              </form>
+            } @else if (mgmt() === 'price') {
+              <form class="mgmt-form" (ngSubmit)="savePrice()">
+                <span>Price</span>
+                <input class="qty" type="number" step="0.01" appMaxDecimals="2" [(ngModel)]="price" name="m-pr" />
+                <button type="submit" [disabled]="saving()">Save</button>
+                <!-- "Use default price", not "Clear": clearing sounds like it removes
+                     the price, when it actually restores the product's. -->
+                <button type="button" class="ghost" (click)="clearPrice()" [disabled]="saving()">Use default price</button>
                 <button type="button" class="ghost" (click)="mgmt.set(null)">Cancel</button>
               </form>
             } @else if (mgmt() === 'setqty') {
@@ -411,6 +427,7 @@ export class ItemDetailComponent implements OnInit {
   qty: number | null = null;
   expirationDate = '';
   weightLbs: number | string = '';
+  price: number | string = '';
 
   ngOnInit(): void {
     // Units render <app-activity-log>, which fetches its own rows; only the quantity
@@ -418,6 +435,15 @@ export class ItemDetailComponent implements OnInit {
     if (this.row.rowKind !== 'unit') this.loadHistory();
     this.expirationDate = this.row.expirationDate ?? '';
     this.weightLbs = this.row.weightLbs ?? '';
+    // Seeded with the override when there is one, otherwise the product's catalog
+    // price — you are nearly always adjusting from the current price rather than
+    // typing one from nothing, and a blank box hides what you are changing FROM.
+    //
+    // The trade-off, accepted deliberately: pressing Save without editing now writes
+    // an override equal to the catalog price. That is a real state (this unit is
+    // pinned here even if the catalog moves), it is audited, and "Use catalog price"
+    // undoes it.
+    this.price = this.row.price ?? this.row.catalogPrice ?? '';
   }
 
   private loadHistory(): void {
@@ -446,6 +472,15 @@ export class ItemDetailComponent implements OnInit {
     this.qty = this.row.rowKind === 'stock' ? this.row.onHand : null;
     this.expirationDate = this.row.expirationDate ?? '';
     this.weightLbs = this.row.weightLbs ?? '';
+    // Seeded with the override when there is one, otherwise the product's catalog
+    // price — you are nearly always adjusting from the current price rather than
+    // typing one from nothing, and a blank box hides what you are changing FROM.
+    //
+    // The trade-off, accepted deliberately: pressing Save without editing now writes
+    // an override equal to the catalog price. That is a real state (this unit is
+    // pinned here even if the catalog moves), it is audited, and "Use catalog price"
+    // undoes it.
+    this.price = this.row.price ?? this.row.catalogPrice ?? '';
     this.mgmt.set(m);
   }
 
@@ -546,6 +581,44 @@ export class ItemDetailComponent implements OnInit {
     this.api
       .updateItem(this.row.itemId, { weightLbs: null })
       .subscribe({ next: () => this.done(), error: (e) => this.fail(e) });
+  }
+
+  savePrice(): void {
+    if (!this.row.itemId) return;
+    const raw = String(this.price).trim();
+    if (raw === '') {
+      this.mgmtError.set('Enter a price, or use "Use default price" to remove the override.');
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      this.mgmtError.set('Enter a price.');
+      return;
+    }
+    this.saving.set(true);
+    this.api
+      .updateItem(this.row.itemId, { price: n })
+      .subscribe({ next: () => this.done(), error: (e) => this.fail(e) });
+  }
+
+  /** Drops the override so the unit follows its product again — null, not zero. */
+  clearPrice(): void {
+    if (!this.row.itemId) return;
+    this.saving.set(true);
+    this.api
+      .updateItem(this.row.itemId, { price: null })
+      .subscribe({ next: () => this.done(), error: (e) => this.fail(e) });
+  }
+
+  /**
+   * The price, marked only when it is this unit's own. The catalog price is the
+   * ordinary case and reads as a bare number; an override is the exception and says
+   * so, because the two behave differently when the catalog price later moves.
+   */
+  priceLabel(): string {
+    if (this.row.effectivePrice == null) return '—';
+    const money = Number(this.row.effectivePrice).toFixed(2);
+    return this.row.price == null ? money : `${money} (this unit)`;
   }
 
   saveExpiration(): void {

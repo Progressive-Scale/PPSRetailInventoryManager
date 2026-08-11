@@ -200,6 +200,8 @@ export class ApiService {
     dto: {
       expirationDate?: string | null;
       weightLbs?: number | null;
+      /** null clears the override so the unit inherits its product's price. */
+      price?: number | null;
       productId?: number;
     },
   ): Observable<InventoryItem> {
@@ -280,6 +282,17 @@ export class ApiService {
     return this.http.patch<BulkExpirationResult>('/api/inventory/bulk-expiration', {
       itemIds,
       expirationDate,
+    });
+  }
+
+  /**
+   * Bulk-set the price override on serialized items (partial success).
+   * `price: null` clears each override back to the product's catalog price.
+   */
+  bulkPrice(itemIds: string[], price: number | null): Observable<BulkExpirationResult> {
+    return this.http.patch<BulkExpirationResult>('/api/inventory/bulk-price', {
+      itemIds,
+      price,
     });
   }
 
