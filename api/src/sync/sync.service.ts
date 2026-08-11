@@ -139,11 +139,11 @@ export class SyncService {
       // or an unidentified unit being adopted, which is where productId actually changes.
       // The barcode is backfilled the same way: an agent upgraded to send it should be
       // able to fill in units it handed off before it knew how.
-      // weightLbs joins expirationDate and barcode in the same convention: a value
-      // that arrives OVERWRITES (the ERP is authoritative, and a re-weigh is exactly
-      // why a handoff would be re-delivered), while an omitted one leaves what is
-      // there alone. A handoff therefore cannot blank a weight back to null — only a
-      // manual edit can, which is audited.
+      // weightLbs and price join expirationDate and barcode in the same convention: a
+      // value that arrives OVERWRITES (the ERP is authoritative, and a re-weigh or a
+      // corrected order line is exactly why a handoff would be re-delivered), while an
+      // omitted one leaves what is there alone. A handoff therefore cannot blank a
+      // weight or price back to null — only a manual edit can, which is audited.
       await tx
         .update(inventoryItems)
         .set({
@@ -151,6 +151,7 @@ export class SyncService {
           ...(it.expirationDate ? { expirationDate: it.expirationDate } : {}),
           ...(it.barcode ? { barcode: it.barcode } : {}),
           ...(it.weightLbs != null ? { weightLbs: String(it.weightLbs) } : {}),
+          ...(it.price != null ? { price: String(it.price) } : {}),
           updatedAt: new Date(),
         })
         .where(eq(inventoryItems.id, existing.id));
@@ -174,6 +175,11 @@ export class SyncService {
         expirationDate: it.expirationDate ?? null,
         // numeric arrives as a string in drizzle; null when the ERP has not weighed it.
         weightLbs: it.weightLbs != null ? String(it.weightLbs) : null,
+        // The handoff price is the ORDER LINE's price for this unit (Ordersystem8
+        // resolves it gs1_item -> gs1_orderscan -> OrderDetail, matched on product), so
+        // it belongs on the unit, not just on the catalog row it also seeds. Null means
+        // the unit inherits its product's price — the ERP did not price this one.
+        price: it.price != null ? String(it.price) : null,
       })
       .returning();
     // The RECEIPT still belongs at handoff time: this is when the ERP handed the

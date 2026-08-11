@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.9
+# Sync Agent Integration Contract — v3.10
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,7 +10,7 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.9`
+- **Contract version:** `v3.10`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
@@ -35,6 +35,40 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.10
+
+**A handoff's `price` now lands on the unit, not only on the catalog row.**
+
+This reverses the rule stated in v3.9, on purpose. The field was read as "the product's
+price", but in Ordersystem8 it is not: the handoff trigger resolves it per unit as
+
+```
+gs1_item.gs1_item_pk -> gs1_orderscan.gs1_item_fk -> gs1_orderscan.order_id
+                     -> OrderDetail.OrderID (AND OrderDetail.ProductID = gs1_item.product_id)
+                     -> OrderDetail.price
+```
+
+— the price on the **order line that shipped this unit**. Two units of the same product
+from different orders can therefore carry different prices, which a single catalog price
+cannot express.
+
+So `POST /api/sync/handoffs` applies a `unit` line's `price` to `inventory_items.price`,
+the per-unit override added alongside the product's price. It follows the same rule as
+`weightLbs` and `expirationDate`:
+
+> **A value that arrives overwrites. An omitted value is left alone.**
+
+Unchanged: `price` still seeds the **catalog** price when the SKU creates a new product,
+and still never overwrites a curated catalog price on an existing one. What changed is
+that the value is no longer discarded for products that already exist.
+
+Reading it back: `price` is the unit's own, `catalogPrice` is its product's, and
+`effectivePrice` is `COALESCE(price, catalogPrice)` — what the unit actually sells for.
+
+**Still validated as `>= 0`.** A credit line with a negative price would be rejected and
+the row parked for a human, unlike `weightLbs`, which records negatives. Say so if
+Ordersystem8 issues negative order prices in practice and it can follow weight's rule.
 
 ## What's new in v3.9
 
@@ -82,6 +116,8 @@ written to the item's audit trail (`field = "weight_lbs"`, `source = "SINGLE_EDI
 For contrast, `price` is **not** a unit field: it describes the product, and the handoff
 only uses it when creating a catalog row that does not exist yet — it never overwrites a
 curated price. That is why weight follows expiration's rule and not price's.
+*(Superseded in v3.10: the handoff price is per order line, so it does land on the unit.
+The catalog half of this rule still holds.)*
 
 ## What's new in v3.8
 
