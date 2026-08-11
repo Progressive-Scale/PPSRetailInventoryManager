@@ -1,4 +1,5 @@
-import { Type } from 'class-transformer';
+import { clampToZero } from './sync.dto';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayNotEmpty,
@@ -25,7 +26,12 @@ export class ImportMatchDto {
   @IsString() @MinLength(1) @MaxLength(128) sku!: string;
   @IsString() @MinLength(1) @MaxLength(256) name!: string;
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price?: number;
+  // Floored at zero for the reason given on the handoff's price.
+  @IsOptional()
+  @Transform(clampToZero)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  price?: number;
   @IsOptional() @IsISO8601() expirationDate?: string;
   /**
    * This unit's weight in POUNDS, if PPS knows it. Unit-level, unlike most of this

@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayNotEmpty,
@@ -19,6 +19,13 @@ import {
 export const HANDOFF_KINDS = ['unit', 'stock'] as const;
 export type HandoffKind = (typeof HANDOFF_KINDS)[number];
 
+/**
+ * Floor a price at zero, leaving anything that is not a number alone so the
+ * validators below still report it properly.
+ */
+export const clampToZero = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'number' && value < 0 ? 0 : value;
+
 // A mixed handoff batch item. `kind` discriminates:
 //   unit  -> serialized: requires `serial`
 //   stock -> quantity:   requires `quantity` + `handoffId` (idempotency key)
@@ -29,7 +36,15 @@ export class HandoffItemDto {
   @IsString() @MinLength(1) @MaxLength(128) sku!: string;
   @IsString() @MinLength(1) @MaxLength(256) name!: string;
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price?: number;
+  // A negative price is floored to 0 rather than rejected: an ERP credit line would
+  // otherwise park the whole handoff as FAILED and need a human, and a unit that
+  // cannot be sold for a negative amount is better described as costing nothing.
+  // Floored before validation, so @Min(0) below only ever guards a non-number.
+  @IsOptional()
+  @Transform(clampToZero)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  price?: number;
   @IsOptional() @IsString() @MaxLength(128) upc?: string;
   // The cloud store id (stores.id) within the company this line routes to.
   @IsInt() @IsPositive() storeId!: number;
