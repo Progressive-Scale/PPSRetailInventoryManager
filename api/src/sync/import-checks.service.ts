@@ -157,6 +157,10 @@ export class ImportChecksService {
       return { itemId: r.itemId, status: 'resolved', outcome: 'NOT_FOUND' };
     }
 
+    if (r.outcome === 'MATCHED_CASE') {
+      return this.applyCaseMatch(tx, companyId, r, apiKeyId, item, now);
+    }
+
     if (r.outcome === 'DISCREPANCY') {
       if (!r.discrepancy?.reason) {
         return {
@@ -292,6 +296,203 @@ export class ImportChecksService {
       ppsProductRef: m.ppsProductRef ?? null,
     });
     return { itemId: r.itemId, status: 'resolved', outcome: 'MATCHED' };
+  }
+
+  /**
+   * Adopt the pieces of a matched CASE.
+   *
+   * The store scanned the barcode on a box. That code names no unit — a tray-pack case is a
+   * grouping, and what the store physically holds is the pieces inside it — so the answer
+   * creates the PIECES and retires the placeholder that asked the question.
+   *
+   * Each piece gets its own product resolved by sku, because one case legitimately holds
+   * several different products (real cases in Ordersystem8 hold up to eight). Pieces land
+   * ON_HAND at the location the placeholder was scanned into: somebody is standing there
+   * holding them, which is the whole evidence this adoption rests on.
+   *
+   * The placeholder is ADJUSTED_OUT rather than deleted. Deleting it would erase the record
+   * of the scan that started this — and could not work anyway, since ledger rows reference it
+   * with no cascade — while leaving it ON_HAND would double the store's count by standing for
+   * the same goods as its own pieces. Its ledger row names the pieces that replaced it, so
+   * the history reads: unknown code scanned, identified as a case, became N units.
+   */
+  private async applyCaseMatch(
+    tx: Tx,
+    companyId: number,
+    r: ImportCheckResultDto,
+    apiKeyId: number | null,
+    item: typeof inventoryItems.$inferSelect,
+    now: Date,
+  ): Promise<ImportCheckAck> {
+    const c = r.case;
+    if (!c) {
+      return {
+        itemId: r.itemId,
+        status: 'error',
+        reason: 'MATCHED_CASE requires a case payload',
+      };
+    }
+
+    const adopted: Array<{ serial: string; sku: string; itemId: string; created: boolean }> = [];
+
+    for (const piece of c.pieces) {
+      const product = await resolveOrCreateProduct(
+        tx,
+        companyId,
+        {
+          sku: piece.sku,
+          name: piece.name,
+          price: piece.price != null ? String(piece.price) : '0',
+          upc: blankToNull(piece.upc),
+          trackingType: 'SERIALIZED',
+          needsReview: false,
+        },
+        {
+          service: this.audit,
+          actor: AuditService.agent(apiKeyId),
+          details: { via: 'import case match', caseSerial: c.caseSerial },
+        },
+      );
+      if (product.trackingType !== 'SERIALIZED') {
+        // A quantity product cannot own serialized pieces. Skipped rather than failing the
+        // whole case: the other pieces are still real and still at the store.
+        continue;
+      }
+
+      // Idempotent by (product, serial) — the same identity rule handoffs use. A redelivered
+      // answer, or a piece that arrived by handoff in the meantime, updates rather than
+      // duplicating.
+      const [existing] = await tx
+        .select({ id: inventoryItems.id, status: inventoryItems.status })
+        .from(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.companyId, companyId),
+            eq(inventoryItems.productId, product.id),
+            eq(inventoryItems.serial, piece.serial),
+          ),
+        )
+        .limit(1);
+
+      if (existing) {
+        await tx
+          .update(inventoryItems)
+          .set({
+            caseSerial: c.caseSerial,
+            ...(piece.expirationDate ? { expirationDate: piece.expirationDate } : {}),
+            ...(piece.weightLbs != null ? { weightLbs: String(piece.weightLbs) } : {}),
+            ...(piece.price != null ? { price: String(piece.price) } : {}),
+            ...(piece.barcode ? { barcode: piece.barcode } : {}),
+            updatedAt: now,
+          })
+          .where(eq(inventoryItems.id, existing.id));
+        adopted.push({
+          serial: piece.serial,
+          sku: piece.sku,
+          itemId: existing.id,
+          created: false,
+        });
+        continue;
+      }
+
+      const [created] = await tx
+        .insert(inventoryItems)
+        .values({
+          companyId,
+          storeId: item.storeId,
+          productId: product.id,
+          // Where the placeholder was, because that is where the pieces are.
+          locationId: item.locationId,
+          serial: piece.serial,
+          barcode: piece.barcode ?? null,
+          caseSerial: c.caseSerial,
+          status: 'ON_HAND',
+          needsReview: false,
+          expirationDate: piece.expirationDate ?? null,
+          weightLbs: piece.weightLbs != null ? String(piece.weightLbs) : null,
+          price: piece.price != null ? String(piece.price) : null,
+          receivedAt: now,
+        })
+        .returning();
+
+      await tx.insert(inventoryTransactions).values({
+        companyId,
+        storeId: item.storeId,
+        productId: product.id,
+        itemId: created.id,
+        type: 'ADJUSTMENT',
+        quantityDelta: 1,
+        locationToId: item.locationId,
+        note:
+          `adopted from PPS case ${c.caseSerial} via import match ` +
+          `(piece of a case scanned at this store)`,
+        source: 'SYNC',
+      });
+      adopted.push({ serial: piece.serial, sku: piece.sku, itemId: created.id, created: true });
+    }
+
+    if (adopted.length === 0) {
+      // Nothing could be adopted, so nothing is claimed. The placeholder stays REQUESTED and
+      // the agent can answer again once the catalog side is fixed.
+      return {
+        itemId: r.itemId,
+        status: 'error',
+        reason: 'no piece in the case could be adopted (tracking type clash on every sku)',
+      };
+    }
+
+    // Retire the placeholder. It carries the case serial too, so it stays findable beside
+    // the pieces that replaced it.
+    await tx
+      .update(inventoryItems)
+      .set({
+        caseSerial: c.caseSerial,
+        status: 'ADJUSTED_OUT',
+        // needs_review is deliberately LEFT SET. The CHECK
+        // inventory_items_productless_needs_review requires it while product_id is null,
+        // and this row never gets a product: it stands for a box, not a thing. What takes
+        // it out of the review queue is ADJUSTED_OUT — every listing defaults to ON_HAND —
+        // so the invariant holds and nobody is asked to review a retired placeholder.
+        importCheckStatus: 'MATCHED',
+        importCheckResolvedAt: now,
+        importCheckResult: {
+          // The DB enum stays MATCHED — the check WAS answered, and adding an enum value
+          // would be a migration for a distinction only this payload needs to make.
+          outcome: 'MATCHED_CASE',
+          caseSerial: c.caseSerial,
+          pieceCount: adopted.length,
+          pieceSerials: adopted.map((a) => a.serial),
+          ...(r.discrepancy ? { discrepancy: r.discrepancy } : {}),
+        },
+        updatedAt: now,
+      })
+      .where(eq(inventoryItems.id, item.id));
+
+    await tx.insert(inventoryTransactions).values({
+      companyId,
+      storeId: item.storeId,
+      productId: null,
+      itemId: item.id,
+      type: 'ADJUSTMENT',
+      quantityDelta: -1,
+      locationFromId: item.locationId,
+      note:
+        `scanned code ${item.serial} was the barcode of case ${c.caseSerial}; ` +
+        `replaced by ${adopted.length} piece(s)`,
+      source: 'SYNC',
+    });
+
+    await this.recordAnswer(tx, companyId, apiKeyId, item, 'MATCHED', {
+      outcome: 'MATCHED_CASE',
+      caseSerial: c.caseSerial,
+      pieceCount: adopted.length,
+      created: adopted.filter((a) => a.created).length,
+      updated: adopted.filter((a) => !a.created).length,
+      skus: [...new Set(adopted.map((a) => a.sku))],
+      ...(r.discrepancy ? { discrepancyReason: r.discrepancy.reason } : {}),
+    });
+
+    return { itemId: r.itemId, status: 'resolved', outcome: 'MATCHED_CASE' };
   }
 
   /**

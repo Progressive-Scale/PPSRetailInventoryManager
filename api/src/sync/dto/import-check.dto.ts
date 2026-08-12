@@ -19,7 +19,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-const OUTCOMES = ['MATCHED', 'NOT_FOUND', 'DISCREPANCY'] as const;
+const OUTCOMES = ['MATCHED', 'MATCHED_CASE', 'NOT_FOUND', 'DISCREPANCY'] as const;
 
 /** The catalog facts PPS knows about a matched serial. ERP data is authoritative. */
 export class ImportMatchDto {
@@ -49,6 +49,43 @@ export class ImportMatchDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(400) barcode?: string;
 }
 
+/**
+ * One piece inside a matched case.
+ *
+ * Each carries its OWN product: a tray-pack case can hold several different products, so a
+ * single sku for the box would misname most of its contents.
+ */
+export class ImportCasePieceDto {
+  @IsString() @MinLength(1) @MaxLength(128) serial!: string;
+  @IsString() @MinLength(1) @MaxLength(128) sku!: string;
+  @IsString() @MinLength(1) @MaxLength(256) name!: string;
+  @IsOptional()
+  @Transform(clampToZero)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  price?: number;
+  @IsOptional() @IsString() @MaxLength(128) upc?: string;
+  @IsOptional() @IsISO8601() expirationDate?: string;
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 8 }) weightLbs?: number;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(400) barcode?: string;
+}
+
+/**
+ * The answer when the scanned code named a CASE rather than a unit: the box's serial, and
+ * the pieces inside it. The case never becomes a unit of inventory — what the store holds
+ * is the pieces.
+ */
+export class ImportCaseMatchDto {
+  @IsString() @MinLength(1) @MaxLength(128) caseSerial!: string;
+
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ImportCasePieceDto)
+  pieces!: ImportCasePieceDto[];
+}
+
 /** Why PPS could not answer cleanly, and what it did see. */
 export class ImportDiscrepancyDto {
   @IsString() @MinLength(1) @MaxLength(500) reason!: string;
@@ -68,7 +105,16 @@ export class ImportCheckResultDto {
   @Type(() => ImportMatchDto)
   match?: ImportMatchDto;
 
-  /** Required when outcome is DISCREPANCY. */
+  /** Required when outcome is MATCHED_CASE. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ImportCaseMatchDto)
+  case?: ImportCaseMatchDto;
+
+  /**
+   * Required when outcome is DISCREPANCY, and OPTIONAL alongside MATCHED_CASE: pieces that
+   * could be adopted are, and the ones that could not still have to reach an admin.
+   */
   @IsOptional()
   @ValidateNested()
   @Type(() => ImportDiscrepancyDto)
