@@ -152,6 +152,10 @@ export class SyncService {
           ...(it.barcode ? { barcode: it.barcode } : {}),
           ...(it.weightLbs != null ? { weightLbs: String(it.weightLbs) } : {}),
           ...(it.price != null ? { price: String(it.price) } : {}),
+          // Same rule again: a case that arrives overwrites (a piece can be repacked into
+          // a different box), an omitted one leaves the grouping alone. This is also how an
+          // adopted unidentified unit learns which case it belongs to.
+          ...(it.caseSerial ? { caseSerial: it.caseSerial } : {}),
           updatedAt: new Date(),
         })
         .where(eq(inventoryItems.id, existing.id));
@@ -171,6 +175,8 @@ export class SyncService {
         locationId: null,
         serial: it.serial,
         barcode: it.barcode ?? null,
+        // Grouping only. The case gets no row of its own — see schema.caseSerial.
+        caseSerial: it.caseSerial ?? null,
         status: 'PENDING',
         expirationDate: it.expirationDate ?? null,
         // numeric arrives as a string in drizzle; null when the ERP has not weighed it.

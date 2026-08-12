@@ -57,6 +57,11 @@ export class HandoffItemDto {
   // additive — it is kept for traceability and matched as a fallback on scan, never
   // used as the identity key.
   @IsOptional() @IsString() @MinLength(1) @MaxLength(400) barcode?: string;
+  // The serial of the CASE this piece came out of, as its AI (21) value — grouping
+  // metadata, never an identity. The case is not a unit of inventory: a box of tray-pack
+  // pieces is twelve sellable things, not thirteen. Omitted for a unit that arrived on
+  // its own, which is most of them.
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(128) caseSerial?: string;
   @IsOptional() @IsISO8601() expirationDate?: string;
   /**
    * This unit's weight in POUNDS (random-weight goods). Not validated as positive:

@@ -538,6 +538,22 @@ export const inventoryItems = pgTable(
     // Deliberately NOT unique: the same label content can legitimately repeat where
     // the serial does not, and a uniqueness failure here must never block a handoff.
     barcode: text('barcode'),
+    /**
+     * The serial of the CASE this unit came out of, when it came out of one.
+     *
+     * Tray-pack goods arrive as a box of pieces. The pieces are the inventory — each has
+     * its own product, weight, sell-by date and price — while the case is a barcode on the
+     * outside meaning "these pieces". So the case is deliberately NOT a row here: giving it
+     * one would double the store's on-hand, and nobody can sell a box that is really twelve
+     * separate steaks.
+     *
+     * Stored as the GS1 AI (21) value, the same form `serial` takes, because a store scans
+     * the box the same way it scans a piece and both have to resolve to the same string.
+     *
+     * NULL is the ordinary case: a unit that arrived on its own, which is most of them.
+     * Those behave exactly as they always have.
+     */
+    caseSerial: text('case_serial'),
     status: itemStatus('status').notNull().default('ON_HAND'),
     // Set on a unit that needs a human (or the import agent) to identify it.
     // Distinct from products.needs_review, which flags an incomplete CATALOG row;
@@ -632,6 +648,12 @@ export const inventoryItems = pgTable(
     index('inventory_items_company_barcode_idx')
       .on(t.companyId, t.barcode)
       .where(sql`barcode IS NOT NULL`),
+    // Scanning a case resolves to every piece sharing this value, so the lookup is on the
+    // hot path of a cycle count. Partial for the same reason as barcode: most units are
+    // not pieces of anything. Not unique — sharing the value is the entire point.
+    index('inventory_items_company_case_serial_idx')
+      .on(t.companyId, t.caseSerial)
+      .where(sql`case_serial IS NOT NULL`),
     // These two CHECKs are the whole reason the columns above can be nullable
     // without the nulls becoming ambiguous. Enforced in the database rather than
     // in a service, because every write path — sync, cycle count, portal, the
