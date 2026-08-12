@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, ne, sql, SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql, SQL } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import {
   CycleCount,
@@ -21,6 +21,7 @@ import {
   stores,
 } from '../db/schema';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
+import { resolveScan, summariseCase } from '../db/scan-resolve';
 import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
@@ -430,6 +431,92 @@ export class CycleCountsService {
     });
   }
 
+  /**
+   * Turn any scanned CASE serials in a list into the serials of the pieces inside.
+   *
+   * Scanning the box has to mean scanning everything in it, and the honest way to get that
+   * is to expand at the door: every branch below already knows how to receive a PENDING
+   * unit, count an ON_HAND one, or offer a SOLD one for reinstatement, and each does it
+   * per unit. Expanding here means a case scan inherits all of that behaviour — including
+   * idempotency, since a piece already counted is already in the scanned set and dedupes
+   * away — instead of a second implementation of the same rules that could disagree.
+   *
+   * A value that some unit owns as its own serial is left completely alone: units win over
+   * cases (see resolveScan), so a piece scan can never fan out to its siblings.
+   *
+   * Store-scoped on purpose. Two stores can hold pieces of one original case, and sweeping
+   * another store's pieces into this count would receive stock nobody was holding.
+   */
+  private async expandCaseScans(
+    tx: Tx,
+    ctx: DataContext,
+    storeId: number,
+    values: string[],
+  ): Promise<{
+    serials: string[];
+    cases: Array<{ caseSerial: string; pieceSerials: string[] }>;
+  }> {
+    if (values.length === 0) return { serials: values, cases: [] };
+
+    // Anything a unit owns is not a case reference, whichever column it matched.
+    const owned = await tx
+      .select({ serial: inventoryItems.serial, barcode: inventoryItems.barcode })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, ctx.companyId),
+          or(
+            inArray(inventoryItems.serial, values),
+            inArray(inventoryItems.barcode, values),
+          ),
+        ),
+      );
+    const ownedValues = new Set<string>();
+    for (const o of owned) {
+      ownedValues.add(o.serial);
+      if (o.barcode) ownedValues.add(o.barcode);
+    }
+
+    const maybeCases = values.filter((v) => !ownedValues.has(v));
+    if (maybeCases.length === 0) return { serials: values, cases: [] };
+
+    const pieces = await tx
+      .select({
+        caseSerial: inventoryItems.caseSerial,
+        serial: inventoryItems.serial,
+      })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, ctx.companyId),
+          eq(inventoryItems.storeId, storeId),
+          inArray(inventoryItems.caseSerial, maybeCases),
+        ),
+      );
+    if (pieces.length === 0) return { serials: values, cases: [] };
+
+    const byCase = new Map<string, string[]>();
+    for (const p of pieces) {
+      const key = p.caseSerial!;
+      const list = byCase.get(key) ?? [];
+      list.push(p.serial);
+      byCase.set(key, list);
+    }
+
+    // The case serial itself drops out of the list: it names no unit, and leaving it in
+    // would land in the unknown-serial path and raise a phantom review item for a box.
+    const expanded = new Set(values.filter((v) => !byCase.has(v)));
+    for (const list of byCase.values()) for (const serial of list) expanded.add(serial);
+
+    return {
+      serials: [...expanded],
+      cases: [...byCase.entries()].map(([caseSerial, pieceSerials]) => ({
+        caseSerial,
+        pieceSerials,
+      })),
+    };
+  }
+
   // ---- submit (compute proposals; change nothing) ------------------------
 
   async submit(ctx: DataContext, id: number, dto: SubmitCycleCountDto) {
@@ -463,6 +550,27 @@ export class CycleCountsService {
       const declaredGone = new Set(
         (dto.markSoldSerials ?? []).map(normalizeScannedSerial),
       );
+      // A case serial in any of these lists means "all the pieces in that box". Expanded
+      // before anything looks at them, so the rest of submit only ever sees unit serials.
+      // importCheckSerials is deliberately NOT expanded: a case serial that resolves to
+      // pieces is already known, and one that does not is exactly what the import check is
+      // for — the agent answers it with the case's contents (MATCHED_CASE).
+      const scannedExpansion = await this.expandCaseScans(
+        tx,
+        ctx,
+        cc.storeId,
+        scannedSerials,
+      );
+      const scannedSerialsExpanded = scannedExpansion.serials;
+      const reinstateExpansion = await this.expandCaseScans(tx, ctx, cc.storeId, [
+        ...reinstate,
+      ]);
+      const reinstateExpanded = new Set(reinstateExpansion.serials);
+      const declaredGoneExpansion = await this.expandCaseScans(tx, ctx, cc.storeId, [
+        ...declaredGone,
+      ]);
+      const declaredGoneExpanded = new Set(declaredGoneExpansion.serials);
+
       const quantityCounts = dto.quantityCounts ?? [];
       // A new item's value is a serial only when isUpc is false; a UPC must not be
       // touched. (The 2D pattern could not match one anyway, but saying so is cheaper
@@ -595,7 +703,7 @@ export class CycleCountsService {
         });
       };
 
-      for (const serial of scannedSerials) {
+      for (const serial of scannedSerialsExpanded) {
         if (handledSerials.has(serial)) continue;
         handledSerials.add(serial);
 
@@ -670,7 +778,7 @@ export class CycleCountsService {
           // Only on an explicit decision. A sold unit reappearing could be a return,
           // a mis-scan or a duplicated barcode, so the person holding it decides; an
           // unconfirmed scan of a sold serial is ignored rather than guessed at.
-          if (reinstate.has(serial)) {
+          if (reinstateExpanded.has(serial)) {
             lines.push({
               productId: sold.productId,
               itemId: sold.id,
@@ -815,7 +923,7 @@ export class CycleCountsService {
         // Out-of-scope serials never appear in this loop, so a handheld that offered a
         // unit from another location cannot write it off here. That is deliberate: the
         // request fails safe rather than reaching past the count's own scope.
-        const gone = u.serial != null && declaredGone.has(u.serial);
+        const gone = u.serial != null && declaredGoneExpanded.has(u.serial);
         lines.push({
           productId: u.productId,
           itemId: u.id,
@@ -941,7 +1049,22 @@ export class CycleCountsService {
         lineCount: lines.length,
       });
 
-      return this.buildResult(tx, ctx, updated);
+      const result = await this.buildResult(tx, ctx, updated);
+      // What each scanned case turned into, so a handheld can say "Case 108963047415 —
+      // 10 pieces" rather than reporting ten scans the counter never made. Absent when no
+      // case was scanned, which keeps the response identical for every existing client.
+      const caseScans = scannedExpansion.cases.map((c) => ({
+        caseSerial: c.caseSerial,
+        pieceCount: c.pieceSerials.length,
+        pieceSerials: c.pieceSerials,
+        resolutions: lines
+          .filter((l) => l.serial != null && c.pieceSerials.includes(l.serial))
+          .reduce<Record<string, number>>((acc, l) => {
+            acc[l.resolution] = (acc[l.resolution] ?? 0) + 1;
+            return acc;
+          }, {}),
+      }));
+      return caseScans.length > 0 ? { ...result, caseScans } : result;
     });
   }
 
@@ -1432,6 +1555,32 @@ export class CycleCountsService {
       const contextLocationId =
         cc.locationId ??
         (await systemLocationId(tx, ctx.companyId, cc.storeId, 'BACKROOM'));
+
+      // Before anything else: does this string name units, or a CASE of them? The shared
+      // resolver answers that in one place so a count and a lookup cannot disagree about
+      // what a scan means. A case hit is reported as its own classification rather than
+      // resolved to one piece — acting on the box means acting on all of it, which is
+      // submit's job, not a lookup's.
+      const scan = await resolveScan(tx, ctx.companyId, serial, { storeId: cc.storeId });
+      if (scan.kind === 'CASE') {
+        return {
+          serial,
+          itemId: null,
+          caseSerial: scan.caseSerial,
+          pieceCount: scan.candidates.length,
+          pieces: scan.candidates.map((c) => ({
+            itemId: c.id,
+            serial: c.serial,
+            status: c.status,
+            sku: c.sku,
+            name: c.name,
+            locationId: c.locationId,
+            locationName: c.locationName,
+          })),
+          byStatus: summariseCase(scan.candidates),
+          classification: 'CASE' as const,
+        };
+      }
 
       // Deliberately NOT limit(1). A serial is unique per product, not per company, so a
       // scan can legitimately match two units of different SKUs at the same store.
