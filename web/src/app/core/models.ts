@@ -128,6 +128,12 @@ export interface InventoryItem {
   storeId: number;
   productId: number;
   serial: string;
+  /**
+   * The serial of the case this unit came out of, when it came out of one. Grouping only —
+   * the case is a barcode on a box, never a unit of its own. Null for the ordinary unit
+   * that arrived on its own.
+   */
+  caseSerial: string | null;
   status: ItemStatus;
   expirationDate: string | null;
   /** Pounds, as a numeric string. Null when nobody has weighed this unit. */
@@ -173,6 +179,8 @@ export interface DetailUnit {
   locationName: string;
   locationKind: LocationKind;
   serial: string;
+  /** The box this piece came out of, or null for a unit that arrived on its own. */
+  caseSerial: string | null;
   status: ItemStatus;
   expirationDate: string | null;
   /** Pounds, as a numeric string. Null when nobody has weighed this unit. */
@@ -222,6 +230,11 @@ export interface StockRow {
   rowKind: 'unit' | 'stock';
   rowId: string;
   itemId: string | null;
+  /**
+   * The case a piece came out of; null on a unit that arrived alone and always null on a
+   * stock row — a quantity counter is not a piece of anything. Grouping metadata only.
+   */
+  caseSerial: string | null;
   productId: number;
   sku: string;
   upc: string | null;
@@ -415,6 +428,11 @@ export interface ExpiringItem {
   serial: string;
   /** The full GS1-128 barcode from the ERP label, when it sent one. */
   barcode: string | null;
+  /**
+   * The case this piece arrived in, or null for a unit that arrived on its own. Pending
+   * arrival groups by it so one carton reads as one delivery rather than N arrivals.
+   */
+  caseSerial: string | null;
   status: ItemStatus;
   expirationDate: string | null;
   receivedAt: string | null;

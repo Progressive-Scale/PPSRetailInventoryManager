@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.10
+# Sync Agent Integration Contract — v3.11
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,7 +10,7 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.10`
+- **Contract version:** `v3.11`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
@@ -35,6 +35,95 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.11
+
+**Tray-pack cases: the PIECES are the inventory, the case is a grouping barcode.**
+
+A tray-pack case in Ordersystem8 (`gs1_item` with `InnerWeights` rows) is a box of pieces,
+each with its own product, weight, sell-by date and price. Real cases here hold up to 37
+pieces spanning 8 different products. A store counts and sells the pieces, so the pieces are
+what a handoff names — and the case never becomes a unit of inventory, because a row for the
+box would double the store's on-hand and offer something nobody can sell.
+
+The case still matters: it is the barcode on the outside, and scanning it has to mean "these
+pieces". So it travels as grouping metadata.
+
+**A case with no `InnerWeights` rows is unchanged.** The case is the unit, exactly as before.
+Both shapes coexist and which applies is decided per case by whether pieces exist.
+
+### `caseSerial` on a handoff line
+
+`POST /api/sync/handoffs` — a `unit` line may carry `caseSerial` (string, 1–128 chars):
+
+```json
+{ "kind": "unit", "serial": "1000005334", "caseSerial": "108963047415",
+  "sku": "11102", "name": "Chuck Roll Bnls", "storeId": 101,
+  "price": 12.25, "weightLbs": 3.01, "expirationDate": "2026-03-01" }
+```
+
+- `serial` is the PIECE's own serial (`InnerWeights.TPSerialNumber`), printed on the retail
+  label as `R{serial}/{YYYYMMDD}` — which §the 2D label rules already normalise back to the
+  bare serial. Identity and idempotency are unchanged: `(company, serial)`.
+- `caseSerial` is the case's **AI (21) value**, not the spaced `uccean128human` rendering. A
+  scanner aimed at the box emits the raw symbol, and every case that arrives as a unit is
+  already keyed on its (21) value — so pieces group under the same form and one scan means
+  the same thing either way.
+- `barcode` on a piece line is the piece's OWN label (`InnerWeights.TPGS1`) or absent. Never
+  the case's: the cloud matches scans against `barcode` as a fallback, so pieces sharing a
+  case barcode would make one case scan resolve to an arbitrary sibling.
+- Omitted for an ordinary case handoff. Applied with the usual rule — **a value that arrives
+  overwrites, an omitted one is left alone** — so a piece repacked into another box updates,
+  and a redelivery that says nothing about cases changes no grouping.
+
+### Scanning a case in the store
+
+Resolution order, server-side and shared by every scan entry point:
+
+1. the value as a **unit serial** (or a stored barcode) — a piece is a unit, so a piece scan
+   acts on that piece alone;
+2. failing that, as a **`caseSerial`** — every piece the store holds under it;
+3. failing that, the existing unknown-serial flow.
+
+Units win over cases deliberately: checking cases first would let a case barcode hijack a
+unit that happens to carry the same string. The case step is store-scoped — two stores can
+hold pieces of one original case, and one scan must not receive another store's stock.
+
+A case scan in a cycle count resolves **per piece**: PENDING pieces are received, ON_HAND
+pieces are counted, SOLD pieces are offered for reinstatement, and pieces already counted are
+skipped. Re-scanning a case is therefore free.
+
+### `MATCHED_CASE` — a new import-check outcome
+
+`POST /api/sync/import-checks/results` gains `MATCHED_CASE`, for when the unknown serial the
+cloud asked about turns out to name a case rather than a unit:
+
+```json
+{ "itemId": "…", "outcome": "MATCHED_CASE",
+  "case": {
+    "caseSerial": "108963047415",
+    "pieces": [
+      { "serial": "1000005334", "sku": "11102", "name": "Chuck Roll Bnls",
+        "price": 12.25, "weightLbs": 3.01, "expirationDate": "2026-03-01" },
+      { "serial": "1000005336", "sku": "11103", "name": "Chuck Steak Bone In",
+        "price": 7.75, "weightLbs": 3.01, "expirationDate": "2026-02-24" }
+    ] },
+  "discrepancy": { "reason": "1 of 3 piece(s) in this case were left out …" } }
+```
+
+- Each piece carries its **own** sku/price/weight/expiration. One sku for the box would
+  misname most of a mixed case.
+- The cloud adopts the listed pieces with `case_serial` set, and resolves the placeholder
+  item that asked the question — the case serial names no unit, so it must not be left behind
+  as a phantom.
+- `discrepancy` may accompany `MATCHED_CASE` rather than replacing it: pieces that can be
+  adopted should be, and the ones excluded (voided in pps, or missing a product id/name)
+  still need to reach an admin.
+- A resolution order applies on the agent side too — piece serial first, then case, then
+  `NOT_FOUND` — for the same reason as the scan order above.
+
+**A single `MATCHED` answer may now also carry `caseSerial`**, when the serial resolved to a
+piece: the adopted unit lands in the same group its siblings did.
 
 ## What's new in v3.10
 

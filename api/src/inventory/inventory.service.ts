@@ -19,6 +19,7 @@ import {
 } from 'drizzle-orm';
 import { TenantDbService, Tx } from '../db/tenant-db.service';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
+import { resolveScan } from '../db/scan-resolve';
 import {
   InventoryItem,
   inventoryItems,
@@ -218,6 +219,8 @@ export class InventoryService {
             locationName: storeLocations.name,
             locationKind: storeLocations.kind,
             serial: inventoryItems.serial,
+            // Grouping metadata: which box this piece came out of, if any.
+            caseSerial: inventoryItems.caseSerial,
             status: inventoryItems.status,
             expirationDate: inventoryItems.expirationDate,
             weightLbs: inventoryItems.weightLbs,
@@ -742,6 +745,9 @@ export class InventoryService {
           locationKind: storeLocations.kind,
           serial: inventoryItems.serial,
           barcode: inventoryItems.barcode,
+          // The box a piece came out of, so Pending arrival can group by it: twelve rows
+          // that arrived in one carton read as one delivery, not twelve.
+          caseSerial: inventoryItems.caseSerial,
           status: inventoryItems.status,
           expirationDate: inventoryItems.expirationDate,
           // Carried here too so a PENDING arrival shows its weight before it is
@@ -835,7 +841,8 @@ export class InventoryService {
                NULL::numeric,
                -- No unit means no override to hold, so effective IS the catalog price.
                -- Positionally matched to the unit branch's three price columns.
-               NULL::numeric, p.price, p.price
+               NULL::numeric, p.price, p.price,
+               NULL::text
         FROM inventory_stock s
         JOIN products p ON p.id = s.product_id
         JOIN store_locations l ON l.id = s.location_id
@@ -859,7 +866,10 @@ export class InventoryService {
                -- override (NULL = none), p.price is what it would inherit, and the
                -- COALESCE is what the unit actually sells for.
                i.price, p.price AS catalog_price,
-               COALESCE(i.price, p.price) AS effective_price
+               COALESCE(i.price, p.price) AS effective_price,
+               -- The box this piece came out of. Positionally matched by the stock branch,
+               -- which has none: a quantity counter is not a piece of anything.
+               i.case_serial
         FROM inventory_items i
         JOIN products p ON p.id = i.product_id
         JOIN store_locations l ON l.id = i.location_id
@@ -877,7 +887,9 @@ export class InventoryService {
       conds.push(sql`c.created_at < (${query.createdTo}::date + interval '1 day')`);
     if (like)
       conds.push(
-        sql`(c.name ILIKE ${like} OR c.sku ILIKE ${like} OR c.upc ILIKE ${like} OR c.serial ILIKE ${like})`,
+        // case_serial is searchable so typing a box's barcode finds the pieces inside it.
+        // Somebody holding a carton reads the box, not the twelve labels in it.
+        sql`(c.name ILIKE ${like} OR c.sku ILIKE ${like} OR c.upc ILIKE ${like} OR c.serial ILIKE ${like} OR c.case_serial ILIKE ${like})`,
       );
     const where = conds.length ? sql` WHERE ${sql.join(conds, sql` AND `)}` : sql``;
 
@@ -1101,6 +1113,7 @@ export class InventoryService {
         price: r.price,
         catalogPrice: r.catalog_price,
         effectivePrice: r.effective_price,
+        caseSerial: r.case_serial,
         status: r.status,
         reorderOpen: r.reorder_open,
       }));
@@ -1682,6 +1695,33 @@ export class InventoryService {
           .where(and(...conds))
           .limit(2);
         if (units.length === 0) {
+          // Not a unit — but it may be the barcode on a box of pieces, which owns no row
+          // of its own. Answer with the pieces so the scanner can act on the case; only a
+          // string that is neither is genuinely unknown.
+          const scan = await resolveScan(tx, ctx.companyId, serial, { storeId });
+          if (scan.kind === 'CASE') {
+            const onHand = scan.candidates.filter((c) => c.status === 'ON_HAND');
+            if (onHand.length > 0) {
+              return {
+                kind: 'case' as const,
+                caseSerial: scan.caseSerial,
+                items: onHand.map((c) => ({
+                  id: c.id,
+                  storeId: c.storeId,
+                  productId: c.productId,
+                  productName: c.name,
+                  sku: c.sku,
+                  serial: c.serial,
+                  locationId: c.locationId,
+                  locationName: c.locationName,
+                  expirationDate: c.expirationDate,
+                })),
+              };
+            }
+            throw new NotFoundException(
+              `Case '${scan.caseSerial}' has ${scan.candidates.length} piece(s), none on hand.`,
+            );
+          }
           throw new NotFoundException('No on-hand unit for that serial.');
         }
         if (units.length > 1) {

@@ -105,8 +105,21 @@ const PAGE_SIZE = 200;
               </tr>
             </thead>
             <tbody>
-              @for (r of filtered(); track r.id) {
-                <tr [class.stale]="(r.daysPending ?? 0) >= 7">
+              @for (g of grouped(); track g.key) {
+                @if (g.caseSerial) {
+                  <!-- One carton of pieces reads as one delivery. Without this, twelve
+                       rows look like twelve separate arrivals. -->
+                  <tr class="case-row">
+                    <td [attr.colspan]="canManage ? 7 : 6">
+                      <span class="case-label">Case {{ g.caseSerial }}</span>
+                      <span class="case-count">
+                        — {{ g.rows.length }} {{ g.rows.length === 1 ? 'piece' : 'pieces' }}
+                      </span>
+                    </td>
+                  </tr>
+                }
+                @for (r of g.rows; track r.id) {
+                <tr [class.stale]="(r.daysPending ?? 0) >= 7" [class.in-case]="!!g.caseSerial">
                   <td class="mono serial-cell" [title]="serialTitle(r)">
                     <span class="serial">{{ r.serial }}</span>
                     @if (r.barcode && r.barcode !== r.serial) {
@@ -126,6 +139,7 @@ const PAGE_SIZE = 200;
                     </td>
                   }
                 </tr>
+                }
               }
             </tbody>
           </table>
@@ -197,6 +211,25 @@ const PAGE_SIZE = 200;
       }
       .muted {
         color: var(--muted);
+      }
+      /* Deliberately quiet: a grouping header, not a new kind of row. Same surface and
+         border tokens as the table around it, so the page still looks like itself. */
+      .case-row td {
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        font-size: 0.8rem;
+        padding-top: 0.55rem;
+      }
+      .case-label {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--muted);
+      }
+      .case-count {
+        color: var(--muted);
+      }
+      /* A piece belongs to the header above it; the indent is the only thing saying so. */
+      .in-case td:first-child {
+        padding-left: 1.35rem;
       }
       .error {
         color: #b42318;
@@ -444,13 +477,51 @@ export class PendingArrivalsComponent implements OnInit {
       this.minDays() > 0,
   );
 
+  /**
+   * The filtered rows, with pieces of one case clustered under a header.
+   *
+   * Grouping runs over the ALREADY filtered rows, so a search that matches one piece shows
+   * that piece and a header naming its case rather than silently pulling in siblings the
+   * search excluded — the count in the header always describes what is on screen.
+   *
+   * A case appears where its FIRST piece would have appeared, which keeps whatever order the
+   * filter produced instead of hoisting cases to the top and reshuffling the page.
+   */
+  readonly grouped = computed(() => {
+    const rows = this.filtered();
+    const out: Array<{
+      key: string;
+      caseSerial: string | null;
+      rows: typeof rows;
+    }> = [];
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const cs = r.caseSerial ?? null;
+      if (!cs) {
+        // Its own group of one, with no header: the ordinary unit that arrived alone.
+        out.push({ key: `i:${r.id}`, caseSerial: null, rows: [r] });
+        continue;
+      }
+      if (seen.has(cs)) continue;
+      seen.add(cs);
+      out.push({
+        key: `c:${cs}`,
+        caseSerial: cs,
+        rows: rows.filter((x) => x.caseSerial === cs),
+      });
+    }
+    return out;
+  });
+
   readonly filtered = computed(() => {
     const term = this.search().trim().toLowerCase();
     const min = this.minDays();
     return this.rows().filter((r) => {
       if ((r.daysPending ?? 0) < min) return false;
       if (!term) return true;
-      return [r.serial, r.sku, r.name]
+      // The case serial is searchable too: somebody holding a carton reads the box, not
+      // the pieces, and typing what is in front of them should find them.
+      return [r.serial, r.sku, r.name, r.caseSerial]
         .filter((v): v is string => !!v)
         .join(' ')
         .toLowerCase()

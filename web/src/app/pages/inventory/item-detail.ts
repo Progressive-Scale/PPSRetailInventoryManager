@@ -61,6 +61,11 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'price' | 'setqty' | nul
             <div><dt>On hand</dt><dd>{{ row.onHand }}</dd></div>
             @if (row.rowKind === 'unit') {
               <div><dt>Serial</dt><dd class="mono">{{ row.serial }}</dd></div>
+              <!-- Only when the unit came out of a box. Most units did not, and an empty
+                   Case row on every one of them would be noise. -->
+              @if (row.caseSerial) {
+                <div><dt>Case</dt><dd class="mono">{{ row.caseSerial }}</dd></div>
+              }
               <div><dt>Status</dt><dd>{{ statusLabel(row.status) }}</dd></div>
               <!-- Only when there is one: on an on-hand unit the Status field above
                    already says "not sold", so an empty Sold row would just be noise. -->
