@@ -15,10 +15,13 @@ import {
   inventoryItems,
   inventoryStock,
   inventoryTransactions,
+  notifications,
   Product,
   products,
   storeLocations,
   stores,
+  users,
+  userStores,
 } from '../db/schema';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
 import { resolveScan, summariseCase } from '../db/scan-resolve';
@@ -26,6 +29,7 @@ import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
 import { resolveOrCreateProduct } from '../products/product-catalog';
+import { notifyReviewers } from '../notifications/review-notifications';
 import { systemLocationId } from '../locations/location-util';
 import {
   ListCycleCountsQuery,
@@ -1049,6 +1053,24 @@ export class CycleCountsService {
         lineCount: lines.length,
       });
 
+      // Somebody has to look at this now. Nothing else tells them: the count was handed
+      // in from a scanner on the floor, and the reviewer may not open the web app for
+      // days — which is how a count sits in AWAITING_REVIEW while the stock it describes
+      // keeps moving underneath it.
+      await notifyReviewers(tx, {
+        companyId: ctx.companyId,
+        storeId: cc.storeId,
+        type: 'CYCLE_COUNT_REVIEW',
+        excludeUserId: ctx.userId,
+        payload: {
+        cycleCountId: cc.id,
+        expectedCount: updated.expectedCount,
+        scannedCount: updated.scannedCount,
+        lineCount: lines.length,
+          submittedByUserId: ctx.userId,
+        },
+      });
+
       const result = await this.buildResult(tx, ctx, updated);
       // What each scanned case turned into, so a handheld can say "Case 108963047415 —
       // 10 pieces" rather than reporting ten scans the counter never made. Absent when no
@@ -1071,6 +1093,38 @@ export class CycleCountsService {
   /** Deprecated alias — an older scanner build calls close() to hand a count in. */
   async close(ctx: DataContext, id: number, dto: SubmitCycleCountDto) {
     return this.submit(ctx, id, dto);
+  }
+
+  // ---- review notifications ----------------------------------------------
+
+  /**
+   * How big the Needs Review queue is right now, for one store.
+   *
+   * Items are per-store; a placeholder product is company-wide, because a SKU is not
+   * something a single store owns.
+   */
+  private async countNeedsReview(
+    tx: Tx,
+    ctx: DataContext,
+    storeId: number,
+  ): Promise<{ items: number; products: number }> {
+    const [items] = await tx
+      .select({ n: sql<number>`count(*)` })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.companyId, ctx.companyId),
+          eq(inventoryItems.storeId, storeId),
+          eq(inventoryItems.needsReview, true),
+        ),
+      );
+    const [prods] = await tx
+      .select({ n: sql<number>`count(*)` })
+      .from(products)
+      .where(
+        and(eq(products.companyId, ctx.companyId), eq(products.needsReview, true)),
+      );
+    return { items: Number(items.n), products: Number(prods.n) };
   }
 
   // ---- approve (apply the proposals) -------------------------------------
@@ -1097,6 +1151,13 @@ export class CycleCountsService {
         )
         .orderBy(cycleCountLines.id);
 
+      // Approving is what turns an unknown serial or UPC into a real row flagged for
+      // review, so the size of that queue before and after this loop is exactly what
+      // this approval added. Counted rather than collected: applyLine has a dozen
+      // branches and threading a return value through all of them to learn a number
+      // would be the more fragile way to get it.
+      const reviewBefore = await this.countNeedsReview(tx, ctx, cc.storeId);
+
       const now = new Date();
       for (const line of pending) {
         await this.applyLine(tx, ctx, cc, line, now);
@@ -1104,6 +1165,23 @@ export class CycleCountsService {
           .update(cycleCountLines)
           .set({ appliedAt: now })
           .where(eq(cycleCountLines.id, line.id));
+      }
+
+      const reviewAfter = await this.countNeedsReview(tx, ctx, cc.storeId);
+      const newItems = reviewAfter.items - reviewBefore.items;
+      const newProducts = reviewAfter.products - reviewBefore.products;
+      if (newItems > 0 || newProducts > 0) {
+        await notifyReviewers(tx, {
+          companyId: ctx.companyId,
+          storeId: cc.storeId,
+          type: 'ITEMS_NEED_REVIEW',
+          excludeUserId: ctx.userId,
+          payload: {
+            cycleCountId: cc.id,
+            itemCount: newItems,
+            productCount: newProducts,
+          },
+        });
       }
 
       const [updated] = await tx
@@ -1477,6 +1555,26 @@ export class CycleCountsService {
       const conds: SQL[] = [eq(cycleCounts.companyId, ctx.companyId)];
       if (storeId != null) conds.push(eq(cycleCounts.storeId, storeId));
       if (query.status) conds.push(eq(cycleCounts.status, query.status));
+      // Free text over the things a count is identified by out loud: its number, the
+      // store, and whoever opened or handed it in. EXISTS rather than joins so the
+      // row shape — and the count query beside it — stay exactly as they were.
+      const term = query.search?.trim();
+      if (term) {
+        const like = `%${term}%`;
+        const parts: SQL[] = [
+          sql`EXISTS (SELECT 1 FROM stores s
+                      WHERE s.id = ${cycleCounts.storeId} AND s.name ILIKE ${like})`,
+          sql`EXISTS (SELECT 1 FROM users u
+                      WHERE u.id IN (${cycleCounts.openedByUserId},
+                                     ${cycleCounts.submittedByUserId},
+                                     ${cycleCounts.closedByUserId})
+                        AND u.username ILIKE ${like})`,
+        ];
+        // "42" should find count 42, but only when the whole term is the number —
+        // otherwise every count matches a search for "4".
+        if (/^\d+$/.test(term)) parts.push(eq(cycleCounts.id, Number(term)));
+        conds.push(or(...parts) as SQL);
+      }
       const where = and(...conds);
 
       // Whitelisted column, never the raw string: this reaches an ORDER BY. Newest-first

@@ -107,18 +107,38 @@ const PAGE_SIZE = 200;
             <tbody>
               @for (g of grouped(); track g.key) {
                 @if (g.caseSerial) {
-                  <!-- One carton of pieces reads as one delivery. Without this, twelve
-                       rows look like twelve separate arrivals. -->
-                  <tr class="case-row">
+                  <!-- A carton is one delivery, so it arrives as one row. The pieces are
+                       there when you want them and out of the way when you don't —
+                       twelve rows per box would bury the boxes themselves. -->
+                  <tr
+                    class="case-row"
+                    [class.open]="isCaseOpen(g.caseSerial)"
+                    (click)="toggleCase(g.caseSerial)"
+                    (keydown.enter)="toggleCase(g.caseSerial)"
+                    (keydown.space)="toggleCase(g.caseSerial); $event.preventDefault()"
+                    tabindex="0"
+                    role="button"
+                    [attr.aria-expanded]="isCaseOpen(g.caseSerial)"
+                    [attr.aria-label]="
+                      (isCaseOpen(g.caseSerial) ? 'Collapse case ' : 'Expand case ') + g.caseSerial
+                    "
+                  >
                     <td [attr.colspan]="canManage ? 7 : 6">
+                      <span class="chev" [class.open]="isCaseOpen(g.caseSerial)" aria-hidden="true">›</span>
                       <span class="case-label">Case {{ g.caseSerial }}</span>
                       <span class="case-count">
                         — {{ g.rows.length }} {{ g.rows.length === 1 ? 'piece' : 'pieces' }}
                       </span>
+                      <!-- The oldest piece speaks for the box: a carton that has been
+                           sitting for two weeks should say so without being opened. -->
+                      @if (caseDays(g.rows) >= 7) {
+                        <span class="case-stale">{{ dayLabel(caseDays(g.rows)) }}</span>
+                      }
                     </td>
                   </tr>
                 }
                 @for (r of g.rows; track r.id) {
+                  @if (!g.caseSerial || isCaseOpen(g.caseSerial)) {
                 <tr [class.stale]="(r.daysPending ?? 0) >= 7" [class.in-case]="!!g.caseSerial">
                   <td class="mono serial-cell" [title]="serialTitle(r)">
                     <span class="serial">{{ r.serial }}</span>
@@ -139,6 +159,7 @@ const PAGE_SIZE = 200;
                     </td>
                   }
                 </tr>
+                  }
                 }
               }
             </tbody>
@@ -213,12 +234,38 @@ const PAGE_SIZE = 200;
         color: var(--muted);
       }
       /* Deliberately quiet: a grouping header, not a new kind of row. Same surface and
-         border tokens as the table around it, so the page still looks like itself. */
+         border tokens as the table around it, so the page still looks like itself, and
+         the same rotating caret the inventory grid uses for its product rows. */
+      .case-row {
+        cursor: pointer;
+      }
       .case-row td {
         background: var(--surface);
         border-top: 1px solid var(--border);
         font-size: 0.8rem;
         padding-top: 0.55rem;
+        user-select: none;
+      }
+      .case-row:hover td,
+      .case-row:focus-visible td {
+        background: color-mix(in srgb, var(--border) 22%, transparent);
+      }
+      .case-row:focus-visible {
+        outline: 2px solid var(--border);
+        outline-offset: -2px;
+      }
+      /* Open: the pieces below belong to this row, so the line between them goes. */
+      .case-row.open td {
+        border-bottom-color: transparent;
+      }
+      .chev {
+        display: inline-block;
+        width: 0.7rem;
+        color: var(--muted);
+        transition: transform 0.12s ease;
+      }
+      .chev.open {
+        transform: rotate(90deg);
       }
       .case-label {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -226,6 +273,11 @@ const PAGE_SIZE = 200;
       }
       .case-count {
         color: var(--muted);
+      }
+      /* Said on the closed row, so a stale carton does not need opening to be noticed. */
+      .case-stale {
+        margin-left: 0.5rem;
+        color: #b42318;
       }
       /* A piece belongs to the header above it; the indent is the only thing saying so. */
       .in-case td:first-child {
@@ -487,6 +539,32 @@ export class PendingArrivalsComponent implements OnInit {
    * A case appears where its FIRST piece would have appeared, which keeps whatever order the
    * filter produced instead of hoisting cases to the top and reshuffling the page.
    */
+  /**
+   * Which cases are open. Collapsed by default: the point of grouping a carton is that it
+   * takes one line until somebody asks for its contents.
+   *
+   * Keyed by case serial rather than by index, so the open ones stay open when the filter
+   * or a refresh reorders the list underneath.
+   */
+  readonly openCases = signal<Set<string>>(new Set());
+
+  isCaseOpen(caseSerial: string): boolean {
+    return this.openCases().has(caseSerial);
+  }
+
+  toggleCase(caseSerial: string): void {
+    this.openCases.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(caseSerial)) next.add(caseSerial);
+      return next;
+    });
+  }
+
+  /** The longest a piece in this case has been waiting — the box's own age. */
+  caseDays(rows: { daysPending?: number | null }[]): number {
+    return rows.reduce((n, r) => Math.max(n, r.daysPending ?? 0), 0);
+  }
+
   readonly grouped = computed(() => {
     const rows = this.filtered();
     const out: Array<{

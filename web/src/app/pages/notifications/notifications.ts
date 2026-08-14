@@ -55,6 +55,9 @@ const PAGE_SIZE = 200;
               <option [ngValue]="'EXPIRATION_WARNING'">Expiration</option>
               <option [ngValue]="'INVITE_ACCEPTED'">Invite accepted</option>
               <option [ngValue]="'REORDER_ACKNOWLEDGED'">Reorder acknowledged</option>
+              <option [ngValue]="'CYCLE_COUNT_REVIEW'">Count needs review</option>
+              <option [ngValue]="'ITEMS_NEED_REVIEW'">Items to identify</option>
+              <option [ngValue]="'ITEMS_IDENTIFIED'">Identified by PPS</option>
             </select>
           </label>
           <label class="f">
@@ -387,6 +390,21 @@ const PAGE_SIZE = 200;
       .nt-EXPIRATION_WARNING {
         background: #fef3c7;
         color: #92400e;
+      }
+      .nt-CYCLE_COUNT_REVIEW {
+        background: #fff4e5;
+        color: #92400e;
+        border-color: #fed7aa;
+      }
+      .nt-ITEMS_IDENTIFIED {
+        background: #ecfdf3;
+        color: #027a48;
+        border-color: #a6f4c5;
+      }
+      .nt-ITEMS_NEED_REVIEW {
+        background: #fef2f2;
+        color: #b42318;
+        border-color: #fecaca;
       }
       .nt-REORDER_ACKNOWLEDGED {
         background: #ecfdf5;
@@ -723,6 +741,12 @@ export class NotificationsComponent implements OnInit {
         return 'Invite';
       case 'REORDER_ACKNOWLEDGED':
         return 'Reorder';
+      case 'CYCLE_COUNT_REVIEW':
+        return 'Count';
+      case 'ITEMS_NEED_REVIEW':
+        return 'Review';
+      case 'ITEMS_IDENTIFIED':
+        return 'Identified';
       default:
         return 'Expiration';
     }
@@ -741,6 +765,33 @@ export class NotificationsComponent implements OnInit {
     if (n.type === 'INVITE_ACCEPTED') {
       const role = roleLabel(n.payload.role);
       return `${n.payload.email} accepted their invitation as ${role}`;
+    }
+    if (n.type === 'CYCLE_COUNT_REVIEW') {
+      return (
+        `Count #${n.payload.cycleCountId} at ${n.payload.storeName} is waiting for review` +
+        ` — ${n.payload.scannedCount} of ${n.payload.expectedCount} accounted for`
+      );
+    }
+    if (n.type === 'ITEMS_IDENTIFIED') {
+      const where = n.payload.storeName ? ` at ${n.payload.storeName}` : '';
+      if (n.payload.productName) {
+        const serial = n.payload.serial ? ` ${n.payload.serial}` : '';
+        return `PPS identified${serial} as ${n.payload.productName}${where}`;
+      }
+      const total = n.payload.identifiedCount ?? 0;
+      const cases = n.payload.caseCount ?? 0;
+      const fromCases = cases > 0 ? ` (from ${cases} case${cases === 1 ? '' : 's'})` : '';
+      return `PPS identified ${total} item${total === 1 ? '' : 's'}${fromCases}${where}`;
+    }
+    if (n.type === 'ITEMS_NEED_REVIEW') {
+      const items = n.payload.itemCount ?? 0;
+      const products = n.payload.productCount ?? 0;
+      const parts: string[] = [];
+      if (items > 0) parts.push(`${items} item${items === 1 ? '' : 's'}`);
+      if (products > 0) parts.push(`${products} product${products === 1 ? '' : 's'}`);
+      // "1 item needs" but "2 items need" — and two kinds of thing is always plural.
+      const verb = items + products === 1 ? 'needs' : 'need';
+      return `${parts.join(' and ')} from count #${n.payload.cycleCountId} ${verb} identifying`;
     }
     const what = `${n.payload.productName} ${n.payload.serial}`;
     return n.payload.expired
@@ -762,6 +813,22 @@ export class NotificationsComponent implements OnInit {
     if (n.type === 'REORDER_ACKNOWLEDGED') {
       // Straight to the request, where the order reference is shown in context.
       this.router.navigate(['/reorders'], { queryParams: { status: 'ACKNOWLEDGED' } });
+      return;
+    }
+    if (n.type === 'CYCLE_COUNT_REVIEW') {
+      this.router.navigate(['/cycle-counts'], {
+        queryParams: { count: n.payload.cycleCountId },
+      });
+      return;
+    }
+    if (n.type === 'ITEMS_NEED_REVIEW') {
+      this.router.navigate(['/cycle-counts'], { queryParams: { tab: 'review' } });
+      return;
+    }
+    if (n.type === 'ITEMS_IDENTIFIED') {
+      this.router.navigate(['/inventory'], {
+        queryParams: n.payload.serial ? { serial: n.payload.serial } : {},
+      });
       return;
     }
     this.router.navigate(['/inventory'], {

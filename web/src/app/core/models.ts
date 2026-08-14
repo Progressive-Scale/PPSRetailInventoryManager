@@ -249,6 +249,12 @@ export interface StockRow {
   expirationDate: string | null;
   createdAt: string;
   /**
+   * When this unit was scanned into inventory — what the grid shows, sorts and filters on.
+   * On a quantity row it is the counter's own creation, which is when the first of those
+   * units landed: the same fact, one level up.
+   */
+  receivedAt: string;
+  /**
    * This unit's weight in pounds, as a numeric string. Null on a quantity row (there is
    * no unit to weigh) and on a unit nobody has weighed — both render as "—", never 0.
    */
@@ -303,8 +309,8 @@ export interface ProductStockRow {
   locationName: string | null;
   expirationFrom: string | null;
   expirationTo: string | null;
-  createdFrom: string;
-  createdTo: string;
+  receivedFrom: string;
+  receivedTo: string;
   soldFrom: string | null;
   soldTo: string | null;
   /**
@@ -333,7 +339,7 @@ export type StockSortField =
   | 'onHand'
   | 'location'
   | 'expiration'
-  | 'created'
+  | 'received'
   | 'sold'
   /** Per-unit lbs on the flat grid; the product total in the by-product view. */
   | 'weight'
@@ -396,6 +402,8 @@ export interface ActivityQuery {
   entityType?: string | null;
   action?: string | null;
   storeId?: number | null;
+  /** Free text over actor, store, product, serial and the action. Global feed only. */
+  search?: string | null;
   source?: string | null;
   /** ISO dates (yyyy-mm-dd is fine); `to` is exclusive. */
   from?: string | null;
@@ -866,7 +874,10 @@ export interface UpdateLocation {
 export type NotificationType =
   | 'EXPIRATION_WARNING'
   | 'INVITE_ACCEPTED'
-  | 'REORDER_ACKNOWLEDGED';
+  | 'REORDER_ACKNOWLEDGED'
+  | 'CYCLE_COUNT_REVIEW'
+  | 'ITEMS_NEED_REVIEW'
+  | 'ITEMS_IDENTIFIED';
 export type NotificationStatus = 'UNREAD' | 'READ' | 'DISMISSED';
 
 export interface ExpirationPayload {
@@ -900,6 +911,52 @@ export interface ReorderAcknowledgedPayload {
   externalOrderRef: string;
 }
 
+/**
+ * Raised for everyone who can approve, the moment a count is handed in. Addressed per
+ * person rather than broadcast: the counter who submitted it cannot approve it.
+ */
+export interface CycleCountReviewPayload {
+  cycleCountId: number;
+  storeId: number;
+  storeName: string | null;
+  expectedCount: number;
+  scannedCount: number;
+  lineCount: number;
+  submittedByUserId: number | null;
+}
+
+/**
+ * Raised once per approval that put unidentified things into the review queue — one
+ * notification for the batch, not one per item. Counts are what that approval added.
+ */
+export interface ItemsNeedReviewPayload {
+  cycleCountId: number;
+  storeId: number;
+  storeName: string | null;
+  itemCount: number;
+  productCount: number;
+}
+
+/**
+ * Raised when the sync agent answers the import-check queue with an identification —
+ * one per store per sweep, not one per item.
+ *
+ * A case answer identifies its PIECES, so identifiedCount is units + pieces; caseCount
+ * says how many boxes those pieces came out of. serial/sku/productName are filled only
+ * when a single unit was identified, which is what lets the bell name it.
+ */
+export interface ItemsIdentifiedPayload {
+  storeId: number;
+  storeName: string | null;
+  identifiedCount: number;
+  unitCount: number;
+  caseCount: number;
+  pieceCount: number;
+  serial: string | null;
+  sku: string | null;
+  productName: string | null;
+}
+
 export interface AppNotification {
   id: number;
   companyId: number;
@@ -910,7 +967,10 @@ export interface AppNotification {
   type: NotificationType;
   payload: ExpirationPayload &
     Partial<InviteAcceptedPayload> &
-    Partial<ReorderAcknowledgedPayload>;
+    Partial<ReorderAcknowledgedPayload> &
+    Partial<CycleCountReviewPayload> &
+    Partial<ItemsNeedReviewPayload> &
+    Partial<ItemsIdentifiedPayload>;
   status: NotificationStatus;
   createdAt: string;
 }

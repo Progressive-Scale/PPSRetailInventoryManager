@@ -10,6 +10,7 @@ import {
   stores,
 } from '../db/schema';
 import { blankToNull, resolveOrCreateProduct } from '../products/product-catalog';
+import { notifyReviewers } from '../notifications/review-notifications';
 import { ImportCheckResultDto } from './dto/import-check.dto';
 
 export interface ImportCheckAck {
@@ -107,7 +108,98 @@ export class ImportChecksService {
         acks.push({ itemId: r.itemId, status: 'error', reason });
       }
     }
+
+    // Only the answers this call actually applied. A redelivered result acks as
+    // already_resolved and must not raise the notification a second time.
+    const identified = acks
+      .filter((a) => a.status === 'resolved')
+      .filter((a) => a.outcome === 'MATCHED' || a.outcome === 'MATCHED_CASE')
+      .map((a) => a.itemId);
+    if (identified.length > 0) {
+      await this.announceIdentified(companyId, identified);
+    }
+
     return { results: acks };
+  }
+
+  /**
+   * Tell the reviewers that pps named something they could not.
+   *
+   * The request side of this already notifies (ITEMS_NEED_REVIEW when an approval drops
+   * unknowns into the queue); without this, the answer arrived silently and the only way
+   * to learn the queue had shrunk was to go back and look.
+   *
+   * One notification per store per batch, matching the granularity of the other review
+   * types: a sweep that identifies thirty pieces is one useful sentence, not thirty.
+   * Read back from the rows rather than tracked through applyOne, because what a case
+   * match identifies is its PIECES — the requesting row is a placeholder that gets
+   * retired — and only the stored result knows how many that was.
+   */
+  private async announceIdentified(companyId: number, itemIds: string[]): Promise<void> {
+    try {
+      await this.tenantDb.withCompany(companyId, async (tx) => {
+        const rows = await tx
+          .select({
+            storeId: inventoryItems.storeId,
+            serial: inventoryItems.serial,
+            result: inventoryItems.importCheckResult,
+            sku: products.sku,
+            name: products.name,
+          })
+          .from(inventoryItems)
+          .leftJoin(products, eq(products.id, inventoryItems.productId))
+          .where(
+            and(
+              eq(inventoryItems.companyId, companyId),
+              inArray(inventoryItems.id, itemIds),
+            ),
+          );
+
+        const byStore = new Map<number, typeof rows>();
+        for (const row of rows) {
+          const list = byStore.get(row.storeId) ?? [];
+          list.push(row);
+          byStore.set(row.storeId, list);
+        }
+
+        for (const [storeId, list] of byStore) {
+          let units = 0;
+          let pieces = 0;
+          let cases = 0;
+          for (const row of list) {
+            const res = (row.result ?? {}) as { outcome?: string; pieceCount?: number };
+            if (res.outcome === 'MATCHED_CASE') {
+              cases += 1;
+              pieces += res.pieceCount ?? 0;
+            } else {
+              units += 1;
+            }
+          }
+          // Named when there is exactly one thing to name, so the common case reads
+          // "SKU-1 identified" instead of "1 item identified".
+          const single = units === 1 && cases === 0 ? list[0] : null;
+          await notifyReviewers(tx, {
+            companyId,
+            storeId,
+            type: 'ITEMS_IDENTIFIED',
+            payload: {
+              identifiedCount: units + pieces,
+              unitCount: units,
+              caseCount: cases,
+              pieceCount: pieces,
+              serial: single?.serial ?? null,
+              sku: single?.sku ?? null,
+              productName: single?.name ?? null,
+            },
+          });
+        }
+      });
+    } catch (err) {
+      // The answers are applied and acked; failing to announce them must not turn a
+      // successful sweep into an error the agent will retry.
+      const reason = err instanceof Error ? err.message.slice(0, 200) : 'error';
+      this.logger.error(`could not raise the identified notification — ${reason}`);
+    }
   }
 
   private async applyOne(

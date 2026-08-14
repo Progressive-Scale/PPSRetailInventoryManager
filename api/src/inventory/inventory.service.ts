@@ -837,7 +837,13 @@ export class InventoryService {
                -- rather than retiring an identifiable unit, so there is nothing to date.
                -- Nor a weight: there is no unit to weigh, only a number of them. NULL
                -- rather than 0, so the UI can render "—" instead of claiming zero pounds.
-               NULL::text, NULL::date, s.created_at, NULL::timestamptz, NULL::text,
+               NULL::text, NULL::date, s.created_at, NULL::timestamptz,
+               -- Positionally matched to the unit branch's received_at, which sits BEFORE
+               -- status. A quantity shelf has no single receive moment; its counter row
+               -- appeared when the first of those units landed, which is the same fact at
+               -- shelf granularity.
+               s.created_at,
+               NULL::text,
                NULL::numeric,
                -- No unit means no override to hold, so effective IS the catalog price.
                -- Positionally matched to the unit branch's three price columns.
@@ -857,6 +863,10 @@ export class InventoryService {
                (CASE WHEN i.status = 'ON_HAND' THEN 1 ELSE 0 END) AS on_hand,
                l.id AS location_id, l.name AS location_name, l.kind::text AS location_kind,
                i.serial, i.expiration_date, i.created_at, i.sold_at,
+               -- When this unit was scanned into inventory, which is what the grid shows
+               -- and filters on. Distinct from created_at: a handoff row exists from the
+               -- moment pps says it shipped, days before anyone physically receives it.
+               i.received_at,
                i.status::text AS status,
                -- Per-unit weight (random-weight goods). Positionally matched by the
                -- stock branch below, which has none.
@@ -882,9 +892,10 @@ export class InventoryService {
     if (query.locationId != null) conds.push(sql`c.location_id = ${query.locationId}`);
     if (query.productId != null) conds.push(sql`c.product_id = ${query.productId}`);
     if (query.type) conds.push(sql`c.tracking_type = ${query.type}`);
-    if (query.createdFrom) conds.push(sql`c.created_at >= ${query.createdFrom}::date`);
-    if (query.createdTo)
-      conds.push(sql`c.created_at < (${query.createdTo}::date + interval '1 day')`);
+    if (query.receivedFrom)
+      conds.push(sql`c.received_at >= ${query.receivedFrom}::date`);
+    if (query.receivedTo)
+      conds.push(sql`c.received_at < (${query.receivedTo}::date + interval '1 day')`);
     if (like)
       conds.push(
         // case_serial is searchable so typing a box's barcode finds the pieces inside it.
@@ -931,7 +942,7 @@ export class InventoryService {
       store: ends(sql`c.store_id`),
       location: ends(sql`c.location_name`),
       expiration: ends(sql`c.expiration_date`),
-      created: ends(sql`c.created_at`),
+      received: ends(sql`c.received_at`),
       sold: ends(sql`c.sold_at`),
       // Sorts by the same total the row displays, not by an end of a range: a product's
       // weight column IS a sum, so ascending means "lightest shelf-load first".
@@ -955,8 +966,8 @@ export class InventoryService {
                min(c.location_name)              AS location_name,
                min(c.expiration_date)           AS expiration_from,
                max(c.expiration_date)           AS expiration_to,
-               min(c.created_at)                AS created_from,
-               max(c.created_at)                AS created_to,
+               min(c.received_at)               AS received_from,
+               max(c.received_at)               AS received_to,
                min(c.sold_at)                   AS sold_from,
                max(c.sold_at)                   AS sold_to,
                -- The CATALOG price, which is one value per product by definition, so
@@ -1022,8 +1033,8 @@ export class InventoryService {
         locationName: r.location_name,
         expirationFrom: r.expiration_from,
         expirationTo: r.expiration_to,
-        createdFrom: r.created_from,
-        createdTo: r.created_to,
+        receivedFrom: r.received_from,
+        receivedTo: r.received_to,
         soldFrom: r.sold_from,
         soldTo: r.sold_to,
         // numeric → string, like every other numeric in this API. Null when no unit of
@@ -1053,7 +1064,7 @@ export class InventoryService {
       onHand: sql`c.on_hand`,
       location: sql`c.location_name`,
       expiration: sql`c.expiration_date`,
-      created: sql`c.created_at`,
+      received: sql`c.received_at`,
       sold: sql`c.sold_at`,
       weight: sql`c.weight_lbs`,
       // Sorting by what it sells for, not by whether somebody overrode it.
@@ -1104,6 +1115,7 @@ export class InventoryService {
         serial: r.serial,
         expirationDate: r.expiration_date,
         createdAt: r.created_at,
+        receivedAt: r.received_at,
         soldAt: r.sold_at,
         // Null on a quantity stock row (nothing to weigh) and on a unit nobody weighed.
         weightLbs: r.weight_lbs,

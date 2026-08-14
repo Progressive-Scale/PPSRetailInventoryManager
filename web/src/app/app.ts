@@ -94,6 +94,32 @@ interface NavLink {
                                     Accepted their invitation as
                                     {{ roleLabel(n.payload.role) }}
                                   </span>
+                                } @else if (n.type === 'CYCLE_COUNT_REVIEW') {
+                                  <span class="notif-title">
+                                    Count #{{ n.payload.cycleCountId }}
+                                    <span class="notif-serial">needs review</span>
+                                  </span>
+                                  <span class="notif-sub">
+                                    {{ n.payload.storeName }} — {{ n.payload.scannedCount }}
+                                    of {{ n.payload.expectedCount }} accounted for
+                                  </span>
+                                } @else if (n.type === 'ITEMS_IDENTIFIED') {
+                                  <span class="notif-title">
+                                    {{ identifiedTitle(n) }}
+                                    <span class="notif-serial">identified</span>
+                                  </span>
+                                  <span class="notif-sub">
+                                    {{ n.payload.storeName }} — named by PPS
+                                  </span>
+                                } @else if (n.type === 'ITEMS_NEED_REVIEW') {
+                                  <span class="notif-title">
+                                    {{ reviewCount(n) }}
+                                    <span class="notif-serial">to identify</span>
+                                  </span>
+                                  <span class="notif-sub">
+                                    {{ n.payload.storeName }} — from count
+                                    #{{ n.payload.cycleCountId }}
+                                  </span>
                                 } @else if (n.type === 'REORDER_ACKNOWLEDGED') {
                                   <span class="notif-title">
                                     {{ n.payload.productName }}
@@ -552,9 +578,42 @@ export class App implements OnInit {
       this.router.navigate(['/reorders'], { queryParams: { status: 'ACKNOWLEDGED' } });
       return;
     }
+    if (n.type === 'CYCLE_COUNT_REVIEW') {
+      this.router.navigate(['/cycle-counts'], { queryParams: { count: n.payload.cycleCountId } });
+      return;
+    }
+    if (n.type === 'ITEMS_NEED_REVIEW') {
+      this.router.navigate(['/cycle-counts'], { queryParams: { tab: 'review' } });
+      return;
+    }
+    if (n.type === 'ITEMS_IDENTIFIED') {
+      // Identified units have left the review queue and are ordinary stock now, so the
+      // useful destination is Inventory — the single-unit case opens that unit.
+      this.router.navigate(['/inventory'], {
+        queryParams: n.payload.serial ? { serial: n.payload.serial } : {},
+      });
+      return;
+    }
     this.router.navigate(['/inventory'], {
       queryParams: { itemId: n.payload.itemId, serial: n.payload.serial },
     });
+  }
+
+  /** The one thing's name when there is one, otherwise how many things there were. */
+  identifiedTitle(n: AppNotification): string {
+    if (n.payload.productName) return n.payload.productName;
+    const n_ = n.payload.identifiedCount ?? 0;
+    return `${n_} item${n_ === 1 ? '' : 's'}`;
+  }
+
+  /** "3 items", "2 products", or both — whichever the approval actually produced. */
+  reviewCount(n: AppNotification): string {
+    const parts: string[] = [];
+    const items = n.payload.itemCount ?? 0;
+    const products = n.payload.productCount ?? 0;
+    if (items > 0) parts.push(`${items} item${items === 1 ? '' : 's'}`);
+    if (products > 0) parts.push(`${products} product${products === 1 ? '' : 's'}`);
+    return parts.join(' and ') || 'Items';
   }
 
   readonly roleLabel = roleLabel;

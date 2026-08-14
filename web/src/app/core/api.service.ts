@@ -77,8 +77,8 @@ export interface StockQuery {
   productId?: number;
   type?: TrackingType;
   status?: StockStatusFilter;
-  createdFrom?: string;
-  createdTo?: string;
+  receivedFrom?: string;
+  receivedTo?: string;
   sortBy?: StockSortField;
   sortDir?: 'asc' | 'desc';
   limit?: number;
@@ -178,8 +178,8 @@ export class ApiService {
     if (opts.productId != null) params = params.set('productId', String(opts.productId));
     if (opts.type) params = params.set('type', opts.type);
     if (opts.status) params = params.set('status', opts.status);
-    if (opts.createdFrom) params = params.set('createdFrom', opts.createdFrom);
-    if (opts.createdTo) params = params.set('createdTo', opts.createdTo);
+    if (opts.receivedFrom) params = params.set('receivedFrom', opts.receivedFrom);
+    if (opts.receivedTo) params = params.set('receivedTo', opts.receivedTo);
     if (opts.sortBy) params = params.set('sortBy', opts.sortBy);
     if (opts.sortDir) params = params.set('sortDir', opts.sortDir);
     if (opts.limit != null) params = params.set('limit', String(opts.limit));
@@ -332,6 +332,7 @@ export class ApiService {
     if (q.entityType) params = params.set('entityType', q.entityType);
     if (q.action) params = params.set('action', q.action);
     if (q.storeId != null) params = params.set('storeId', String(q.storeId));
+    if (q.search) params = params.set('search', q.search);
     if (q.source) params = params.set('source', q.source);
     if (q.from) params = params.set('from', q.from);
     if (q.to) params = params.set('to', q.to);
@@ -504,6 +505,8 @@ export class ApiService {
     /** Sorted server-side: reordering one page of twenty is not ordering the table. */
     sortBy?: CycleCountSortField;
     sortDir?: 'asc' | 'desc';
+    /** Count number, store, or the username of whoever opened or submitted it. */
+    search?: string;
   }): Observable<Paginated<CycleCount>> {
     let p = new HttpParams();
     if (params?.limit != null) p = p.set('limit', String(params.limit));
@@ -512,6 +515,7 @@ export class ApiService {
     if (params?.status) p = p.set('status', params.status);
     if (params?.sortBy) p = p.set('sortBy', params.sortBy);
     if (params?.sortDir) p = p.set('sortDir', params.sortDir);
+    if (params?.search) p = p.set('search', params.search);
     return this.http.get<Paginated<CycleCount>>('/api/cycle-counts', { params: p });
   }
 

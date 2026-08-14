@@ -38,6 +38,48 @@ body {
   line-height: 1.4;
 }
 
+/* The house look for text-entry controls, applied once here instead of being
+   re-declared by every component that happens to contain one.
+
+   Without this, a control only looked right if its component remembered to style
+   it: `button` had a global rule and inputs did not, so a filter box added to a
+   component whose stylesheet had never needed one came out with raw browser
+   defaults — 21px tall, square, grey 2px border — sitting next to a styled select.
+   That is the same reason controls look unstyled in places across the app.
+
+   :where() carries no specificity, so this stays a floor rather than a ceiling:
+   any component rule, however plain, still overrides it. Checkboxes, radios and
+   the other native widgets are excluded because padding and a border would break
+   what the browser draws for them. */
+input:where(:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color'], [type='submit'], [type='button'])),
+select,
+textarea {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  /* Inherited, not restated: form controls opt out of the page font by default,
+     which is why an unstyled input reads a size smaller than the text beside it. */
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+input:where(:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color'])):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 button {
   cursor: pointer;
   border: 1px solid var(--accent);

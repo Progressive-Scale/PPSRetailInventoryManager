@@ -7,7 +7,15 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsDate, IsEnum, IsInt, IsOptional, IsPositive, IsString } from 'class-validator';
+import {
+  IsDate,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -51,6 +59,12 @@ class ActivityQuery extends PaginationQuery {
   @IsInt()
   @IsPositive()
   storeId?: number;
+
+  // Actor, store, product, serial, or the action itself. Bounded: it reaches an ILIKE.
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  search?: string;
 
   @IsOptional()
   @IsEnum(SOURCES as unknown as string[])
@@ -97,6 +111,8 @@ export class ActivityController {
         entityType: query.entityType,
         action: query.action,
         storeId: query.storeId,
+        // Global feed only — one entity's own history is already narrowed to it.
+        search: query.search,
         source: query.source,
         from: query.from,
         to: query.to,

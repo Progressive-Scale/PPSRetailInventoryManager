@@ -2,12 +2,16 @@ import { DatePipe } from '@angular/common';
 import {
   Component,
   computed,
+  DestroyRef,
   HostListener,
   inject,
   OnInit,
   signal,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
+import { Subject, debounceTime } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { CountNeedsReviewComponent } from './needs-review';
@@ -60,6 +64,16 @@ interface ResolutionGroup {
         <h2>Cycle counts</h2>
 
         <div class="filters">
+          <label class="f grow">
+            Search
+            <input
+              type="search"
+              name="cc-search"
+              placeholder="Count #, store or user"
+              [(ngModel)]="search"
+              (ngModelChange)="onSearch()"
+            />
+          </label>
           <label class="f">
             Status
             <select
@@ -367,18 +381,22 @@ interface ResolutionGroup {
         display: flex;
         gap: 0.4rem;
       }
-      /* Keeps Clear/Refresh level with the inputs beside them. */
+      /* Keeps Clear/Refresh level with the inputs beside them. Look and feel comes
+         from the global control styles; only the shared height belongs here, since
+         it exists to line these three up with each other. */
+      .filters input,
       .filters select,
       .filters .f-actions button {
         height: 2.25rem;
         box-sizing: border-box;
       }
-      .filters select {
-        padding: 0.45rem 0.55rem;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        font-size: 0.9rem;
-        font-family: inherit;
+      /* Wide enough to read a store name; the rest of the row keeps its size. */
+      .f.grow {
+        flex: 1 1 14rem;
+        max-width: 22rem;
+      }
+      .f.grow input {
+        width: 100%;
       }
       .filters .f-actions button {
         padding: 0 0.75rem;
@@ -641,10 +659,25 @@ export class CycleCountsComponent implements OnInit {
 
   // Filtered server-side: the list is paginated, so narrowing the loaded page
   // would leave the total and the pager describing a different set.
-  readonly statusFilter = signal<CycleCountStatus | null>(null);
+  //
+  // Opens on AWAITING_REVIEW rather than All: those are the counts waiting on somebody
+  // here, and they are the reason to visit this page. Closed and cancelled counts are
+  // history, and unfiltered they bury the handful that still need a decision. Clear
+  // still widens it back to everything.
+  readonly statusFilter = signal<CycleCountStatus | null>('AWAITING_REVIEW');
+  /**
+   * Free text, resolved server-side like the other two. Plain field rather than a
+   * signal because ngModel writes it directly; filtersActive() reads it on each
+   * change-detection pass, which is when the Clear button needs the answer.
+   */
+  search = '';
+  /** Keystrokes in, one request out — see the constructor. */
+  private readonly typed = new Subject<void>();
+  private readonly route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
   readonly storeFilter = signal<number | null>(null);
   readonly filtersActive = computed(
-    () => this.statusFilter() !== null || this.storeFilter() !== null,
+    () => this.statusFilter() !== null || this.storeFilter() !== null || !!this.search,
   );
 
   readonly counts = signal<CycleCount[]>([]);
@@ -758,11 +791,67 @@ export class CycleCountsComponent implements OnInit {
     return `${line.sku ?? ''} ${line.name ?? ''}`.trim();
   }
 
+  constructor() {
+    this.typed
+      .pipe(debounceTime(250), takeUntilDestroyed())
+      .subscribe(() => this.refilter());
+  }
+
   ngOnInit(): void {
     if (this.isCompanyAdmin) {
       this.api.listStores().subscribe({ next: (rows) => this.stores.set(rows) });
     }
-    this.reload();
+
+    /**
+     * Where the review notifications land: ?tab=review opens the needs-review queue,
+     * ?count=42 opens that count itself.
+     *
+     * Subscribed rather than read once, because Angular reuses this component when only
+     * the query params change — clicking a second notification while already here would
+     * otherwise update the address bar and leave the screen where it was.
+     */
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => {
+        if (params.get('tab') === 'review') {
+          this.tab.set('review');
+          return;
+        }
+        const wanted = Number(params.get('count'));
+        if (!Number.isInteger(wanted) || wanted <= 0) {
+          this.reload();
+          return;
+        }
+        // Status is cleared first: the count may already have been approved by a
+        // colleague, and landing on an empty AWAITING_REVIEW list would read as
+        // "gone" rather than "already handled".
+        this.tab.set('counts');
+        this.statusFilter.set(null);
+        this.search = String(wanted);
+        this.offset.set(0);
+        this.reload();
+        this.openById(wanted);
+        return;
+      });
+    if (!this.route.snapshot.queryParamMap.keys.length) this.reload();
+  }
+
+  /** Open a count by id, for a deep link that names one. */
+  private openById(id: number): void {
+    this.selectedId.set(id);
+    this.detail.set(null);
+    this.detailError.set(null);
+    this.detailLoading.set(true);
+    this.api.getCycleCount(id).subscribe({
+      next: (d) => {
+        this.detail.set(d);
+        this.detailLoading.set(false);
+      },
+      error: (err) => {
+        this.detailLoading.set(false);
+        this.detailError.set(messageFor(err));
+      },
+    });
   }
 
   reload(): void {
@@ -774,6 +863,7 @@ export class CycleCountsComponent implements OnInit {
         offset: this.offset(),
         status: this.statusFilter() ?? undefined,
         storeId: this.storeFilter() ?? undefined,
+        search: this.search.trim() || undefined,
         sortBy: this.sortBy(),
         sortDir: this.sortDir(),
       })
@@ -803,7 +893,13 @@ export class CycleCountsComponent implements OnInit {
   clearFilters(): void {
     this.statusFilter.set(null);
     this.storeFilter.set(null);
+    this.search = '';
     this.refilter();
+  }
+
+  /** Typing filters as you go, but not a request per keystroke. */
+  onSearch(): void {
+    this.typed.next();
   }
 
   /**

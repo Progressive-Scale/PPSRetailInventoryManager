@@ -80,6 +80,11 @@ type Mgmt = 'sold' | 'move' | 'expiration' | 'weight' | 'price' | 'setqty' | nul
                    somebody is deciding whether to change it. -->
               <div><dt>Price</dt><dd>{{ priceLabel() }}</dd></div>
             }
+            @if (row.rowKind === 'unit') {
+              <!-- When it was scanned onto a shelf here, as opposed to when pps said it
+                   shipped. The grid sorts and filters on this one. -->
+              <div><dt>Received</dt><dd>{{ row.receivedAt ? (row.receivedAt | date: 'medium') : '—' }}</dd></div>
+            }
             <div><dt>Created</dt><dd>{{ row.createdAt | date: 'medium' }}</dd></div>
           </dl>
         </section>

@@ -145,21 +145,21 @@ interface Column {
               </select>
             </label>
             <label class="f">
-              Created from
+              Received from
               <input
                 type="date"
                 name="f-from"
-                [ngModel]="createdFrom"
-                (ngModelChange)="createdFrom = $event; onFilterChange()"
+                [ngModel]="receivedFrom"
+                (ngModelChange)="receivedFrom = $event; onFilterChange()"
               />
             </label>
             <label class="f">
-              Created to
+              Received to
               <input
                 type="date"
                 name="f-to"
-                [ngModel]="createdTo"
-                (ngModelChange)="createdTo = $event; onFilterChange()"
+                [ngModel]="receivedTo"
+                (ngModelChange)="receivedTo = $event; onFilterChange()"
               />
             </label>
             <div class="f-actions">
@@ -237,7 +237,7 @@ interface Column {
                   </button>
                 </span>
               } @else if (filterScope()) {
-                <span class="bulk-escalate">All {{ total() }} matching current filters selected</span>
+                <span class="bulk-escalate">All {{ selectionCount() }} matching current filters selected</span>
               }
             </div>
           }
@@ -275,10 +275,10 @@ interface Column {
                       <th class="sel-col">
                         <input
                           type="checkbox"
-                          [checked]="filterScope() || pageAllSelected()"
-                          [indeterminate]="!filterScope() && someSelected() && !pageAllSelected()"
-                          (change)="toggleHeader()"
-                          title="Select all on this page"
+                          [checked]="filterScope()"
+                          [indeterminate]="!filterScope() && someSelected()"
+                          (change)="toggleHeader($event)"
+                          title="Select everything matching the current filters"
                         />
                       </th>
                     }
@@ -338,7 +338,7 @@ interface Column {
                             <span class="st">{{ statusLabel(row.status) }}</span>
                           }
                         </td>
-                        <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
+                        <td class="muted">{{ row.receivedAt | date: 'shortDate' }}</td>
                         <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
                         <td class="num">{{ unitWeight(row) }}</td>
                         <td class="num" [title]="priceTitle(row)">{{ unitPrice(row) }}</td>
@@ -388,7 +388,7 @@ interface Column {
                       <td [class]="expClass(p.expirationFrom)">
                         {{ dateRange(p.expirationFrom, p.expirationTo) }}
                       </td>
-                      <td class="muted">{{ dateRange(p.createdFrom, p.createdTo) }}</td>
+                      <td class="muted">{{ dateRange(p.receivedFrom, p.receivedTo) }}</td>
                       <td class="muted">{{ dateRange(p.soldFrom, p.soldTo, true) }}</td>
                       <td class="num" [title]="weightTitle(p)">
                         {{ productWeight(p) }}
@@ -450,7 +450,7 @@ interface Column {
                                 <span class="st">{{ statusLabel(row.status) }}</span>
                               }
                             </td>
-                            <td class="muted">{{ row.createdAt | date: 'shortDate' }}</td>
+                            <td class="muted">{{ row.receivedAt | date: 'shortDate' }}</td>
                             <td class="muted">{{ row.soldAt ? (row.soldAt | date: 'short') : '—' }}</td>
                             <td class="num">{{ unitWeight(row) }}</td>
                             <td class="num" [title]="priceTitle(row)">{{ unitPrice(row) }}</td>
@@ -721,8 +721,24 @@ interface Column {
         border-radius: 8px;
         font-size: 0.9rem;
       }
+      /*
+       * Scrolls in BOTH directions, and that is what makes the header pin.
+       *
+       * overflow-x: auto alone already made this a scroll container, so a sticky thead
+       * inside it had nothing to stick to while the PAGE scrolled — the header just left
+       * with the rows. Giving the container its own height moves the vertical scrolling in
+       * here, where the header can hold position against it.
+       *
+       * The height is what is left of the viewport under the toolbar and the sticky filter
+       * bar above it. dvh rather than vh so a phone's collapsing address bar does not leave
+       * the last row permanently out of reach.
+       */
       .table-scroll {
-        overflow-x: auto;
+        overflow: auto;
+        max-height: calc(100dvh - 19rem);
+        /* Floor, for a short window or a tall filter bar: below this the grid shows so few
+           rows that a pinned header costs more than it gives, and the page can scroll. */
+        min-height: 18rem;
         transition: opacity 0.12s ease;
       }
       .table-scroll.busy {
@@ -740,6 +756,21 @@ interface Column {
         padding: 0.5rem 0.6rem;
         border-bottom: 1px solid var(--border);
         vertical-align: middle;
+      }
+      /*
+       * The column headings stay put while the rows move under them.
+       *
+       * Opaque background is not decoration: a sticky row with a transparent one would let
+       * the rows scroll through it. border-collapse drops the cells' own borders when they
+       * are sticky, so the underline is redrawn as a shadow — otherwise the heading floats
+       * over the first row with nothing separating them.
+       */
+      thead th {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: var(--surface);
+        box-shadow: inset 0 -1px 0 var(--border);
       }
       /* Numeric columns line up with every other column rather than against the next
          one. Right-aligning two columns in a table where nothing else is right-aligned
@@ -1198,8 +1229,8 @@ export class InventoryComponent implements OnInit {
   productFilter: number | null = null;
   typeFilter: TrackingType | null = null;
   statusFilter: StockStatusFilter = 'ON_HAND';
-  createdFrom = '';
-  createdTo = '';
+  receivedFrom = '';
+  receivedTo = '';
 
   // Sort.
   readonly sortBy = signal<StockSortField>('name');
@@ -1218,6 +1249,13 @@ export class InventoryComponent implements OnInit {
   // ---- bulk selection ----
   readonly selectedRows = signal<Map<string, StockRow>>(new Map());
   readonly filterScope = signal(false);
+  /**
+   * Unit count behind a filter-scope selection, or null until it arrives.
+   *
+   * Only meaningful while filterScope is on. See takeFilterScope() for why total()
+   * cannot stand in for it in the grouped view.
+   */
+  readonly scopeTotal = signal<number | null>(null);
   readonly busy = signal(false);
   readonly bulkMessage = signal<string | null>(null);
   readonly bulkFailures = signal<string[]>([]);
@@ -1273,8 +1311,10 @@ export class InventoryComponent implements OnInit {
     const sel = this.selectedRows();
     return rows.every((r) => sel.has(r.rowId));
   });
+  // total() is the fallback only for the moment before the unit count lands, so the bar
+  // and the action buttons never blink through zero.
   readonly selectionCount = computed(() =>
-    this.filterScope() ? this.total() : this.selectedRows().size,
+    this.filterScope() ? (this.scopeTotal() ?? this.total()) : this.selectedRows().size,
   );
   readonly canEscalate = computed(
     () => !this.filterScope() && this.pageAllSelected() && this.total() > this.shownRowCount(),
@@ -1309,7 +1349,7 @@ export class InventoryComponent implements OnInit {
       { label: 'On hand', field: 'onHand', num: true, center: true },
       { label: 'Location', field: 'location' },
       { label: 'Expiration', field: 'expiration' },
-      { label: 'Created', field: 'created' },
+      { label: 'Received', field: 'received' },
       { label: 'Sold', field: 'sold' },
       // ONE column for both tiers, because they share one header row: per-unit lbs on a
       // unit row, the product's total on a product row. Quantity stock has no weight in
@@ -1520,8 +1560,8 @@ export class InventoryComponent implements OnInit {
     this.clearSelection();
     this.searchTerm = '';
     this.typeFilter = null;
-    this.createdFrom = '';
-    this.createdTo = '';
+    this.receivedFrom = '';
+    this.receivedTo = '';
     // Show everything at that location, sold units included.
     this.statusFilter = 'ALL';
     this.storeFilter.set(loc.storeId);
@@ -1554,8 +1594,8 @@ export class InventoryComponent implements OnInit {
       this.productFilter !== null ||
       this.typeFilter !== null ||
       this.statusFilter !== 'ON_HAND' ||
-      this.createdFrom !== '' ||
-      this.createdTo !== ''
+      this.receivedFrom !== '' ||
+      this.receivedTo !== ''
     );
   }
 
@@ -1571,8 +1611,8 @@ export class InventoryComponent implements OnInit {
     this.productFilter = null;
     this.typeFilter = null;
     this.statusFilter = 'ON_HAND';
-    this.createdFrom = '';
-    this.createdTo = '';
+    this.receivedFrom = '';
+    this.receivedTo = '';
     this.clearSelection();
     this.offset.set(0);
     this.reload();
@@ -1622,14 +1662,13 @@ export class InventoryComponent implements OnInit {
     return this.filterScope() || this.selectedRows().has(row.rowId);
   }
 
-  toggleRow(row: StockRow): void {
+  async toggleRow(row: StockRow): Promise<void> {
     if (this.filterScope()) {
-      // Drop out of filter-scope: materialize the current page, minus this row.
-      const m = new Map<string, StockRow>();
-      for (const r of this.visibleUnits()) m.set(r.rowId, r);
+      // Drop out of filter scope: every matching row, minus this one.
+      const m = await this.materializeScope();
+      if (!m) return;
       m.delete(row.rowId);
-      this.filterScope.set(false);
-      this.selectedRows.set(m);
+      this.selectedRows.set(new Map(m));
       return;
     }
     const m = new Map(this.selectedRows());
@@ -1638,23 +1677,64 @@ export class InventoryComponent implements OnInit {
     this.selectedRows.set(m);
   }
 
-  toggleHeader(): void {
-    if (this.filterScope() || this.pageAllSelected()) {
-      this.clearSelection();
-      return;
+  /**
+   * All or nothing, against the filters — not against what happens to be on screen.
+   *
+   * The header box used to select the loaded rows and offer "select all matching" as a
+   * second step, which read as a half-selection: in the grouped view it could only reach
+   * units inside an open expansion, so ticking it with nothing expanded selected nothing.
+   * One click now means every row the current filters describe, and a second means none.
+   *
+   * Anything already selected — by hand or in scope — makes the click mean clear. Growing
+   * a hand-picked selection into everything is the one thing this box will not do, since
+   * that is the click most likely to be a mistake and the hardest to notice.
+   */
+  toggleHeader(ev?: Event): void {
+    if (this.someSelected()) this.clearSelection();
+    else this.takeFilterScope();
+
+    // Put the box back where the state says it belongs. Clicking it while it shows the
+    // dash takes the bound value from false to false, so Angular writes nothing and the
+    // browser's own tick survives a click that actually cleared the selection.
+    const box = ev?.target as HTMLInputElement | null;
+    if (box) {
+      box.checked = this.filterScope();
+      box.indeterminate = false;
     }
-    const m = new Map(this.selectedRows());
-    for (const r of this.visibleUnits()) m.set(r.rowId, r);
-    this.selectedRows.set(m);
   }
 
   escalate(): void {
+    this.takeFilterScope();
+  }
+
+  /**
+   * Claim every row matching the filters, and find out how many that is.
+   *
+   * total() cannot answer that in the grouped view: there it counts product rows, while
+   * the bulk actions resolve the scope into individual units — a dozen products can be
+   * hundreds of units, and the bar would understate what a click is about to touch. The
+   * flat list holds the real number, so ask it for a single row and keep the count.
+   */
+  private takeFilterScope(): void {
+    this.selectedRows.set(new Map());
     this.filterScope.set(true);
+    if (this.viewMode() === 'allItems') {
+      this.scopeTotal.set(this.total());
+      return;
+    }
+    this.scopeTotal.set(null);
+    this.api.listStock({ ...this.currentFilters(), limit: 1, offset: 0 }).subscribe({
+      // Ignored if the selection was dropped while this was in flight.
+      next: (res) => {
+        if (this.filterScope()) this.scopeTotal.set(res.total);
+      },
+    });
   }
 
   clearSelection(): void {
     this.selectedRows.set(new Map());
     this.filterScope.set(false);
+    this.scopeTotal.set(null);
   }
 
   @HostListener('document:keydown.escape')
@@ -1684,8 +1764,8 @@ export class InventoryComponent implements OnInit {
       productId: this.productFilter ?? undefined,
       type: this.typeFilter ?? undefined,
       status: this.statusFilter,
-      createdFrom: this.createdFrom || undefined,
-      createdTo: this.createdTo || undefined,
+      receivedFrom: this.receivedFrom || undefined,
+      receivedTo: this.receivedTo || undefined,
       sortBy: this.sortBy(),
       sortDir: this.sortDir(),
     };
@@ -1698,8 +1778,15 @@ export class InventoryComponent implements OnInit {
    */
   private async resolveSelection(): Promise<StockRow[]> {
     if (!this.filterScope()) return [...this.selectedRows().values()];
+    return this.fetchScopeRows();
+  }
+
+  /** Every row the current filters describe, paged out of the flat list and capped. */
+  private async fetchScopeRows(): Promise<StockRow[]> {
     const CAP = 5000;
-    const PAGE = 500;
+    // The API's shared pagination DTO rejects anything over 200 (common/pagination.ts).
+    // This asked for 500 and every filter-scope bulk action died on the validator.
+    const PAGE = 200;
     const out: StockRow[] = [];
     for (let offset = 0; offset < CAP; offset += PAGE) {
       const res = await firstValueFrom(
@@ -1709,6 +1796,36 @@ export class InventoryComponent implements OnInit {
       if (out.length >= res.total || res.data.length < PAGE) break;
     }
     return out;
+  }
+
+  /**
+   * Turn "everything matching the filters" into a concrete set of rows, so a single row
+   * can then be dropped from it.
+   *
+   * Unticking one thing used to fall back to whatever was on screen, which in the grouped
+   * view is only what somebody had expanded — so removing one product from a selection of
+   * fifty-one silently threw away every unit nobody had opened. Fetching the real set
+   * costs a request, and it is the only way the number after the click can be right.
+   *
+   * Returns null and leaves the scope alone if the fetch fails: an intact "all matching"
+   * is a better answer than a selection quietly missing most of itself.
+   */
+  private async materializeScope(): Promise<Map<string, StockRow> | null> {
+    this.busy.set(true);
+    try {
+      const rows = await this.fetchScopeRows();
+      const m = new Map<string, StockRow>();
+      for (const r of rows) m.set(r.rowId, r);
+      this.filterScope.set(false);
+      this.scopeTotal.set(null);
+      this.selectedRows.set(m);
+      return m;
+    } catch (err) {
+      this.bulkMessage.set(`Could not narrow the selection: ${messageFor(err)}`);
+      return null;
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   // ---- bulk: move ----
@@ -2126,16 +2243,14 @@ export class InventoryComponent implements OnInit {
    * The rows have to be loaded to be selected at all, so this awaits them.
    */
   async toggleProduct(p: ProductStockRow): Promise<void> {
-    // Leaving filter-scope the same way a single row does: materialise what is on
-    // screen first, so ticking one product cannot silently mean "all N matching".
-    if (this.filterScope()) {
-      const shown = new Map<string, StockRow>();
-      for (const r of this.visibleUnits()) shown.set(r.rowId, r);
-      this.filterScope.set(false);
-      this.selectedRows.set(shown);
-    }
+    // Read the intent before the scope collapses: in scope the box is ticked, so the
+    // click means "drop this product", and productAllSelected would say otherwise once
+    // filterScope is off and this product's units are not loaded.
+    const deselect = this.filterScope() || this.productAllSelected(p);
 
-    const deselect = this.productAllSelected(p);
+    // Leaving filter scope the same way a single row does: turn "all matching" into the
+    // rows it actually stands for, so removing one product keeps the other fifty.
+    if (this.filterScope() && !(await this.materializeScope())) return;
     this.expand(p);
     const rows = await this.ensureUnits(p);
     const next = new Map(this.selectedRows());
@@ -2146,21 +2261,36 @@ export class InventoryComponent implements OnInit {
     this.selectedRows.set(next);
   }
 
-  /** Every loaded row of this product is selected. False while nothing is loaded. */
+  /**
+   * How many rows of each product are selected, counted off the selection itself.
+   *
+   * The tri-state boxes used to ask units() — the rows an expansion had loaded — which
+   * meant a product nobody had opened always read as unselected. After "select all" is
+   * turned into concrete rows that is every product on the page: the count says fifty,
+   * and all twenty-five boxes look empty. Each selected row knows its own product, so
+   * the answer is already here without expanding anything.
+   */
+  private readonly selectedPerProduct = computed(() => {
+    const counts = new Map<number, number>();
+    for (const r of this.selectedRows().values()) {
+      counts.set(r.productId, (counts.get(r.productId) ?? 0) + 1);
+    }
+    return counts;
+  });
+
+  /** Every row of this product, loaded or not, is selected. */
   productAllSelected(p: ProductStockRow): boolean {
-    const rows = this.units().get(p.productId);
-    if (!rows || rows.length === 0) return false;
-    const sel = this.selectedRows();
-    return rows.every((r) => sel.has(r.rowId));
+    // Filter scope covers rows that were never fetched, so it answers for them too.
+    if (this.filterScope()) return true;
+    const n = this.selectedPerProduct().get(p.productId) ?? 0;
+    return n > 0 && n >= p.rowCount;
   }
 
   /** Some but not all — drives the tri-state box. */
   productPartlySelected(p: ProductStockRow): boolean {
-    const rows = this.units().get(p.productId);
-    if (!rows || rows.length === 0) return false;
-    const sel = this.selectedRows();
-    const n = rows.reduce((acc, r) => acc + (sel.has(r.rowId) ? 1 : 0), 0);
-    return n > 0 && n < rows.length;
+    if (this.filterScope()) return false;
+    const n = this.selectedPerProduct().get(p.productId) ?? 0;
+    return n > 0 && n < p.rowCount;
   }
 
   /** Collapse everything and forget the loaded sub-rows. */

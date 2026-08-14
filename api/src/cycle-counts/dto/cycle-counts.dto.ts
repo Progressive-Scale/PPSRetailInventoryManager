@@ -174,6 +174,10 @@ export class ListCycleCountsQuery extends PaginationQuery {
   sortBy?: CycleCountSortField;
 
   @IsOptional() @IsEnum(['asc', 'desc']) sortDir?: 'asc' | 'desc';
+
+  // Count number, store name, or the username of whoever opened, submitted or closed
+  // it. Bounded because it reaches an ILIKE.
+  @IsOptional() @IsString() @MaxLength(128) search?: string;
 }
 
 export class RejectCycleCountDto {

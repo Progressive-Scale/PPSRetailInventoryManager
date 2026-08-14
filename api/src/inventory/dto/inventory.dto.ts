@@ -128,7 +128,7 @@ const STOCK_SORT_FIELDS = [
   'onHand',
   'location',
   'expiration',
-  'created',
+  'received',
   // Serialized units only; quantity stock lines have no sold date and sort last.
   'sold',
   // Per-unit lbs on the flat grid; the product TOTAL in the by-product view, since that
@@ -185,11 +185,11 @@ export class ListStockQuery extends PaginationQuery {
   // Create-date range (inclusive), YYYY-MM-DD.
   @IsOptional()
   @IsISO8601()
-  createdFrom?: string;
+  receivedFrom?: string;
 
   @IsOptional()
   @IsISO8601()
-  createdTo?: string;
+  receivedTo?: string;
 
   @IsOptional()
   @IsIn(STOCK_SORT_FIELDS as unknown as string[])

@@ -54,6 +54,11 @@ export interface ActivityFilters {
    * make a product's history empty for anyone pinned to a store.
    */
   includeCompanyWide?: boolean;
+  /**
+   * Free text over actor, store, product, serial and the action itself. Only the global
+   * feed passes it — one entity's own history is already narrowed to that entity.
+   */
+  search?: string;
   source?: ActivitySource;
   /** Inclusive lower bound / exclusive upper bound on the event time. */
   from?: Date;
@@ -114,11 +119,19 @@ export class ActivityService {
         ORDER BY s.at DESC, s.kind ASC, s.row_id DESC
         LIMIT ${paging.limit} OFFSET ${paging.offset}`);
 
+      // The same joins as the page query, not because the count needs the columns but
+      // because the WHERE can now reference them: search matches a product name or a
+      // serial, and a count query that could not see those would report a total for a
+      // different set of rows than the one on screen.
       const counted = await tx.execute(sql`
         ${this.stream()}
         SELECT count(*)::int AS n
         FROM stream s
-        LEFT JOIN users u ON u.id = s.user_id
+        LEFT JOIN users u            ON u.id = s.user_id
+        LEFT JOIN stores st          ON st.id = s.store_id
+        LEFT JOIN inventory_items i  ON s.entity_type = 'INVENTORY_ITEM'
+                                    AND i.id::text = s.entity_id
+        LEFT JOIN products p         ON p.id = COALESCE(s.product_id, i.product_id)
         ${where}`);
 
       const rows = (page as unknown as { rows: Record<string, unknown>[] }).rows;
@@ -210,6 +223,24 @@ export class ActivityService {
           ? sql`(s.store_id = ${f.storeId} OR s.store_id IS NULL)`
           : sql`s.store_id = ${f.storeId}`,
       );
+    }
+    // Free text across everything the feed actually renders: who did it, where, to
+    // what, and the verb itself. The joined columns are available because both the
+    // page query and the count query carry the same joins — they have to, or the
+    // pager would describe a different set than the rows do.
+    const term = f.search?.trim();
+    if (term) {
+      const like = `%${term}%`;
+      conds.push(sql`(
+        u.username    ILIKE ${like} OR
+        st.name       ILIKE ${like} OR
+        p.sku         ILIKE ${like} OR
+        p.name        ILIKE ${like} OR
+        i.serial      ILIKE ${like} OR
+        s.action      ILIKE ${like} OR
+        s.entity_type ILIKE ${like} OR
+        s.entity_id   ILIKE ${like}
+      )`);
     }
     if (f.source) conds.push(sql`s.source = ${f.source}`);
     if (f.from) conds.push(sql`s.at >= ${f.from.toISOString()}`);

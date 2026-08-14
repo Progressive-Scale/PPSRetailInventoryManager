@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, debounceTime } from 'rxjs';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { ApiService } from '../../core/api.service';
@@ -488,8 +489,22 @@ type Tab = 'stores' | 'users' | 'invitations' | 'activity';
             }
           </div>
           <div class="filters">
-            <!-- User first, deliberately: the common question is "what has this person
-                 been doing", not "what happened to products this week". -->
+            <!-- Free text ahead of the selects: it is the only filter that can find a
+                 row when you know the thing but not which dropdown describes it — a
+                 serial, a SKU, a store name. Resolved server-side, like the rest, so
+                 the event total keeps describing the rows on screen. -->
+            <label class="f grow">
+              Search
+              <input
+                type="search"
+                name="fa-search"
+                placeholder="User, store, SKU, product, serial or action"
+                [ngModel]="activitySearch()"
+                (ngModelChange)="setActivitySearch($event)"
+              />
+            </label>
+            <!-- User first among the selects, deliberately: the common question is "what
+                 has this person been doing", not "what happened to products this week". -->
             <label class="f">
               User
               <select
@@ -1307,27 +1322,40 @@ type Tab = 'stores' | 'users' | 'invitations' | 'activity';
         border-color: #99200f;
       }
       /* Users table: fixed widths so Edit mode doesn't reflow the row. These must
-         sum to 100% — a column with no width collapses under table-layout: fixed. */
+         sum to 100% — a column with no width collapses under table-layout: fixed.
+         Actions carries two buttons (Edit + Activity) and had 10%, which is narrower
+         than the buttons themselves: the row's own ellipsis rule then cut the second
+         one down to a bare "…". The width it needs comes from the text columns, which
+         had more than their contents use. */
       .uc-username {
         width: 14%;
       }
       .uc-email {
-        width: 20%;
-      }
-      .uc-role {
-        width: 13%;
-      }
-      .uc-stores {
         width: 19%;
       }
-      .uc-active {
+      /* 13% cut "Company Admin" off by two pixels — the longest role label sets this. */
+      .uc-role {
         width: 14%;
       }
+      .uc-stores {
+        width: 17%;
+      }
+      .uc-active {
+        width: 12%;
+      }
       .uc-status {
-        width: 10%;
+        width: 9%;
       }
       .uc-actions {
-        width: 10%;
+        width: 15%;
+      }
+      /* Buttons are not text and must never be ellipsised. This needs to out-specify
+         the table.fixed td rule, which is where the clipping comes from — the plain
+         td.actions overflow:visible above it loses that fight. */
+      table.fixed td.actions,
+      table.fixed th.actions {
+        overflow: visible;
+        text-overflow: clip;
       }
       /* View mode: one badge per store, stacked vertically (same visual language
          as the inventory type/location badges). */
@@ -1836,6 +1864,15 @@ export class ManageComponent implements OnInit {
 
   // ---- activity tab -------------------------------------------------------
 
+  readonly activitySearch = signal('');
+  private readonly activityTyped = new Subject<void>();
+
+  /** Typing filters as you go, but not a request per keystroke. */
+  setActivitySearch(v: string): void {
+    this.activitySearch.set(v);
+    this.activityTyped.next();
+  }
+
   loadActivity(): void {
     this.activityLoading.set(true);
     this.error.set(null);
@@ -1845,6 +1882,7 @@ export class ManageComponent implements OnInit {
         entityType: this.activityEntity(),
         action: this.activityAction(),
         storeId: this.activityStoreId(),
+        search: this.activitySearch().trim() || null,
         source: this.activitySource(),
         from: this.activityFrom() || null,
         to: this.activityTo() || null,
@@ -1887,12 +1925,14 @@ export class ManageComponent implements OnInit {
       this.activityEntity() !== null ||
       this.activityAction() !== null ||
       this.activityStoreId() !== null ||
+      this.activitySearch() !== '' ||
       this.activitySource() !== null ||
       this.activityFrom() !== '' ||
       this.activityTo() !== '',
   );
 
   clearActivityFilters(): void {
+    this.activitySearch.set('');
     this.activityUserId.set(null);
     this.activityEntity.set(null);
     this.activityAction.set(null);
@@ -1935,6 +1975,7 @@ export class ManageComponent implements OnInit {
 
   /** From the Users tab: show this person's activity, pre-filtered. */
   viewUserActivity(u: User): void {
+    this.activitySearch.set('');
     this.activityUserId.set(u.id);
     this.activityEntity.set(null);
     this.activityAction.set(null);
@@ -1947,6 +1988,12 @@ export class ManageComponent implements OnInit {
   }
 
   ngOnInit(): void {
+    this.activityTyped
+      .pipe(debounceTime(250), takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.resetActivityPage();
+        this.loadActivity();
+      });
     // Stores are needed by every tab (user/invite store pickers) and are the
     // initial tab, so load them once up front.
     this.loadStores();

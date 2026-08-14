@@ -87,10 +87,19 @@ export const locationKind = pgEnum('location_kind', [
 // company-wide and addressed at admins, so its notification has no store.
 // REORDER_ACKNOWLEDGED is per-store AND per-user: it answers a specific person's
 // request, so it carries a user_id and only that person sees it.
+// CYCLE_COUNT_REVIEW and ITEMS_NEED_REVIEW are per-store AND per-user, like the
+// reorder one: they are addressed at the people who can actually act on them — every
+// company admin, plus the managers of the store in question — so a store user is not
+// nagged about a queue they cannot clear.
 export const notificationType = pgEnum('notification_type', [
   'EXPIRATION_WARNING',
   'INVITE_ACCEPTED',
   'REORDER_ACKNOWLEDGED',
+  'CYCLE_COUNT_REVIEW',
+  'ITEMS_NEED_REVIEW',
+  // The answer coming back: pps named something the store could not, so a queue that
+  // needed a human shrank without one. Same audience as the request that raised it.
+  'ITEMS_IDENTIFIED',
 ]);
 export const invitationEmailStatus = pgEnum('invitation_email_status', [
   'PENDING',
