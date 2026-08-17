@@ -336,9 +336,13 @@ export class ReorderContractService {
           quantityRequested: reorderRequests.quantityRequested,
           note: reorderRequests.note,
           createdAt: reorderRequests.createdAt,
+          // Who asked. The consumer shows this to whoever is deciding, and "the produce
+          // manager asked for this" is most of what makes a request decidable.
+          requestedBy: users.username,
         })
         .from(reorderRequests)
         .innerJoin(products, eq(products.id, reorderRequests.productId))
+        .leftJoin(users, eq(users.id, reorderRequests.requestedByUserId))
         .where(where)
         .orderBy(asc(reorderRequests.createdAt), asc(reorderRequests.id))
         .limit(take)
@@ -360,6 +364,7 @@ export class ReorderContractService {
           quantityRequested: r.quantityRequested,
           note: r.note,
           createdAt: r.createdAt,
+          requestedBy: r.requestedBy ?? null,
         })),
         total: Number(count),
         limit: take,
@@ -452,6 +457,71 @@ export class ReorderContractService {
   }
 
   /**
+   * The ERP looked at the request and said no.
+   *
+   * The counterpart of ack(), and the reason it exists: a reorder declined in pps used to
+   * have nowhere to go, so the request sat OPEN forever and the agent re-offered it every
+   * sweep. Cancelling is what stops that and what tells the store.
+   *
+   * Same guards as ack in the other direction — an ACKNOWLEDGED request cannot be
+   * declined, because an order for it already exists in the ERP and hiding the request
+   * would hide the order.
+   */
+  async decline(
+    companyId: number,
+    id: number,
+    reason: string | undefined,
+    apiKeyId?: number | null,
+  ): Promise<{ status: 'declined' | 'already_declined'; reorderId: number }> {
+    const why = reason?.trim() || null;
+    return this.tenantDb.withCompany(companyId, async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(reorderRequests)
+        .where(
+          and(eq(reorderRequests.id, id), eq(reorderRequests.companyId, companyId)),
+        )
+        .limit(1);
+      if (!existing) throw new NotFoundException('Reorder request not found.');
+
+      // Idempotent: a redelivered decline is the same decision arriving twice.
+      if (existing.status === 'CANCELLED') {
+        return { status: 'already_declined' as const, reorderId: id };
+      }
+
+      if (existing.status === 'ACKNOWLEDGED') {
+        throw new ConflictException(
+          `Reorder ${id} is already acknowledged as order ${existing.externalOrderRef}. ` +
+            'Declining it now would hide an order that has already been raised.',
+        );
+      }
+
+      await this.audit.record(
+        tx,
+        companyId,
+        AuditService.agent(apiKeyId ?? null),
+        { entityType: 'REORDER', entityId: id, storeId: existing.storeId },
+        'DECLINED',
+        { details: { productId: existing.productId, reason: why } },
+      );
+      await tx
+        .update(reorderRequests)
+        .set({ status: 'CANCELLED', cancelledAt: new Date() })
+        .where(
+          and(
+            eq(reorderRequests.id, id),
+            eq(reorderRequests.companyId, companyId),
+            // Only from OPEN, so an ack that won the race is not overwritten.
+            eq(reorderRequests.status, 'OPEN'),
+          ),
+        );
+
+      await this.notifyRequesterDeclined(tx, companyId, existing, why);
+      return { status: 'declined' as const, reorderId: id };
+    });
+  }
+
+  /**
    * Tell whoever asked that their request turned into an order. Addressed at that one
    * user — a colleague's bell should not fill up with other people's answers — and
    * skipped entirely when the request has no requester (seeded or imported rows).
@@ -491,11 +561,56 @@ export class ReorderContractService {
       status: 'UNREAD',
     });
   }
+
+  /** Same audience and shape as the acknowledgement, carrying the reason instead. */
+  private async notifyRequesterDeclined(
+    tx: Tx,
+    companyId: number,
+    request: {
+      id: number;
+      storeId: number;
+      productId: number;
+      requestedByUserId: number | null;
+      quantityRequested: number | null;
+    },
+    reason: string | null,
+  ): Promise<void> {
+    if (request.requestedByUserId == null) return;
+    const [product] = await tx
+      .select({ sku: products.sku, name: products.name })
+      .from(products)
+      .where(eq(products.id, request.productId))
+      .limit(1);
+    const [store] = await tx
+      .select({ name: stores.name })
+      .from(stores)
+      .where(eq(stores.id, request.storeId))
+      .limit(1);
+    await tx.insert(notifications).values({
+      companyId,
+      storeId: request.storeId,
+      userId: request.requestedByUserId,
+      type: 'REORDER_DECLINED',
+      payload: {
+        reorderId: request.id,
+        productId: request.productId,
+        sku: product?.sku ?? null,
+        productName: product?.name ?? null,
+        storeId: request.storeId,
+        storeName: store?.name ?? null,
+        quantityRequested: request.quantityRequested,
+        reason,
+      },
+      status: 'UNREAD',
+    });
+  }
 }
 
 export interface ConsumerReorder {
   reorderId: number;
   retailStoreId: number;
+  /** Username of whoever asked, or null on a seeded/imported request. */
+  requestedBy?: string | null;
   product: {
     sku: string;
     upc: string | null;

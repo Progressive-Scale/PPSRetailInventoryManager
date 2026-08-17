@@ -17,7 +17,11 @@ import { ImportChecksService } from './import-checks.service';
 import { ReorderContractService } from '../reorders/reorders.service';
 import { HandoffsDto, ReturnsAckDto } from './dto/sync.dto';
 import { ImportChecksQuery, ImportCheckResultsDto } from './dto/import-check.dto';
-import { AckReorderDto, SyncReordersQuery } from './dto/reorder-sync.dto';
+import {
+  AckReorderDto,
+  DeclineReorderDto,
+  SyncReordersQuery,
+} from './dto/reorder-sync.dto';
 
 @UseGuards(ApiKeyGuard)
 @Controller('sync')
@@ -115,5 +119,23 @@ export class SyncController {
     // The key is passed through so the audit event names WHICH agent installation acked,
     // not just "Sync".
     return this.reorders.ack(companyId, id, dto.externalOrderRef, apiKeyId);
+  }
+
+  /**
+   * The consumer looked at the request and will not fill it.
+   *
+   * Idempotent — a redelivered decline answers already_declined — and refuses a request
+   * that has already been acknowledged, because an order for that one exists and hiding
+   * the request would hide the order.
+   */
+  @Post('reorders/:id/decline')
+  @HttpCode(HttpStatus.OK)
+  declineReorder(
+    @ApiCompany() companyId: number,
+    @ApiKeyId() apiKeyId: number | null,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeclineReorderDto,
+  ) {
+    return this.reorders.decline(companyId, id, dto.reason, apiKeyId);
   }
 }

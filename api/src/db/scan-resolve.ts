@@ -1,6 +1,6 @@
-import { and, eq, isNotNull, type SQL } from 'drizzle-orm';
+import { and, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { inventoryItems, products, storeLocations, stores } from './schema';
-import { normalizeScannedSerial, scanMatches } from './scan-match';
+import { compactCode, normalizeScannedSerial, scanMatches } from './scan-match';
 import type { Tx } from './tenant-db.service';
 
 /**
@@ -124,6 +124,37 @@ export async function resolveScan(
   const pieces = await candidateQuery(tx, and(...caseConds)!);
   if (pieces.length > 0) {
     return { value, kind: 'CASE', caseSerial: value, candidates: pieces };
+  }
+
+  // The same case, written two ways. pps hands over the GS1 element string in its
+  // readable form — `(01) 90123456015541 (3202) 001240` — while a scanner reading that
+  // symbol emits the data characters with no parentheses and no spaces. Compared
+  // literally the two never match, so a case the store demonstrably knows about would
+  // resolve to nothing and fall into the unknown-scan path. For a case that outcome is
+  // always wrong: an unknown case serial is not a thing we are ever meant to see.
+  //
+  // Strictly a FALLBACK, reached only once the exact comparison above has found nothing,
+  // so no scan that resolves today changes meaning. What comes back is the STORED
+  // spelling, not however it happened to be scanned — callers record the canonical value.
+  const compact = compactCode(value);
+  if (compact) {
+    const looseConds: SQL[] = [
+      eq(inventoryItems.companyId, companyId),
+      isNotNull(inventoryItems.caseSerial),
+      sql`regexp_replace(upper(${inventoryItems.caseSerial}), '[^0-9A-Z]', '', 'g') = ${compact}`,
+    ];
+    if (opts.storeId != null) {
+      looseConds.push(eq(inventoryItems.storeId, opts.storeId));
+    }
+    const loose = await candidateQuery(tx, and(...looseConds)!);
+    if (loose.length > 0) {
+      return {
+        value,
+        kind: 'CASE',
+        caseSerial: loose[0].caseSerial,
+        candidates: loose,
+      };
+    }
   }
 
   // A retired placeholder with no case behind it is still a known row, and saying so beats

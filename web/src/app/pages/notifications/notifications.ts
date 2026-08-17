@@ -58,6 +58,7 @@ const PAGE_SIZE = 200;
               <option [ngValue]="'CYCLE_COUNT_REVIEW'">Count needs review</option>
               <option [ngValue]="'ITEMS_NEED_REVIEW'">Items to identify</option>
               <option [ngValue]="'ITEMS_IDENTIFIED'">Identified by PPS</option>
+              <option [ngValue]="'REORDER_DECLINED'">Reorder declined</option>
             </select>
           </label>
           <label class="f">
@@ -395,6 +396,11 @@ const PAGE_SIZE = 200;
         background: #fff4e5;
         color: #92400e;
         border-color: #fed7aa;
+      }
+      .nt-REORDER_DECLINED {
+        background: #fef2f2;
+        color: #b42318;
+        border-color: #fecaca;
       }
       .nt-ITEMS_IDENTIFIED {
         background: #ecfdf3;
@@ -747,6 +753,8 @@ export class NotificationsComponent implements OnInit {
         return 'Review';
       case 'ITEMS_IDENTIFIED':
         return 'Identified';
+      case 'REORDER_DECLINED':
+        return 'Declined';
       default:
         return 'Expiration';
     }
@@ -771,6 +779,11 @@ export class NotificationsComponent implements OnInit {
         `Count #${n.payload.cycleCountId} at ${n.payload.storeName} is waiting for review` +
         ` — ${n.payload.scannedCount} of ${n.payload.expectedCount} accounted for`
       );
+    }
+    if (n.type === 'REORDER_DECLINED') {
+      const what = n.payload.productName ?? `product #${n.payload.productId}`;
+      const why = n.payload.reason ? ` — ${n.payload.reason}` : '';
+      return `Reorder for ${what} was declined${why}`;
     }
     if (n.type === 'ITEMS_IDENTIFIED') {
       const where = n.payload.storeName ? ` at ${n.payload.storeName}` : '';
@@ -823,6 +836,10 @@ export class NotificationsComponent implements OnInit {
     }
     if (n.type === 'ITEMS_NEED_REVIEW') {
       this.router.navigate(['/cycle-counts'], { queryParams: { tab: 'review' } });
+      return;
+    }
+    if (n.type === 'REORDER_DECLINED') {
+      this.router.navigate(['/reorders'], { queryParams: { status: 'CANCELLED' } });
       return;
     }
     if (n.type === 'ITEMS_IDENTIFIED') {

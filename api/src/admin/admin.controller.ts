@@ -13,11 +13,12 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PlatformAdminGuard } from './platform-admin.guard';
 import { TenantDbService } from '../db/tenant-db.service';
-import { apiKeys, companies } from '../db/schema';
+import { AuditService } from '../audit/audit.service';
+import { apiKeys, companies, releaseChannels } from '../db/schema';
 import { generateApiKey, hashApiKey } from '../common/crypto.util';
 import { CreateApiKeyDto, CreateCompanyDto, UpdateCompanyDto } from './admin.dto';
 
@@ -33,14 +34,36 @@ const apiKeyPublic = {
 @UseGuards(JwtAuthGuard, PlatformAdminGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly tenantDb: TenantDbService) {}
+  constructor(
+    private readonly tenantDb: TenantDbService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ---- companies ---------------------------------------------------------
 
+  // The channel NAME rides along so the panel's dropdown can show the current
+  // value without a second request and a client-side join.
   @Get('companies')
   listCompanies() {
     return this.tenantDb.withBypass((tx) =>
-      tx.select().from(companies).orderBy(asc(companies.id)),
+      tx
+        .select({
+          id: companies.id,
+          name: companies.name,
+          slug: companies.slug,
+          customDomain: companies.customDomain,
+          branding: companies.branding,
+          status: companies.status,
+          createdAt: companies.createdAt,
+          releaseChannelId: companies.releaseChannelId,
+          releaseChannel: releaseChannels.name,
+        })
+        .from(companies)
+        .innerJoin(
+          releaseChannels,
+          eq(releaseChannels.id, companies.releaseChannelId),
+        )
+        .orderBy(asc(companies.id)),
     );
   }
 
@@ -96,11 +119,59 @@ export class AdminController {
       if (dto.status !== undefined) patch.status = dto.status;
       if (dto.customDomain !== undefined) patch.customDomain = dto.customDomain;
 
+      // Moving a company between release channels changes what software its staff
+      // run, so it is recorded in THEIR history — by channel name, because an id
+      // means nothing to the person reading it back months later.
+      const movingChannel =
+        dto.releaseChannelId !== undefined &&
+        dto.releaseChannelId !== current.releaseChannelId;
+      let channelNames: { from: string | null; to: string | null } | null = null;
+
+      if (movingChannel) {
+        const rows = await tx
+          .select({ id: releaseChannels.id, name: releaseChannels.name })
+          .from(releaseChannels)
+          .where(
+            inArray(releaseChannels.id, [
+              current.releaseChannelId,
+              dto.releaseChannelId!,
+            ]),
+          );
+        const byId = new Map(rows.map((r) => [r.id, r.name]));
+        if (!byId.has(dto.releaseChannelId!)) {
+          throw new NotFoundException('That release channel does not exist.');
+        }
+        channelNames = {
+          from: byId.get(current.releaseChannelId) ?? null,
+          to: byId.get(dto.releaseChannelId!) ?? null,
+        };
+        patch.releaseChannelId = dto.releaseChannelId;
+      }
+
       const [row] = await tx
         .update(companies)
         .set(patch)
         .where(eq(companies.id, id))
         .returning();
+
+      if (channelNames) {
+        // A platform admin is not one of this tenant's users, so the actor is a
+        // system one flagged as such — the same treatment as admin user edits.
+        await this.audit.record(
+          tx,
+          id,
+          AuditService.job(),
+          { entityType: 'COMPANY', entityId: id },
+          'UPDATED',
+          {
+            field: 'release_channel',
+            oldValue: channelNames.from,
+            newValue: channelNames.to,
+            details: { byPlatformAdmin: true },
+          },
+        );
+      }
+
       return row;
     });
   }

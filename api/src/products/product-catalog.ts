@@ -22,6 +22,94 @@ export function blankToNull(value: string | null | undefined): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+/** A leading-2, 12-digit barcode — the shape an in-store price label takes. */
+const IN_STORE_SHAPE = /^2\d{11}$/;
+
+/**
+ * Whether a barcode is shaped like an in-store price label rather than a retail UPC.
+ *
+ * A SOFT signal, for warning the user — never grounds to refuse a save. GS1 reserves
+ * prefix 2 for in-store use, but nothing enforces it, so a supplier's genuine catalog
+ * UPC starting with 2 is unusual rather than impossible.
+ */
+export function looksLikeInStoreCode(upc: string | null | undefined): boolean {
+  return !!upc && IN_STORE_SHAPE.test(upc);
+}
+
+/**
+ * A leading-2 barcode and a price-label code are two spellings of the same key, so they
+ * must not collide ACROSS the two columns — not merely within each one.
+ *
+ * The collision is invisible until it bites. Give product A the catalog UPC
+ * `207318011968` and product B the price code `07318`: neither column holds a
+ * duplicate, both rows save happily, and every scan of that sticker is now answerable
+ * two ways. The resolver takes the exact-UPC match, so B silently stops resolving and
+ * nobody finds out until someone counts it.
+ *
+ * Enforced in code rather than by a constraint because the comparison is between a
+ * SLICE of one column and the whole of another, which no unique index can express.
+ *
+ * @param excludeProductId the row being edited, so a product never conflicts with itself.
+ * @returns the offending product plus a sentence naming it, or null when the pair is clean.
+ */
+export async function findCodeConflict(
+  tx: Tx,
+  companyId: number,
+  next: { upc?: string | null; priceEmbeddedCode?: string | null },
+  excludeProductId?: number,
+): Promise<{ id: number; sku: string; name: string; reason: string } | null> {
+  const upcCode5 = looksLikeInStoreCode(next.upc)
+    ? next.upc!.slice(1, 6)
+    : null;
+  // Nothing about this write can collide across the two fields.
+  if (!upcCode5 && !next.priceEmbeddedCode) return null;
+
+  const rows = await tx
+    .select({
+      id: products.id,
+      sku: products.sku,
+      name: products.name,
+      upc: products.upc,
+      priceEmbeddedCode: products.priceEmbeddedCode,
+    })
+    .from(products)
+    .where(eq(products.companyId, companyId));
+  const others = rows.filter((r) => r.id !== excludeProductId);
+
+  if (upcCode5) {
+    const clash = others.find((r) => r.priceEmbeddedCode === upcCode5);
+    if (clash) {
+      return {
+        id: clash.id,
+        sku: clash.sku,
+        name: clash.name,
+        reason:
+          `barcode ${next.upc} carries the in-store product code ${upcCode5}, which is ` +
+          `already the price-label code for ${clash.name} (${clash.sku}).`,
+      };
+    }
+  }
+
+  if (next.priceEmbeddedCode) {
+    const clash = others.find(
+      (r) =>
+        looksLikeInStoreCode(r.upc) && r.upc!.slice(1, 6) === next.priceEmbeddedCode,
+    );
+    if (clash) {
+      return {
+        id: clash.id,
+        sku: clash.sku,
+        name: clash.name,
+        reason:
+          `price-label code ${next.priceEmbeddedCode} is already carried inside the ` +
+          `barcode ${clash.upc} on ${clash.name} (${clash.sku}).`,
+      };
+    }
+  }
+
+  return null;
+}
+
 export interface ResolveProductInput {
   sku: string;
   name: string;

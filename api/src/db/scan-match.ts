@@ -22,13 +22,39 @@ export function scanMatches(value: string): SQL | undefined {
 }
 
 /**
- * The retail shelf label's 2D code: `R<serial>/<YYYYMMDD>`, e.g.
+ * The retail shelf label's 2D code: `R<value>/<YYYYMMDD>`, e.g.
  * `R1205058450/20260722` for serial `1205058450` packed 2026-07-22.
  *
- * The pack date is the second half. Requiring it — and requiring it to be a plausible
- * date — is what keeps this from mangling a real serial that merely contains a slash.
+ * The leading letter is a MARKER meaning "what follows is a serial", not part of the
+ * value — pps stores the bare digits, and every row in inventory_items agrees.
+ *
+ * The value half deliberately accepts anything but a slash-terminated tail, not just
+ * digits: the SAME label format is used for CASE labels, and a case serial is a GS1
+ * element string that can carry spaces and parentheses. Restricting this to `\d`
+ * silently failed to reduce those, and an unreduced composite matches nothing — a real
+ * case in the counter's hand reading as an unknown scan.
+ *
+ * The pack date is the second half, and `.+` is greedy so a value containing its own
+ * slash still splits at the last one. Requiring the date — and requiring it to be a
+ * plausible one — is what keeps this from mangling a value that merely contains a slash.
  */
-const RETAIL_2D = /^([A-Z])(\d{4,20})\/(\d{4})(\d{2})(\d{2})$/;
+const RETAIL_2D = /^([A-Za-z])(.+)\/(\d{4})(\d{2})(\d{2})$/;
+
+/**
+ * A code reduced to its bare alphanumerics, uppercased.
+ *
+ * Exists for ONE problem: the same case is written two ways. pps hands over the GS1
+ * element string in its readable form — `(01) 90123456015541 (3202) 001240` — while a
+ * scanner reading that symbol emits the data characters with no parentheses and no
+ * spaces. Compared literally the two never match, so a case that is demonstrably known
+ * resolves to nothing.
+ *
+ * Used only as a FALLBACK, after an exact comparison fails, so nothing that matches
+ * today changes meaning.
+ */
+export function compactCode(raw: string): string {
+  return raw.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+}
 
 export interface NormalizedScan {
   /** What to match on: the serial alone. */

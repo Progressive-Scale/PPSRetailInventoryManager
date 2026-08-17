@@ -28,6 +28,11 @@ export class TenantGuard implements CanActivate {
     if (path.startsWith('/api/sync') || path.startsWith('/api/health')) {
       return true;
     }
+    // The scanner's update check answers on ANY host, resolvable or not, and
+    // falls back to the stable channel when it cannot tell who is asking. A 404
+    // here would mean a device on a mistyped or retired host could never be told
+    // it is running an unsupported build — the one message it most needs.
+    if (path.startsWith('/api/app/version')) return true;
 
     const ctx = await this.tenantService.resolve(req.headers.host);
     if (ctx.kind === 'unknown') {

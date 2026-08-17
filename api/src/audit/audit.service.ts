@@ -11,6 +11,10 @@ import { DataContext } from '../auth/auth.types';
  * which makes this the vocabulary.
  */
 export type AuditEntityType =
+  // The company record itself. Written by the platform admin — moving a company
+  // between scanner release channels is a change TO that company, and one its own
+  // people can see happened even though only the platform can make it.
+  | 'COMPANY'
   | 'PRODUCT'
   | 'INVENTORY_ITEM'
   | 'LOCATION'
@@ -35,6 +39,10 @@ export type AuditAction =
   | 'RESENT'
   | 'CANCELLED'
   | 'ACKNOWLEDGED'
+  // The consuming ERP's answer to a reorder it will not fill. Kept apart from CANCELLED,
+  // which is the store changing its own mind: only one of the two is a refusal, and the
+  // trail should say which happened.
+  | 'DECLINED'
   | 'RESOLVED'
   | 'OPENED'
   | 'SUBMITTED'

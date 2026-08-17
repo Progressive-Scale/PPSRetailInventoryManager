@@ -103,6 +103,14 @@ interface NavLink {
                                     {{ n.payload.storeName }} — {{ n.payload.scannedCount }}
                                     of {{ n.payload.expectedCount }} accounted for
                                   </span>
+                                } @else if (n.type === 'REORDER_DECLINED') {
+                                  <span class="notif-title">
+                                    {{ n.payload.productName }}
+                                    <span class="notif-serial">declined</span>
+                                  </span>
+                                  <span class="notif-sub">
+                                    {{ n.payload.reason || 'No reason given' }}
+                                  </span>
                                 } @else if (n.type === 'ITEMS_IDENTIFIED') {
                                   <span class="notif-title">
                                     {{ identifiedTitle(n) }}
@@ -584,6 +592,10 @@ export class App implements OnInit {
     }
     if (n.type === 'ITEMS_NEED_REVIEW') {
       this.router.navigate(['/cycle-counts'], { queryParams: { tab: 'review' } });
+      return;
+    }
+    if (n.type === 'REORDER_DECLINED') {
+      this.router.navigate(['/reorders'], { queryParams: { status: 'CANCELLED' } });
       return;
     }
     if (n.type === 'ITEMS_IDENTIFIED') {

@@ -37,6 +37,15 @@ export class UpdateCompanyDto {
   @IsOptional() @IsString() @MaxLength(255) customDomain?: string;
   @IsOptional() @IsString() @MaxLength(1024) logoUrl?: string;
   @IsOptional() @IsHexColor() primaryColor?: string;
+
+  /**
+   * Which scanner release channel this company's devices follow. Changing it is
+   * audited (entity COMPANY, field release_channel) because it decides what
+   * software a tenant's staff are running, which is not the platform's private
+   * business.
+   */
+  @IsOptional() @Type(() => Number) @IsInt() @IsPositive()
+  releaseChannelId?: number;
 }
 
 export class CreateApiKeyDto {

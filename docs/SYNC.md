@@ -1,4 +1,4 @@
-# Sync Agent Integration Contract — v3.11
+# Sync Agent Integration Contract — v3.12
 
 This document is the **integration contract** for a customer sync agent that
 exchanges inventory data with the PPS Retail Inventory cloud API. It is
@@ -10,7 +10,7 @@ The agent always **dials out** over HTTPS to the cloud API; the cloud never
 connects into the customer network.
 
 - **Base URL:** `https://<your-deployment-host>/api`
-- **Contract version:** `v3.11`
+- **Contract version:** `v3.12`
 - **Auth:** every request sends the header `X-Api-Key: <key>` (issued per company
   by a platform admin; shown in plaintext only once at creation). No JWT, no host
   tenancy — the key identifies the company.
@@ -35,6 +35,20 @@ version bump will announce it when it lands.
 
 Whether **store** ids need the same treatment is still open — see
 `PPSV8/PPS/migrations/RETAIL_DATABASE.md`.
+
+## What's new in v3.12
+
+**A consumer can now decline a reorder** — `POST /api/sync/reorders/:id/decline` (§8a).
+Until now the only answers were "acknowledged" and silence, so an ERP that decided *not*
+to fill a request had nowhere to say so: the request stayed `OPEN` and was re-offered on
+every sweep, forever. Declining cancels it and tells the person who asked, with a reason
+if you send one.
+
+**The reorder list carries `requestedBy`** — the username of whoever raised it (§7). A
+consumer that queues these for a human to approve needs to show who asked; it is often
+the deciding fact.
+
+Both are additive. An agent that neither declines nor reads the new field is unaffected.
 
 ## What's new in v3.11
 
@@ -767,6 +781,7 @@ Query: `status` (`OPEN` | `ACKNOWLEDGED` | `CANCELLED`, default **`OPEN`**), `li
                    "name": "Work Gloves Black", "trackingType": "QUANTITY" },
       "quantityRequested": 24,
       "note": "Down to the last box on the floor.",
+      "requestedBy": "produce.manager",
       "createdAt": "2026-08-04T16:15:55.237Z" }
   ],
   "total": 4, "limit": 100, "offset": 0
@@ -786,6 +801,7 @@ the shops asked and a trickle of new requests cannot starve an old one.
 | `product.trackingType` | `SERIALIZED` or `QUANTITY`. Tells you whether quantity is a count of identifiable units or of stock. |
 | `quantityRequested` | May be null — see above. |
 | `note` | Free text from the person who asked. Worth carrying onto whatever you create; it is often the only explanation of *why*. |
+| `requestedBy` | Username of whoever raised it, or null on a seeded/imported request. Show it to whoever decides. **v3.12.** |
 
 A product your catalog does not contain is a **line-level** problem, not a batch-level
 one: skip that line, leave the request unacknowledged (it stays `OPEN` and will be
@@ -828,6 +844,40 @@ error rather than an update: it is the one case that cannot be a retry.
 
 Partial success is normal and per-request: acknowledge each reorder you actually
 included, and leave the rest `OPEN`.
+
+## 8a. Decline a reorder — `POST /api/sync/reorders/:id/decline`
+
+**v3.12.** The answer for a request you will not fill. Without it, deciding "no" locally
+left the request `OPEN` in the cloud and it came back on every sweep.
+
+```json
+{ "reason": "Out of stock until Thursday." }
+```
+
+`reason` (optional, ≤500 chars) is shown to the requester verbatim. It is the difference
+between "not coming" and "not coming, and here is when to ask again".
+
+### Response `200`
+
+```json
+{ "status": "declined", "reorderId": 12 }
+```
+
+| `status` | When |
+|---|---|
+| `declined` | It was `OPEN`; it is now `CANCELLED`, and the person who raised it gets a notification. |
+| `already_declined` | It was already cancelled. Nothing changed — a redelivered decline is the same decision arriving twice. |
+
+### Errors
+
+| HTTP | When | What to do |
+|---|---|---|
+| `404` | No such request for your company. | Log and drop it. |
+| `409` | Already **acknowledged**. | Do not retry. An order exists for this request; declining it now would hide that order. If the order really is being cancelled, that is a conversation, not an API call. |
+
+Decline is the mirror of §8 and follows the same rule: decide locally first, tell the
+cloud second. A decline that fails to send can be repeated next sweep, because the second
+attempt answers `already_declined`.
 
 ---
 

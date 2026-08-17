@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm';
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -100,6 +101,10 @@ export const notificationType = pgEnum('notification_type', [
   // The answer coming back: pps named something the store could not, so a queue that
   // needed a human shrank without one. Same audience as the request that raised it.
   'ITEMS_IDENTIFIED',
+  // The other half of REORDER_ACKNOWLEDGED: the ERP looked at the request and said no.
+  // Addressed at the requester for the same reason — otherwise a store waits indefinitely
+  // for something nobody is sending.
+  'REORDER_DECLINED',
 ]);
 export const invitationEmailStatus = pgEnum('invitation_email_status', [
   'PENDING',
@@ -171,6 +176,78 @@ export const cycleCountResolution = pgEnum('cycle_count_resolution', [
 ]);
 
 // ---------------------------------------------------------------------------
+// Scanner releases — PLATFORM-scoped, like companies: no company_id and no RLS.
+// One release row per published APK; channels are the indirection that lets a
+// tenant be moved between builds without touching either.
+//
+// Declared before `companies` because companies references a channel, and a
+// channel references a release.
+// ---------------------------------------------------------------------------
+
+/**
+ * A published APK. Rows are created by a platform admin AFTER the file is
+ * uploaded to static hosting — this table records where it is and what it should
+ * hash to, it does not store or serve the file.
+ *
+ * Nothing is ever mutated here. A rebuilt APK is a new version_code and a new
+ * row, because devices that already downloaded the old one verified the old
+ * hash, and editing the hash under them turns a good install into a corrupt one.
+ */
+export const appReleases = pgTable(
+  'app_releases',
+  {
+    id: serial('id').primaryKey(),
+    /**
+     * Android's own monotonic build number, and the only thing compared when
+     * deciding whether an update exists. version_name is for humans.
+     */
+    versionCode: integer('version_code').notNull(),
+    versionName: text('version_name').notNull(),
+    apkUrl: text('apk_url').notNull(),
+    /** Lowercase hex sha256 of the exact file at apk_url. */
+    apkSha256: text('apk_sha256').notNull(),
+    releaseNotes: text('release_notes'),
+    /** Advisory only — shown as "24 MB" before a download starts. */
+    fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('app_releases_version_code_uniq').on(t.versionCode),
+    // Both of these are validated in the DTO too. They are repeated here because
+    // a bad value is only discovered on a store's device, hours later, as a
+    // failed update — the cheapest place to catch it is the write itself.
+    check('app_releases_url_https', sql`${t.apkUrl} LIKE 'https://%'`),
+    check(
+      'app_releases_sha256_hex',
+      sql`${t.apkSha256} ~ '^[0-9a-f]{64}$'`,
+    ),
+  ],
+);
+
+/**
+ * A named pointer into app_releases. 'stable' and 'beta' are seeded; the set is
+ * open, so a 'pilot' channel needs no migration.
+ *
+ * release_id null = this channel offers nothing yet (devices are told they are
+ * up to date rather than being offered a downgrade to nothing).
+ * min_supported_release_id null = no floor; every version is allowed to run.
+ */
+export const releaseChannels = pgTable(
+  'release_channels',
+  {
+    id: serial('id').primaryKey(),
+    name: text('name').notNull(),
+    releaseId: integer('release_id').references(() => appReleases.id),
+    minSupportedReleaseId: integer('min_supported_release_id').references(
+      () => appReleases.id,
+    ),
+  },
+  (t) => [uniqueIndex('release_channels_name_uniq').on(t.name)],
+);
+
+// ---------------------------------------------------------------------------
 // companies — the tenant registry. NOT itself a tenant-scoped table (it has no
 // company_id), so it is NOT under RLS; tenant resolution reads it freely.
 // ---------------------------------------------------------------------------
@@ -185,6 +262,21 @@ export const companies = pgTable(
     // { logoUrl, primaryColor }
     branding: jsonb('branding').notNull().default({}),
     status: companyStatus('status').notNull().default('ACTIVE'),
+    /**
+     * Which build this company's scanners are offered. NOT NULL with a database
+     * default, so a company created by any code path — including one written
+     * before this feature existed — lands on the conservative channel rather
+     * than on none.
+     *
+     * The literal 1 is the seeded 'stable' row: migration 0039 inserts stable
+     * first, then beta, and sets this default by LOOKING THE ID UP rather than
+     * assuming it. It is spelled out here only because Drizzle needs a literal to
+     * know the column is optional on insert — the database is the authority.
+     */
+    releaseChannelId: integer('release_channel_id')
+      .notNull()
+      .default(1)
+      .references(() => releaseChannels.id),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -429,6 +521,23 @@ export const products = pgTable(
       .notNull()
       .default('0'),
     upc: text('upc'),
+    /**
+     * The 5-digit product code inside an in-store PRICE-EMBEDDED label.
+     *
+     * Those labels are `2{code5}{price5}{check}` — 12 digits, prefix 2, ordinary
+     * UPC-A check digit (verified against physical samples: 207318011968 →
+     * code 07318, $11.96, check 8). The price changes with every piece, so the
+     * code is the only stable part and the only thing worth storing.
+     *
+     * TEXT, not an integer: `07318` has a leading zero that a numeric column
+     * would silently eat, and the resolver compares it as characters.
+     *
+     * Kept SEPARATE from `upc` because prefix 2 is ambiguous — a genuine catalog
+     * UPC may also start with 2. Which one a scan means is decided by looking in
+     * both columns (exact upc first), never by the format alone. The two are
+     * guarded against colliding: see the cross-field check in ProductsService.
+     */
+    priceEmbeddedCode: text('price_embedded_code'),
     // Immutable after creation (enforced in the update endpoint).
     trackingType: trackingType('tracking_type').notNull().default('SERIALIZED'),
     // Set when an unknown scan/handoff created this product and an admin must
@@ -460,6 +569,18 @@ export const products = pgTable(
     uniqueIndex('products_company_upc_uniq')
       .on(t.companyId, t.upc)
       .where(sql`${t.upc} is not null`),
+    // Same rule for the price-label code: it is a lookup key, so two products
+    // sharing one would make a scan ambiguous in the one place that must not be.
+    uniqueIndex('products_company_price_code_uniq')
+      .on(t.companyId, t.priceEmbeddedCode)
+      .where(sql`${t.priceEmbeddedCode} is not null`),
+    // Exactly five digits, leading zeros kept. The application validates this too;
+    // it is repeated here because a malformed code fails at a shelf, days later,
+    // as a scan that resolves to nothing.
+    check(
+      'products_price_code_5_digits',
+      sql`${t.priceEmbeddedCode} IS NULL OR ${t.priceEmbeddedCode} ~ '^[0-9]{5}$'`,
+    ),
   ],
 );
 
@@ -1173,6 +1294,44 @@ export const cycleCountLines = pgTable(
   ],
 );
 
+/**
+ * What each scanner is actually running — the observability half of staged
+ * rollouts. Tenant-owned (a company sees its own guns and no one else's), so it
+ * carries company_id and lives under RLS like everything else here.
+ *
+ * One row per DEVICE, not per check: the grain is (company_id,
+ * device_identifier) and every report upserts it. A history of every version
+ * check would be large, dull, and answer no question this exists to answer —
+ * "which guns are behind, and when did we last hear from them".
+ *
+ * user_id is whoever was signed in at the last report, kept as a lead on who to
+ * ask about a gun that has stopped checking in. It is not ownership: the same
+ * device is used by different staff.
+ */
+export const deviceAppVersions = pgTable(
+  'device_app_versions',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id')
+      .notNull()
+      .references(() => companies.id),
+    userId: integer('user_id').references(() => users.id),
+    /** ANDROID_ID, or an install-scoped UUID the app persists. Opaque here. */
+    deviceIdentifier: text('device_identifier').notNull(),
+    versionCode: integer('version_code').notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('device_app_versions_company_device_uniq').on(
+      t.companyId,
+      t.deviceIdentifier,
+    ),
+    index('device_app_versions_company_idx').on(t.companyId),
+  ],
+);
+
 // ---------------------------------------------------------------------------
 // Read view — product-level on-hand per store, unifying both tracking types.
 // Created by a hand-written migration WITH (security_invoker = true) so RLS
@@ -1313,6 +1472,9 @@ export type UserStore = typeof userStores.$inferSelect;
 export type ItemAudit = typeof itemAudit.$inferSelect;
 export type ReorderRequest = typeof reorderRequests.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
+export type AppRelease = typeof appReleases.$inferSelect;
+export type ReleaseChannel = typeof releaseChannels.$inferSelect;
+export type DeviceAppVersion = typeof deviceAppVersions.$inferSelect;
 
 export type Role = (typeof userRole.enumValues)[number];
 export type ReorderStatus = (typeof reorderStatus.enumValues)[number];
@@ -1346,4 +1508,7 @@ export const TENANT_TABLES = [
   'cycle_count_products',
   'reorder_requests',
   'audit_events',
+  'device_app_versions',
 ] as const;
+// NOTE: app_releases and release_channels are deliberately absent — they are
+// platform-scoped (no company_id), like `companies`, and carry no RLS policy.

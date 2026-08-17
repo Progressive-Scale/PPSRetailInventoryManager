@@ -24,11 +24,15 @@ import {
   userStores,
 } from '../db/schema';
 import { normalizeScannedSerial, scanMatches } from '../db/scan-match';
+import { parseLeadingTwo } from '../db/price-code';
 import { resolveScan, summariseCase } from '../db/scan-resolve';
 import { DataContext, isStoreScoped } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { Paginated, resolvePaging } from '../common/pagination';
-import { resolveOrCreateProduct } from '../products/product-catalog';
+import {
+  findCodeConflict,
+  resolveOrCreateProduct,
+} from '../products/product-catalog';
 import { notifyReviewers } from '../notifications/review-notifications';
 import { systemLocationId } from '../locations/location-util';
 import {
@@ -221,6 +225,20 @@ export class CycleCountsService {
         // one and say "scan each serial" instead of asking for a count that the
         // submit endpoint would reject.
         upc: products.upc,
+        /**
+         * The two fields that let the handheld resolve a leading-2 scan OFFLINE.
+         *
+         * A `2…` barcode is ambiguous by construction — it may be a genuine catalog
+         * UPC or an in-store price sticker — and only catalog data can say which.
+         * Carrying both here means a count keeps deciding correctly with no signal,
+         * which is the whole reason the snapshot exists.
+         *
+         * trackingType is what turns a price-sticker hit into the right response:
+         * on a quantity product it opens the how-many prompt, on a serialized one it
+         * is the wrong barcode and the counter is told to scan the R-serial instead.
+         */
+        priceEmbeddedCode: products.priceEmbeddedCode,
+        trackingType: products.trackingType,
         // Per-unit weight, for a handheld that wants to show it while counting. Carried
         // in the snapshot rather than fetched per scan: the count is already offline-first
         // and this is one more fact about a unit it has already downloaded.
@@ -272,6 +290,10 @@ export class CycleCountsService {
         sku: products.sku,
         name: products.name,
         upc: products.upc,
+        // Same reason as on the units above: a price sticker scanned against a
+        // quantity shelf has to resolve without asking the server.
+        priceEmbeddedCode: products.priceEmbeddedCode,
+        trackingType: products.trackingType,
       })
       .from(inventoryStock)
       .innerJoin(products, eq(products.id, inventoryStock.productId))
@@ -579,11 +601,7 @@ export class CycleCountsService {
       // A new item's value is a serial only when isUpc is false; a UPC must not be
       // touched. (The 2D pattern could not match one anyway, but saying so is cheaper
       // than making the next reader prove it.)
-      const newItems = (dto.newItems ?? []).map((ni) =>
-        ni.isUpc
-          ? ni
-          : { ...ni, serialOrUpc: normalizeScannedSerial(ni.serialOrUpc) },
-      );
+      const newItems = (dto.newItems ?? []).map((ni) => normalizeNewItem(ni));
 
       const scopeProducts = await this.scopeProductIds(tx, ctx, cc.id);
       // Where things the counter is holding get put. A whole-store count has no
@@ -804,25 +822,75 @@ export class CycleCountsService {
       // and expiration are ignored, because an unidentified unit has no product to
       // name and whoever resolves it supplies those.
       for (const ni of newItems) {
-        if (!ni.isUpc) {
-          if (handledSerials.has(ni.serialOrUpc)) continue;
-          handledSerials.add(ni.serialOrUpc);
-          if (
-            byInScope.has(ni.serialOrUpc) ||
-            byElsewhere.has(ni.serialOrUpc) ||
-            byPending.has(ni.serialOrUpc) ||
-            bySold.has(ni.serialOrUpc)
-          ) {
+        if (ni.trackingType === 'SERIALIZED') {
+          const serial = ni.serial!;
+          if (handledSerials.has(serial)) continue;
+          handledSerials.add(serial);
+
+          const alreadyKnown =
+            byInScope.has(serial) ||
+            byElsewhere.has(serial) ||
+            byPending.has(serial) ||
+            bySold.has(serial);
+
+          // The unit exists. Nothing is created — the scanned-serial pass counts it by
+          // the ordinary rules (received if pending, reinstate prompt if sold). The one
+          // thing worth keeping from this submission is the MAPPING: the sticker that
+          // opened the flow now belongs to this unit's product, so the next scan of it
+          // redirects instead of asking again.
+          if (alreadyKnown) {
+            if (ni.captured) {
+              const [owner] = await tx
+                .select()
+                .from(products)
+                .innerJoin(
+                  inventoryItems,
+                  eq(inventoryItems.productId, products.id),
+                )
+                .where(
+                  and(
+                    eq(inventoryItems.companyId, ctx.companyId),
+                    eq(inventoryItems.serial, serial),
+                  ),
+                )
+                .limit(1)
+                .then((rows) => rows.map((r) => r.products));
+              if (owner) await this.linkCapturedCode(tx, ctx, owner, ni.captured);
+            }
             continue; // it exists; the scanned-serial pass owns it
           }
-          proposeUnknownSerial(ni.serialOrUpc);
+
+          // Unnamed: the long-standing "found a serial nobody can identify" case. Stays
+          // product-less on purpose — a placeholder product per anonymous serial would
+          // pollute the catalog, and the import agent is what resolves these.
+          if (!ni.name) {
+            proposeUnknownSerial(serial);
+            continue;
+          }
+
+          // NAMED by the counter. A catalog row is created now — a needs-review product
+          // is not an inventory change — and the UNIT is proposed against it, created
+          // only if the count is approved. Works with or without a captured code: an
+          // R-label carries no barcode, and the name alone is worth recording.
+          const { product } = await this.resolveNewItemProduct(tx, ctx, ni);
+          lines.push({
+            productId: product.id,
+            itemId: null,
+            serial,
+            quantity: 1,
+            resolution: 'NEW_ITEM',
+            locationId: contextLocationId,
+            locationFromId: null,
+            importCheckRequested: false,
+          });
           continue;
         }
-        // A UPC identifies a PRODUCT even when its details are unknown, so the
-        // catalog row is created now and only the STOCK waits for approval. Creating
+
+        // QUANTITY. The code identifies a PRODUCT even when its details are unknown, so
+        // the catalog row is created now and only the STOCK waits for approval. Creating
         // a needs-review product is not an inventory change; it appears in the review
         // queue either way, and if the count is rejected it is a harmless empty row.
-        const product = await this.resolveUpcProduct(tx, ctx, ni);
+        const { product } = await this.resolveNewItemProduct(tx, ctx, ni);
         lines.push({
           productId: product.id,
           itemId: null,
@@ -1765,30 +1833,70 @@ export class CycleCountsService {
         // barcode — the common case being a quantity shelf stocked somewhere else, which
         // this count can still record a count for: submit resolves a quantityCount by UPC
         // against the whole catalog and files it at the count's location.
-        const [product] = await tx
-          .select({
-            id: products.id,
-            sku: products.sku,
-            name: products.name,
-            trackingType: products.trackingType,
-          })
+        const columns = {
+          id: products.id,
+          sku: products.sku,
+          name: products.name,
+          trackingType: products.trackingType,
+        };
+        let [product] = await tx
+          .select(columns)
           .from(products)
           .where(
             and(eq(products.companyId, ctx.companyId), eq(products.upc, serial)),
           )
           .limit(1);
-        if (!product) return { ...base, classification: 'UNKNOWN' as const };
+
+        // How the code was recognised, so the handheld can say the right sentence.
+        // "That's the product barcode" and "that's the PRICE label" call for different
+        // instructions, and only the server knows which column answered.
+        let matchedBy: 'UPC' | 'PRICE_LABEL' = 'UPC';
+
+        // Not a catalog barcode — but a leading-2 code may be an in-store price label,
+        // whose only stable part is the 5-digit product code. Tried SECOND, and only on
+        // an exact-UPC miss, because the prefix proves nothing: a genuine catalog UPC
+        // may also start with 2, and if one does it must win.
+        const priceLabel = product ? null : parseLeadingTwo(serial);
+        if (priceLabel) {
+          [product] = await tx
+            .select(columns)
+            .from(products)
+            .where(
+              and(
+                eq(products.companyId, ctx.companyId),
+                eq(products.priceEmbeddedCode, priceLabel.productCode5),
+              ),
+            )
+            .limit(1);
+          if (product) matchedBy = 'PRICE_LABEL';
+        }
+
+        if (!product) {
+          return {
+            ...base,
+            classification: 'UNKNOWN' as const,
+            // Carried so the new-product flow knows WHICH field to file the scanned
+            // code under if this turns into a product: a price label's 5 digits are
+            // not a UPC and storing them as one would make the collision guard lie.
+            capturedCode: priceLabel
+              ? { field: 'price_embedded_code' as const, value: priceLabel.productCode5 }
+              : { field: 'upc' as const, value: serial },
+          };
+        }
 
         const shared = {
           ...base,
           productId: product.id,
           sku: product.sku,
           name: product.name,
+          matchedBy,
         };
         if (product.trackingType !== 'QUANTITY') {
-          // A serialized product's barcode. Not a count — each unit is tracked
-          // individually — but naming it beats sending the counter down the new-product
-          // path for something the catalog already holds.
+          // A serialized product, identified by one of its codes. NOT a count: units are
+          // tracked individually, and neither a product barcode nor a price sticker
+          // identifies WHICH one is in the counter's hand. Naming the product and asking
+          // for the serial is the only correct answer — and for a price label it is the
+          // whole point, since that label must never enter a serialized unit.
           return { ...shared, classification: 'SERIALIZED_PRODUCT' as const };
         }
         // What the books say is on this shelf HERE, which is what the handheld's quantity
@@ -1882,6 +1990,175 @@ export class CycleCountsService {
   }
 
   // ---- internals ---------------------------------------------------------
+
+  /**
+   * The product a new-item submission refers to, created or found.
+   *
+   * THE RULE THIS ENFORCES: a scanned barcode names a PRODUCT, never a unit. So a
+   * SERIALIZED new item cannot be created from the barcode that opened the flow —
+   * the caller must also have scanned that piece's own R-serial. A price sticker in
+   * particular must never enter a serialized unit, and this is where that is true
+   * rather than merely intended.
+   *
+   * Returns the product plus whether the captured code was newly linked onto an
+   * existing one, so the caller can tell the counter which of the two happened.
+   */
+  private async resolveNewItemProduct(
+    tx: Tx,
+    ctx: DataContext,
+    ni: NormalizedNewItem,
+  ): Promise<{ product: Product; linked: boolean }> {
+    const captured = ni.captured;
+    const trackingType = ni.trackingType;
+
+    // A named SERIAL with no captured code. An `R…/…` label carries no product barcode,
+    // so there is nothing to file in either code column — but the counter DID name it,
+    // and that name is worth a catalog row. The product is created under a placeholder
+    // sku and completed in Needs Review.
+    //
+    // Only serials get this. A quantity product with no code could never be found again.
+    if (!captured) {
+      if (trackingType !== 'SERIALIZED' || !ni.serial) {
+        throw new BadRequestException(
+          'A new quantity product needs the barcode that was scanned for it.',
+        );
+      }
+      const product = await resolveOrCreateProduct(
+        tx,
+        ctx.companyId,
+        {
+          sku: `REVIEW-SER-${ni.serial}`,
+          name: ni.name ?? `Unidentified serial ${ni.serial}`,
+          price: '0',
+          upc: null,
+          trackingType: 'SERIALIZED',
+          needsReview: true,
+        },
+        {
+          service: this.audit,
+          actor: AuditService.user(ctx),
+          details: { via: 'cycle count new item', serial: ni.serial },
+        },
+      );
+      return { product, linked: false };
+    }
+
+    const value = captured.value;
+    const isPriceCode = captured.field === 'price_embedded_code';
+
+    // Already known by whichever code was captured? Then nothing is created — this is
+    // the "link" half, and it is also what stops a second scan of the same sticker
+    // making a second product.
+    const [byCode] = await tx
+      .select()
+      .from(products)
+      .where(
+        and(
+          eq(products.companyId, ctx.companyId),
+          isPriceCode
+            ? eq(products.priceEmbeddedCode, value)
+            : eq(products.upc, value),
+        ),
+      )
+      .limit(1);
+    if (byCode) return { product: byCode, linked: false };
+
+    const codeColumns = isPriceCode
+      ? { priceEmbeddedCode: value, upc: null }
+      : { upc: value, priceEmbeddedCode: null };
+
+    // Cross-field collision, checked before writing rather than after: a leading-2 UPC
+    // and a five-digit price code are two spellings of one key.
+    const conflict = await findCodeConflict(tx, ctx.companyId, codeColumns);
+    if (conflict) throw new ConflictException(conflict.reason);
+
+    // SKU is NOT NULL, and nobody types one at a shelf. A placeholder in the same
+    // shape as the long-standing REVIEW-UPC- convention: distinctive enough to find
+    // in the review queue, and stable enough that a resubmitted count is idempotent.
+    const sku = isPriceCode
+      ? `REVIEW-PLU-${value}`
+      : `REVIEW-UPC-${value}`;
+
+    const product = await resolveOrCreateProduct(
+      tx,
+      ctx.companyId,
+      {
+        sku,
+        name: ni.name ?? `Unidentified ${isPriceCode ? 'price code' : 'UPC'} ${value}`,
+        price: '0',
+        upc: codeColumns.upc,
+        trackingType,
+        needsReview: true,
+      },
+      {
+        service: this.audit,
+        actor: AuditService.user(ctx),
+        details: { via: 'cycle count new item', code: value, field: captured?.field ?? 'upc' },
+      },
+    );
+
+    // resolveOrCreateProduct predates this column and does not carry it, so the price
+    // code is applied straight after — and only to a row we just created, never over
+    // whatever an existing product already had.
+    if (isPriceCode) {
+      await tx
+        .update(products)
+        .set({ priceEmbeddedCode: value })
+        .where(eq(products.id, product.id));
+      return { product: { ...product, priceEmbeddedCode: value }, linked: false };
+    }
+
+    return { product, linked: false };
+  }
+
+  /**
+   * Attach a captured code to a product that already exists — the "link" case, which
+   * happens when a price sticker turns out to belong to a unit the store already has.
+   *
+   * Nothing is created and nothing about the unit changes; the product simply learns
+   * the code, so the NEXT scan of that sticker redirects instead of asking again.
+   * A collision refuses the link and leaves everything as it was: a wrong mapping is
+   * worse than no mapping, because it sends future scans to the wrong product.
+   */
+  private async linkCapturedCode(
+    tx: Tx,
+    ctx: DataContext,
+    product: Product,
+    captured: { field: string; value: string },
+  ): Promise<boolean> {
+    const isPriceCode = captured.field === 'price_embedded_code';
+    const current = isPriceCode ? product.priceEmbeddedCode : product.upc;
+    if (current === captured.value) return false;
+    if (current) {
+      throw new ConflictException(
+        `${product.name} (${product.sku}) already has a ` +
+          `${isPriceCode ? 'price-label code' : 'barcode'} of ${current}. ` +
+          `Change it on the product if ${captured.value} is correct.`,
+      );
+    }
+
+    const next = isPriceCode
+      ? { priceEmbeddedCode: captured.value }
+      : { upc: captured.value };
+    const conflict = await findCodeConflict(tx, ctx.companyId, next, product.id);
+    if (conflict) throw new ConflictException(conflict.reason);
+
+    await tx.update(products).set(next).where(eq(products.id, product.id));
+    await this.audit.record(
+      tx,
+      ctx.companyId,
+      AuditService.user(ctx),
+      { entityType: 'PRODUCT', entityId: product.id },
+      'UPDATED',
+      {
+        field: isPriceCode ? 'price_embedded_code' : 'upc',
+        oldValue: null,
+        newValue: captured.value,
+        details: { via: 'cycle count scan' },
+      },
+    );
+    return true;
+  }
 
   private async resolveUpcProduct(
     tx: Tx,
@@ -2220,4 +2497,74 @@ export class CycleCountsService {
       awaitingReview: cc.status === 'AWAITING_REVIEW',
     };
   }
+}
+
+/** A new-item submission reduced to one shape, whichever the client sent. */
+interface NormalizedNewItem {
+  trackingType: 'SERIALIZED' | 'QUANTITY';
+  /** The code that opened the flow, and the column it belongs in. */
+  captured: { field: string; value: string } | null;
+  /** The unit's own serial. Present for SERIALIZED, always normalized. */
+  serial: string | null;
+  name?: string;
+  quantity?: number;
+}
+
+/**
+ * Reconcile the two shapes a handheld may submit, and refuse the incoherent ones.
+ *
+ * NEW: { trackingType, capturedCode, serial? } — the counter answered one question,
+ * "quantity or serialized?", and the server decided which column the code belongs in.
+ *
+ * LEGACY: { isUpc } — the counter was asked whether the barcode was a UPC or a
+ * serial. Still accepted because scanners update on their own schedule and a count
+ * in progress on an older build must still land.
+ *
+ * THE RULE, enforced here: a SERIALIZED new item needs a serial. The code that opened
+ * the flow names a PRODUCT — a price sticker most of all — and no barcode identifies
+ * WHICH piece is in somebody's hand. Refusing here means no later code path has to be
+ * trusted to remember it.
+ */
+function normalizeNewItem(ni: NewItemDto): NormalizedNewItem {
+  if (ni.trackingType) {
+    const serial = ni.serial ? normalizeScannedSerial(ni.serial) : null;
+    if (ni.trackingType === 'SERIALIZED' && !serial) {
+      throw new BadRequestException(
+        `New serialized item '${ni.serialOrUpc}' has no serial. A barcode names a ` +
+          `product, not a unit — scan the item's own R-serial label as well.`,
+      );
+    }
+    return {
+      trackingType: ni.trackingType,
+      captured: ni.capturedCode
+        ? { field: ni.capturedCode.field, value: ni.capturedCode.value }
+        : null,
+      serial,
+      name: ni.name,
+      quantity: ni.quantity,
+    };
+  }
+
+  // Legacy. isUpc=true meant "a quantity product's barcode"; false meant "a serial
+  // nobody could identify", which stays product-less exactly as before.
+  if (ni.isUpc === undefined) {
+    throw new BadRequestException(
+      'A new item needs either trackingType (with capturedCode) or the legacy isUpc flag.',
+    );
+  }
+  return ni.isUpc
+    ? {
+        trackingType: 'QUANTITY',
+        captured: { field: 'upc', value: ni.serialOrUpc },
+        serial: null,
+        name: ni.name,
+        quantity: ni.quantity,
+      }
+    : {
+        trackingType: 'SERIALIZED',
+        captured: null,
+        serial: normalizeScannedSerial(ni.serialOrUpc),
+        name: ni.name,
+        quantity: ni.quantity,
+      };
 }

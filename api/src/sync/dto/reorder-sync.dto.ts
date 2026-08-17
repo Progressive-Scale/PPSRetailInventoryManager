@@ -24,6 +24,15 @@ export class SyncReordersQuery {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) offset?: number;
 }
 
+export class DeclineReorderDto {
+  /**
+   * Why the ERP will not fill it, shown to the requester verbatim. Optional because a
+   * decline is meaningful without one, but it is the difference between "not coming" and
+   * "not coming, we are out until Thursday".
+   */
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}
+
 export class AckReorderDto {
   /**
    * The consuming system's own order identifier. Opaque to the cloud — it is displayed

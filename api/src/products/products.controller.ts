@@ -26,7 +26,7 @@ import {
   TENANT_USER_ROLES,
 } from '../auth/auth.types';
 import { AuditService, diffFields } from '../audit/audit.service';
-import { blankToNull } from './product-catalog';
+import { blankToNull, findCodeConflict } from './product-catalog';
 import { TenantDbService } from '../db/tenant-db.service';
 import { inventoryItems, inventoryStock, products } from '../db/schema';
 import {
@@ -83,6 +83,14 @@ export class ProductsController {
   @Post()
   create(@Ctx() ctx: DataContext, @Body() dto: CreateProductDto) {
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
+      const upc = blankToNull(dto.upc);
+      const priceEmbeddedCode = blankToNull(dto.priceEmbeddedCode);
+      const conflict = await findCodeConflict(tx, ctx.companyId, {
+        upc,
+        priceEmbeddedCode,
+      });
+      if (conflict) throw new ConflictException(conflict.reason);
+
       try {
         const [row] = await tx
           .insert(products)
@@ -92,7 +100,8 @@ export class ProductsController {
             name: dto.name,
             description: blankToNull(dto.description),
             price: dto.price !== undefined ? String(dto.price) : '0',
-            upc: blankToNull(dto.upc),
+            upc,
+            priceEmbeddedCode,
             trackingType: dto.trackingType,
           })
           .returning();
@@ -146,6 +155,24 @@ export class ProductsController {
       // Clearing the field is a real edit — it removes the barcode — so an empty string
       // is stored as NULL rather than rejected or ignored.
       if (dto.upc !== undefined) patch.upc = blankToNull(dto.upc);
+      if (dto.priceEmbeddedCode !== undefined) {
+        patch.priceEmbeddedCode = blankToNull(dto.priceEmbeddedCode);
+      }
+      // Checked against the values as they WILL be, not as they were sent: an edit
+      // touching only one of the pair still has to be judged against the other.
+      const conflict = await findCodeConflict(
+        tx,
+        ctx.companyId,
+        {
+          upc: (patch.upc as string | null | undefined) ?? existing.upc,
+          priceEmbeddedCode:
+            (patch.priceEmbeddedCode as string | null | undefined) ??
+            existing.priceEmbeddedCode,
+        },
+        id,
+      );
+      if (conflict) throw new ConflictException(conflict.reason);
+
       if (dto.active !== undefined) patch.active = dto.active;
       if (dto.needsReview !== undefined) patch.needsReview = dto.needsReview;
       // null is meaningful here — it clears the threshold.

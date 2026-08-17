@@ -7,6 +7,12 @@ import {
   AdminUser,
   AdminUserQuery,
   ApiKey,
+  AppRelease,
+  CreateRelease,
+  CreatedRelease,
+  FleetResponse,
+  ReleaseChannel,
+  UpdateChannel,
   AppNotification,
   BulkExpirationResult,
   Branding,
@@ -697,5 +703,26 @@ export class ApiService {
   // ---- platform admin: health ----
   health(): Observable<HealthResponse> {
     return this.http.get<HealthResponse>('/api/admin/health');
+  }
+
+  // ---- platform admin: scanner releases ----
+  listReleases(): Observable<AppRelease[]> {
+    return this.http.get<AppRelease[]>('/api/admin/releases');
+  }
+
+  createRelease(dto: CreateRelease): Observable<CreatedRelease> {
+    return this.http.post<CreatedRelease>('/api/admin/releases', dto);
+  }
+
+  listChannels(): Observable<ReleaseChannel[]> {
+    return this.http.get<ReleaseChannel[]>('/api/admin/channels');
+  }
+
+  updateChannel(id: number, dto: UpdateChannel): Observable<ReleaseChannel> {
+    return this.http.patch<ReleaseChannel>(`/api/admin/channels/${id}`, dto);
+  }
+
+  fleetVersions(): Observable<FleetResponse> {
+    return this.http.get<FleetResponse>('/api/admin/device-versions');
   }
 }

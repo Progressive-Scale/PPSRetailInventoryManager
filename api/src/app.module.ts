@@ -16,6 +16,7 @@ import { CycleCountsModule } from './cycle-counts/cycle-counts.module';
 import { LocationsModule } from './locations/locations.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReordersModule } from './reorders/reorders.module';
+import { ReleasesModule } from './releases/releases.module';
 import { MailModule } from './mail/mail.module';
 import { AuditModule } from './audit/audit.module';
 import { AppThrottlerGuard } from './common/app-throttler.guard';
@@ -37,6 +38,7 @@ import { AppThrottlerGuard } from './common/app-throttler.guard';
     LocationsModule,
     NotificationsModule,
     ReordersModule,
+    ReleasesModule,
     MailModule,
     // Global: every feature emits audit events, so nothing has to remember to import it.
     AuditModule,

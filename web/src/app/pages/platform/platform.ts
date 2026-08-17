@@ -3,13 +3,26 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../core/api.service';
 import { messageFor } from '../../core/http-error';
-import { ApiKey, Company, CreateCompany, HealthRow } from '../../core/models';
+import {
+  ApiKey,
+  Company,
+  CreateCompany,
+  HealthRow,
+  ReleaseChannel,
+} from '../../core/models';
 import { PlatformInvitesComponent } from './platform-invites';
+import { PlatformReleasesComponent } from './platform-releases';
 import { PlatformUsersComponent } from './platform-users';
 
 @Component({
   selector: 'app-platform',
-  imports: [FormsModule, DatePipe, PlatformInvitesComponent, PlatformUsersComponent],
+  imports: [
+    FormsModule,
+    DatePipe,
+    PlatformInvitesComponent,
+    PlatformUsersComponent,
+    PlatformReleasesComponent,
+  ],
   template: `
     <main class="container">
       @if (error()) {
@@ -43,6 +56,7 @@ import { PlatformUsersComponent } from './platform-users';
                   <th>Name</th>
                   <th>Slug</th>
                   <th>Status</th>
+                  <th>Scanner channel</th>
                   <th>Created</th>
                   <th class="actions"></th>
                 </tr>
@@ -56,6 +70,18 @@ import { PlatformUsersComponent } from './platform-users';
                       <span class="status" [class.suspended]="c.status === 'SUSPENDED'">
                         {{ c.status }}
                       </span>
+                    </td>
+                    <td>
+                      <select
+                        [ngModel]="c.releaseChannelId"
+                        [ngModelOptions]="{ standalone: true }"
+                        (ngModelChange)="setChannel(c, $event)"
+                        [disabled]="saving()"
+                      >
+                        @for (ch of channels(); track ch.id) {
+                          <option [ngValue]="ch.id">{{ ch.name }}</option>
+                        }
+                      </select>
                     </td>
                     <td class="muted">{{ c.createdAt | date: 'short' }}</td>
                     <td class="actions">
@@ -120,6 +146,8 @@ import { PlatformUsersComponent } from './platform-users';
       }
 
       <app-platform-users [companies]="companies()" />
+
+      <app-platform-releases />
 
       <section class="card">
         <div class="row-between">
@@ -302,11 +330,39 @@ export class PlatformComponent implements OnInit {
   readonly health = signal<HealthRow[]>([]);
   readonly healthLoading = signal(false);
 
+  /** Just for the per-company dropdown; the releases card manages them. */
+  readonly channels = signal<ReleaseChannel[]>([]);
+
   draft: CreateCompany = { name: '', slug: '', primaryColor: '#2563eb' };
 
   ngOnInit(): void {
     this.loadCompanies();
     this.loadHealth();
+    this.api.listChannels().subscribe({
+      next: (rows) => this.channels.set(rows),
+      error: (err) => this.error.set(messageFor(err)),
+    });
+  }
+
+  /**
+   * Move a tenant onto another channel. Reloads rather than trusting the local
+   * value, so a rejected change cannot leave the dropdown lying about the state.
+   */
+  setChannel(c: Company, releaseChannelId: number): void {
+    if (releaseChannelId === c.releaseChannelId) return;
+    this.saving.set(true);
+    this.error.set(null);
+    this.api.updateCompany(c.id, { releaseChannelId }).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.loadCompanies();
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.error.set(messageFor(err));
+        this.loadCompanies();
+      },
+    });
   }
 
   loadCompanies(): void {

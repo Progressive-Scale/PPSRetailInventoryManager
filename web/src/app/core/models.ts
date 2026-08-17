@@ -611,6 +611,91 @@ export interface Company {
   branding: unknown;
   status: 'ACTIVE' | 'SUSPENDED';
   createdAt: string;
+  /** Which scanner build this tenant's devices are offered. */
+  releaseChannelId: number;
+  /** Name of that channel, joined server-side so the dropdown needs no lookup. */
+  releaseChannel: string;
+}
+
+// ---- scanner releases ----
+
+export interface AppRelease {
+  id: number;
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
+  apkSha256: string;
+  releaseNotes: string | null;
+  fileSizeBytes: number | null;
+  createdAt: string;
+}
+
+/** Whether the URL actually answered when the release was recorded. Advisory. */
+export interface ReleaseUrlCheck {
+  ok: boolean;
+  status: number | null;
+  error: string | null;
+  sizeBytes: number | null;
+}
+
+export type CreatedRelease = AppRelease & { urlCheck: ReleaseUrlCheck };
+
+export interface CreateRelease {
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
+  apkSha256: string;
+  releaseNotes?: string;
+  fileSizeBytes?: number;
+}
+
+/** A release as embedded in a channel row — enough to name it. */
+export interface ChannelRelease {
+  id: number;
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
+}
+
+export interface ReleaseChannel {
+  id: number;
+  name: string;
+  releaseId: number | null;
+  minSupportedReleaseId: number | null;
+  release: ChannelRelease | null;
+  minSupportedRelease: ChannelRelease | null;
+  /** How many companies follow this channel right now. */
+  companyCount: number;
+}
+
+export interface UpdateChannel {
+  releaseId?: number | null;
+  minSupportedReleaseId?: number | null;
+}
+
+export interface FleetDevice {
+  deviceIdentifier: string;
+  versionCode: number | null;
+  /** Null when the reported code is not one we published — a sideloaded build. */
+  versionName: string | null;
+  lastSeenAt: string | null;
+  username: string | null;
+  /** At or ahead of what its company's channel offers. */
+  current: boolean;
+}
+
+export interface FleetCompany {
+  companyId: number;
+  companyName: string;
+  companySlug: string;
+  channel: string;
+  channelVersionCode: number | null;
+  channelVersionName: string | null;
+  devices: FleetDevice[];
+}
+
+export interface FleetResponse {
+  companies: FleetCompany[];
 }
 
 export interface ApiKey {
@@ -877,7 +962,8 @@ export type NotificationType =
   | 'REORDER_ACKNOWLEDGED'
   | 'CYCLE_COUNT_REVIEW'
   | 'ITEMS_NEED_REVIEW'
-  | 'ITEMS_IDENTIFIED';
+  | 'ITEMS_IDENTIFIED'
+  | 'REORDER_DECLINED';
 export type NotificationStatus = 'UNREAD' | 'READ' | 'DISMISSED';
 
 export interface ExpirationPayload {
@@ -957,6 +1043,19 @@ export interface ItemsIdentifiedPayload {
   productName: string | null;
 }
 
+/** Raised for the requester when the ERP says it will not fill their request. */
+export interface ReorderDeclinedPayload {
+  reorderId: number;
+  productId: number;
+  sku: string | null;
+  productName: string | null;
+  storeId: number;
+  storeName: string | null;
+  quantityRequested: number | null;
+  /** Why, in the ERP operator's words. Null when they gave none. */
+  reason: string | null;
+}
+
 export interface AppNotification {
   id: number;
   companyId: number;
@@ -970,7 +1069,8 @@ export interface AppNotification {
     Partial<ReorderAcknowledgedPayload> &
     Partial<CycleCountReviewPayload> &
     Partial<ItemsNeedReviewPayload> &
-    Partial<ItemsIdentifiedPayload>;
+    Partial<ItemsIdentifiedPayload> &
+    Partial<ReorderDeclinedPayload>;
   status: NotificationStatus;
   createdAt: string;
 }
@@ -1051,4 +1151,6 @@ export interface UpdateCompany {
   customDomain?: string;
   logoUrl?: string;
   primaryColor?: string;
+  /** Moving a tenant between scanner channels. Audited on the tenant's own trail. */
+  releaseChannelId?: number;
 }
