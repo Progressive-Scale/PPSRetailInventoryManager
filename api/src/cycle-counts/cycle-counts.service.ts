@@ -111,17 +111,43 @@ export class CycleCountsService {
   private writeStoreId(ctx: DataContext, requested?: number): number {
     if (isStoreScoped(ctx.role)) {
       if (ctx.storeId == null) {
-        throw new BadRequestException('User is not assigned to a store.');
+        throw new BadRequestException(
+          'Your account is not assigned to a store, so it cannot count one. ' +
+            'Ask an administrator to assign you to a store.',
+        );
       }
       if (requested !== undefined && requested !== ctx.storeId) {
         throw new BadRequestException('Cannot act on another store.');
       }
       return ctx.storeId;
     }
+    // A company admin spans every store, so there is no store to infer from the
+    // account and one has to be named. The old message said only "storeId is
+    // required", which is true and useless from a handheld: it named a field the
+    // person cannot see, on a screen where they HAD picked a store.
     if (requested === undefined) {
-      throw new BadRequestException('storeId is required.');
+      throw new BadRequestException(
+        'A company admin has to say which store this is for. Pick a store on the ' +
+          'device (or send storeId) and try again.',
+      );
     }
     return requested;
+  }
+
+  /**
+   * The company's store, when it has exactly one. Null otherwise — including for a
+   * store-scoped user, whose own store is authoritative and must not be second-guessed.
+   */
+  private async soleStoreIdFor(ctx: DataContext): Promise<number | undefined> {
+    if (isStoreScoped(ctx.role)) return undefined;
+    const rows = await this.tenantDb.withCompany(ctx.companyId, (tx) =>
+      tx
+        .select({ id: stores.id })
+        .from(stores)
+        .where(eq(stores.companyId, ctx.companyId))
+        .limit(2),
+    );
+    return rows.length === 1 ? rows[0].id : undefined;
   }
 
   private async loadCount(
@@ -366,7 +392,12 @@ export class CycleCountsService {
   }
 
   async open(ctx: DataContext, dto: OpenCycleCountDto) {
-    const storeId = this.writeStoreId(ctx, dto.storeId);
+    // A company admin normally must name the store. When the company HAS only one,
+    // there is nothing to disambiguate and demanding it is pure friction — an older
+    // scanner build, or one whose store was never picked, would be refused for a
+    // question with a single possible answer.
+    const only = dto.storeId ?? (await this.soleStoreIdFor(ctx));
+    const storeId = this.writeStoreId(ctx, only);
     const productIds = [...new Set(dto.productIds ?? [])];
 
     return this.tenantDb.withCompany(ctx.companyId, async (tx) => {
