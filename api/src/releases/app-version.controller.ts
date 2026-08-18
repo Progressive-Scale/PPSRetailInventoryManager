@@ -27,9 +27,10 @@ export class AppVersionController {
     private readonly jwt: JwtService,
   ) {}
 
-  // Devices check on launch (throttled to once per 6h in the app) and on demand.
-  // The ceiling is per-IP for anonymous callers, and a store's guns share one NAT
-  // address, so it is set well above what a shopful of scanners can produce.
+  // Devices check on every launch and on demand — the app used to throttle this to
+  // once per six hours and no longer does. The ceiling is per-IP for anonymous
+  // callers, and a store's guns share one NAT address, so it is set well above what
+  // a shopful of scanners can produce even when they all restart at shift change.
   @Get('version')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async version(

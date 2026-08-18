@@ -288,6 +288,13 @@
       "when": 1786740669519,
       "tag": "0040_price_embedded_code",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786740669520,
+      "tag": "0041_release_url_allow_http",
+      "breakpoints": true
     }
   ]
 }

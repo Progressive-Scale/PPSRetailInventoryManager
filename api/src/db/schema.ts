@@ -218,7 +218,12 @@ export const appReleases = pgTable(
     // Both of these are validated in the DTO too. They are repeated here because
     // a bad value is only discovered on a store's device, hours later, as a
     // failed update — the cheapest place to catch it is the write itself.
-    check('app_releases_url_https', sql`${t.apkUrl} LIKE 'https://%'`),
+    // http allowed alongside https while the APK host's certificate is expired.
+    // Temporary — see migration 0041 for the reasoning and the revert.
+    check(
+      'app_releases_url_http_or_https',
+      sql`${t.apkUrl} LIKE 'https://%' OR ${t.apkUrl} LIKE 'http://%'`,
+    ),
     check(
       'app_releases_sha256_hex',
       sql`${t.apkSha256} ~ '^[0-9a-f]{64}$'`,

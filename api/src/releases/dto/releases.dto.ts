@@ -33,11 +33,12 @@ export class CreateReleaseDto {
 
   @IsString() @MinLength(1) @MaxLength(40) versionName!: string;
 
-  // https only, and said explicitly rather than via IsUrl: the whole point is
-  // that this one scheme is acceptable and http is not.
+  // Spelled out rather than via IsUrl, because the SCHEME is the point. https was
+  // the only accepted value until the APK host's certificate expired; http is allowed
+  // alongside it temporarily. See migration 0041 for the reasoning and the revert.
   @IsString()
-  @Matches(/^https:\/\/[^\s]+$/, {
-    message: 'apkUrl must be an https:// URL.',
+  @Matches(/^https?:\/\/[^\s]+$/, {
+    message: 'apkUrl must be an http:// or https:// URL.',
   })
   @MaxLength(500)
   apkUrl!: string;
