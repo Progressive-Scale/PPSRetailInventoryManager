@@ -7,11 +7,13 @@ import { AuthService } from '../../core/auth.service';
 import { messageFor } from '../../core/http-error';
 import {
   DetailReport,
+  DetailStoreSection,
   StoreLocation,
   ReportFilters,
   ReportKind,
   Store,
   SummaryReport,
+  SummaryStoreSection,
 } from '../../core/models';
 
 type AnyReport = SummaryReport | DetailReport;
@@ -51,10 +53,17 @@ const KINDS: { kind: ReportKind; label: string }[] = [
           </label>
 
           @if (isCompanyAdmin) {
+            <!-- A native multiple select: ctrl/cmd-click picks several, and nothing
+                 selected means every store, which is the common case. -->
             <label class="f">
-              Store
-              <select name="rp-store" [ngModel]="storeId()" (ngModelChange)="setStore($event)">
-                <option [ngValue]="null">All stores</option>
+              Stores <small class="hint">(none = all)</small>
+              <select
+                name="rp-stores"
+                multiple
+                size="4"
+                [ngModel]="storeIds()"
+                (ngModelChange)="setStores($event)"
+              >
                 @for (s of stores(); track s.id) {
                   <option [ngValue]="s.id">{{ s.name }}</option>
                 }
@@ -62,6 +71,12 @@ const KINDS: { kind: ReportKind; label: string }[] = [
             </label>
           }
 
+          <!-- Locations belong to one store, so this only appears when the report is
+               aimed at exactly one: with several picked - or with none, meaning all -
+               the list mixes same-named locations from different stores ("Backroom"
+               five times) and picking one would mean nothing. A store user or manager
+               never picks a store, so for them it is always their own. -->
+          @if (oneStore()) {
           <label class="f">
             Location
             <select
@@ -75,6 +90,7 @@ const KINDS: { kind: ReportKind; label: string }[] = [
               }
             </select>
           </label>
+          }
 
           <!-- Only the sold report is bounded by dates, so the inputs appear with it
                rather than sitting empty and unexplained on the other two. -->
@@ -136,7 +152,10 @@ const KINDS: { kind: ReportKind; label: string }[] = [
             <h3>{{ r.meta.title }}</h3>
             <div class="scope">
               <span>{{ r.meta.companyName }}</span>
-              <span>Store: {{ r.meta.storeName ?? 'All stores' }}</span>
+              <span>
+                Stores:
+                {{ r.meta.storeNames.length ? r.meta.storeNames.join(', ') : 'All stores' }}
+              </span>
               @if (r.meta.locationName) {
                 <span>Location: {{ r.meta.locationName }}</span>
               }
@@ -148,69 +167,79 @@ const KINDS: { kind: ReportKind; label: string }[] = [
           </div>
 
           @if (summary(); as s) {
-            @if (s.rows.length === 0) {
-              <p class="muted">Nothing on hand for that scope.</p>
-            } @else {
-              <div class="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>SKU</th>
-                      <th>Product</th>
-                      <th class="num">Weight (lb)</th>
-                      <th class="num">Cases</th>
-                      <th class="num">Pieces</th>
-                      <th class="num">Avg wt</th>
-                      <th class="num">Avg $/lb</th>
-                      <th class="num">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    @for (row of s.rows; track row.productId + row.trackingType) {
-                      <tr>
-                        <td>{{ row.sku }}</td>
-                        <td>
-                          {{ row.name }}
-                          @if (row.trackingType === 'QUANTITY') {
-                            <span class="tag">shelf</span>
-                          }
-                        </td>
-                        <td class="num">{{ num(row.weightLbs) }}</td>
-                        <td class="num">{{ row.cases ?? '—' }}</td>
-                        <td class="num">{{ row.pieces }}</td>
-                        <td class="num">{{ num(row.avgWeightLbs) }}</td>
-                        <td class="num">{{ money(row.avgPricePerLb) }}</td>
-                        <td class="num">{{ money(row.value) }}</td>
-                      </tr>
-                    }
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <th colspan="2">Total</th>
-                      <th class="num">{{ num(s.totals.weightLbs) }}</th>
-                      <th class="num">{{ s.totals.cases }}</th>
-                      <th class="num">{{ s.totals.pieces }}</th>
-                      <th></th>
-                      <th></th>
-                      <th class="num">{{ money(s.totals.value) }}</th>
-                    </tr>
-                  </tfoot>
-                </table>
+            @for (st of s.stores; track st.storeId) {
+              <div class="store">
+                <h4 class="store-head">{{ st.storeName }}</h4>
+                @if (st.rows.length === 0) {
+                  <p class="muted sm">Nothing on hand.</p>
+                } @else {
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>SKU</th>
+                          <th>Product</th>
+                          <th class="num">Weight (lb)</th>
+                          <th class="num">Cases</th>
+                          <th class="num">Pieces</th>
+                          <th class="num">Avg wt</th>
+                          <th class="num">Avg $/lb</th>
+                          <th class="num">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (row of st.rows; track row.productId + row.trackingType) {
+                          <tr>
+                            <td>{{ row.sku }}</td>
+                            <td>
+                              {{ row.name }}
+                              @if (row.trackingType === 'QUANTITY') {
+                                <span class="tag">shelf</span>
+                              }
+                            </td>
+                            <td class="num">{{ num(row.weightLbs) }}</td>
+                            <td class="num">{{ row.cases ?? '—' }}</td>
+                            <td class="num">{{ row.pieces }}</td>
+                            <td class="num">{{ num(row.avgWeightLbs) }}</td>
+                            <td class="num">{{ money(row.avgPricePerLb) }}</td>
+                            <td class="num">{{ money(row.value) }}</td>
+                          </tr>
+                        }
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <th colspan="2">{{ st.storeName }} subtotal</th>
+                          <th class="num">{{ num(st.subtotal.weightLbs) }}</th>
+                          <th class="num">{{ st.subtotal.cases }}</th>
+                          <th class="num">{{ st.subtotal.pieces }}</th>
+                          <th></th>
+                          <th></th>
+                          <th class="num">{{ money(st.subtotal.value) }}</th>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                }
               </div>
             }
+            <div class="grand">
+              <span>Total — all stores</span>
+              <span>{{ num(s.totals.weightLbs) }} lb</span>
+              <span>{{ s.totals.pieces }} piece(s)</span>
+              <span>{{ money(s.totals.value) }}</span>
+            </div>
           }
 
           @if (detail(); as d) {
-            @if (d.groups.length === 0) {
-              <p class="muted">
-                {{
-                  kind() === 'SOLD'
-                    ? 'Nothing sold in that range.'
-                    : 'Nothing on hand for that scope.'
-                }}
-              </p>
-            } @else {
-              @for (g of d.groups; track g.productId) {
+            @for (st of d.stores; track st.storeId) {
+              <div class="store">
+                <h4 class="store-head">{{ st.storeName }}</h4>
+                @if (st.groups.length === 0) {
+                  <p class="muted sm">
+                    {{ kind() === 'SOLD' ? 'Nothing sold.' : 'Nothing on hand.' }}
+                  </p>
+                } @else {
+                  @for (g of st.groups; track g.productId) {
                 <div class="group">
                   <h4>{{ g.sku }} — {{ g.name }}</h4>
                   <div class="table-scroll">
@@ -255,13 +284,22 @@ const KINDS: { kind: ReportKind; label: string }[] = [
                     </table>
                   </div>
                 </div>
-              }
-              <div class="grand">
-                <span>Total — {{ d.totals.pieces }} piece(s)</span>
-                <span>{{ num(d.totals.weightLbs) }} lb</span>
-                <span>{{ money(d.totals.value) }}</span>
+                  }
+                  <div class="store-total">
+                    <span>{{ st.storeName }} subtotal</span>
+                    <span>{{ st.subtotal.pieces }} piece(s)</span>
+                    <span>{{ num(st.subtotal.weightLbs) }} lb</span>
+                    <span>{{ money(st.subtotal.value) }}</span>
+                  </div>
+                }
               </div>
             }
+            <div class="grand">
+              <span>Total — all stores</span>
+              <span>{{ d.totals.pieces }} piece(s)</span>
+              <span>{{ num(d.totals.weightLbs) }} lb</span>
+              <span>{{ money(d.totals.value) }}</span>
+            </div>
           }
         } @else if (!loading()) {
           <p class="muted">Choose a report and press Run.</p>
@@ -377,6 +415,31 @@ const KINDS: { kind: ReportKind; label: string }[] = [
         gap: 0.75rem;
         font-size: 0.8rem;
         color: var(--muted);
+      }
+      /* A store's block, with its name as the section heading. */
+      .store {
+        margin: 0 0 1.5rem;
+      }
+      .store-head {
+        margin: 0 0 0.4rem;
+        padding-bottom: 0.25rem;
+        border-bottom: 2px solid var(--border);
+        font-size: 0.95rem;
+      }
+      .store-total {
+        display: flex;
+        gap: 1.25rem;
+        justify-content: flex-end;
+        padding: 0.4rem 0.5rem 0;
+        font-weight: 600;
+        font-size: 0.85rem;
+      }
+      .hint {
+        font-weight: 400;
+        text-transform: none;
+      }
+      .sm {
+        font-size: 0.85rem;
       }
       .group {
         margin: 0 0 1rem;
@@ -510,6 +573,10 @@ const KINDS: { kind: ReportKind; label: string }[] = [
         .group {
           break-inside: avoid;
         }
+        /* A store's heading must not be the last thing on a page. */
+        .store-head {
+          break-after: avoid;
+        }
         thead {
           display: table-header-group;
         }
@@ -525,7 +592,12 @@ export class ReportsComponent implements OnInit {
   readonly isCompanyAdmin = this.auth.isCompanyAdmin();
 
   readonly kind = signal<ReportKind>('SUMMARY');
-  readonly storeId = signal<number | null>(null);
+  readonly storeIds = signal<number[]>([]);
+
+  /** Whether the report covers a single store, which is what gates the Location filter. */
+  readonly oneStore = computed(
+    () => this.storeIds().length === 1 || !this.isCompanyAdmin,
+  );
   readonly locationId = signal<number | null>(null);
   fromDate = '';
   toDate = '';
@@ -540,13 +612,17 @@ export class ReportsComponent implements OnInit {
   readonly notice = signal<string | null>(null);
 
   // Narrowing for the template: one of these is non-null, never both.
+  //
+  // Discriminated on meta.kind, not on shape: both reports now carry `stores`, so
+  // 'rows' in r no longer separates them — and the kind is what actually decides
+  // which columns apply.
   readonly summary = computed<SummaryReport | null>(() => {
     const r = this.report();
-    return r && 'rows' in r ? r : null;
+    return r && r.meta.kind === 'SUMMARY' ? (r as SummaryReport) : null;
   });
   readonly detail = computed<DetailReport | null>(() => {
     const r = this.report();
-    return r && 'groups' in r ? r : null;
+    return r && r.meta.kind !== 'SUMMARY' ? (r as DetailReport) : null;
   });
 
   readonly emailOpen = signal(false);
@@ -569,7 +645,7 @@ export class ReportsComponent implements OnInit {
 
   private filters(): ReportFilters {
     const f: ReportFilters = {};
-    if (this.storeId() != null) f.storeId = this.storeId()!;
+    if (this.storeIds().length) f.storeIds = this.storeIds();
     if (this.locationId() != null) f.locationId = this.locationId()!;
     if (this.kind() === 'SOLD') {
       if (this.fromDate) f.from = this.fromDate;
@@ -587,22 +663,28 @@ export class ReportsComponent implements OnInit {
     this.error.set(null);
   }
 
-  setStore(id: number | null): void {
-    this.storeId.set(id);
+  setStores(ids: number[] | null): void {
+    this.storeIds.set(ids ?? []);
+    // Locations belong to a store, so a location chosen under a different selection
+    // may no longer exist in it. Cleared rather than silently filtering nothing.
     this.locationId.set(null);
     this.report.set(null);
     this.loadLocations();
   }
 
   private loadLocations(): void {
-    this.api.listLocations(this.storeId() ?? undefined).subscribe({
+    if (!this.oneStore()) {
+      this.locations.set([]);
+      return;
+    }
+    this.api.listLocations(this.storeIds()[0]).subscribe({
       next: (l) => this.locations.set(l.filter((x) => x.isActive)),
       error: () => this.locations.set([]),
     });
   }
 
   clear(): void {
-    this.storeId.set(null);
+    this.storeIds.set([]);
     this.locationId.set(null);
     this.fromDate = '';
     this.toDate = '';

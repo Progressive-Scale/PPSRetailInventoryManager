@@ -737,7 +737,9 @@ export class ApiService {
   /** Query string shared by every report call, so the screen and the file agree. */
   private reportParams(f: ReportFilters): HttpParams {
     let p = new HttpParams();
-    if (f.storeId != null) p = p.set('storeId', String(f.storeId));
+    // One value per id rather than a comma list: both are accepted server-side, and
+    // repeated params are what a reader of the network tab expects.
+    for (const id of f.storeIds ?? []) p = p.append('storeIds', String(id));
     if (f.locationId != null) p = p.set('locationId', String(f.locationId));
     if (f.productId != null) p = p.set('productId', String(f.productId));
     if (f.from) p = p.set('from', f.from);

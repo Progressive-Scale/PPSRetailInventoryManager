@@ -1166,7 +1166,8 @@ export interface ReportMeta {
   /** When it ran — the legacy calls this the Print Date. */
   generatedAt: string;
   companyName: string;
-  storeName: string | null;
+  /** Named only when the scope was narrowed; empty means every store. */
+  storeNames: string[];
   locationName: string | null;
   from: string | null;
   to: string | null;
@@ -1212,20 +1213,36 @@ export interface ReportTotals {
   value: number;
 }
 
+/** A report is a list of stores, each with its own rows and its own subtotal. */
+export interface SummaryStoreSection {
+  storeId: number;
+  storeName: string;
+  rows: SummaryRow[];
+  subtotal: ReportTotals;
+}
+
+export interface DetailStoreSection {
+  storeId: number;
+  storeName: string;
+  groups: ReportDetailGroup[];
+  subtotal: ReportTotals;
+}
+
 export interface SummaryReport {
   meta: ReportMeta;
-  rows: SummaryRow[];
+  stores: SummaryStoreSection[];
   totals: ReportTotals;
 }
 
 export interface DetailReport {
   meta: ReportMeta;
-  groups: ReportDetailGroup[];
+  stores: DetailStoreSection[];
   totals: ReportTotals;
 }
 
 export interface ReportFilters {
-  storeId?: number;
+  /** Empty or omitted means every store the caller can see. */
+  storeIds?: number[];
   locationId?: number;
   productId?: number;
   from?: string;

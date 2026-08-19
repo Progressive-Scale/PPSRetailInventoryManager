@@ -18,8 +18,11 @@ import {
  * single Railway service. The cost of pdfkit is doing the column layout by hand.
  */
 
-const isSummary = (r: AnyReport): r is SummaryReport =>
-  (r as SummaryReport).rows !== undefined;
+/**
+ * Both reports now carry `stores`, so the shape no longer tells them apart — the
+ * KIND does, and it is the thing that actually decides which columns apply.
+ */
+const isSummary = (r: AnyReport): r is SummaryReport => r.meta.kind === 'SUMMARY';
 
 // ---- shared formatting ---------------------------------------------------
 
@@ -47,7 +50,9 @@ function dateOnly(iso: string | null): string {
 /** Header lines shared by both formats, so the two never describe different scopes. */
 function scopeLines(meta: ReportMeta): string[] {
   const lines = [meta.companyName];
-  lines.push(`Store: ${meta.storeName ?? 'All stores'}`);
+  lines.push(
+    `Stores: ${meta.storeNames.length ? meta.storeNames.join(', ') : 'All stores'}`,
+  );
   if (meta.locationName) lines.push(`Location: ${meta.locationName}`);
   if (meta.from && meta.to) lines.push(`Sold between ${meta.from} and ${meta.to}`);
   return lines;
@@ -83,8 +88,12 @@ export function toCsv(report: AnyReport): string {
   out.push('');
 
   if (isSummary(report)) {
+    // Store is a COLUMN, not just a heading: a spreadsheet is for sorting and
+    // pivoting, and a store you can only identify by which block a row sits in is
+    // useless the moment somebody re-sorts by value.
     out.push(
       csvRow([
+        'Store',
         'SKU',
         'Product',
         'Tracking',
@@ -96,18 +105,35 @@ export function toCsv(report: AnyReport): string {
         'Value',
       ]),
     );
-    for (const r of report.rows) {
+    for (const st of report.stores) {
+      for (const r of st.rows) {
+        out.push(
+          csvRow([
+            st.storeName,
+            r.sku,
+            r.name,
+            r.trackingType,
+            r.weightLbs,
+            r.cases,
+            r.pieces,
+            r.avgWeightLbs,
+            r.avgPricePerLb,
+            r.value,
+          ]),
+        );
+      }
       out.push(
         csvRow([
-          r.sku,
-          r.name,
-          r.trackingType,
-          r.weightLbs,
-          r.cases,
-          r.pieces,
-          r.avgWeightLbs,
-          r.avgPricePerLb,
-          r.value,
+          st.storeName,
+          'STORE SUBTOTAL',
+          '',
+          '',
+          st.subtotal.weightLbs,
+          st.subtotal.cases,
+          st.subtotal.pieces,
+          '',
+          '',
+          st.subtotal.value,
         ]),
       );
     }
@@ -115,6 +141,7 @@ export function toCsv(report: AnyReport): string {
     out.push(
       csvRow([
         'TOTAL',
+        '',
         '',
         '',
         report.totals.weightLbs,
@@ -130,6 +157,7 @@ export function toCsv(report: AnyReport): string {
     const soldReport = meta.kind === 'SOLD';
     out.push(
       csvRow([
+        'Store',
         'SKU',
         'Product',
         'Serial',
@@ -141,34 +169,52 @@ export function toCsv(report: AnyReport): string {
         'Value',
       ]),
     );
-    for (const g of d.groups) {
-      for (const u of g.units) {
+    for (const st of d.stores) {
+      for (const g of st.groups) {
+        for (const u of g.units) {
+          out.push(
+            csvRow([
+              st.storeName,
+              g.sku,
+              g.name,
+              u.serial,
+              u.caseSerial,
+              u.weightLbs,
+              u.locationName,
+              dateOnly(soldReport ? u.soldAt : u.receivedAt),
+              u.pricePerLb,
+              u.value,
+            ]),
+          );
+        }
+        // Subtotal inline, labelled, so a filter on the SKU column still shows it.
         out.push(
           csvRow([
+            st.storeName,
             g.sku,
-            g.name,
-            u.serial,
-            u.caseSerial,
-            u.weightLbs,
-            u.locationName,
-            dateOnly(soldReport ? u.soldAt : u.receivedAt),
-            u.pricePerLb,
-            u.value,
+            `${g.name} — subtotal`,
+            '',
+            '',
+            g.subtotal.weightLbs,
+            '',
+            '',
+            '',
+            g.subtotal.value,
           ]),
         );
       }
-      // Subtotal inline, labelled, so a filter on the SKU column still shows it.
       out.push(
         csvRow([
-          g.sku,
-          `${g.name} — subtotal`,
-          '',
-          '',
-          g.subtotal.weightLbs,
+          st.storeName,
+          'STORE SUBTOTAL',
           '',
           '',
           '',
-          g.subtotal.value,
+          st.subtotal.weightLbs,
+          '',
+          '',
+          '',
+          st.subtotal.value,
         ]),
       );
     }
@@ -176,6 +222,7 @@ export function toCsv(report: AnyReport): string {
     out.push(
       csvRow([
         'TOTAL',
+        '',
         '',
         '',
         '',
@@ -305,19 +352,69 @@ export function toPdf(report: AnyReport): Promise<Buffer> {
     y = drawColumnHeads(y);
   };
 
+  /** A store's name across the width, opening its section. */
+  const storeHeading = (name: string, empty: boolean) => {
+    ensure(empty ? 30 : 46);
+    y += 2;
+    doc.font('Helvetica-Bold').fontSize(11);
+    doc.text(name, MARGIN, y, {
+      width: PAGE_WIDTH - MARGIN * 2,
+      lineBreak: false,
+      ellipsis: true,
+    });
+    y += 15;
+    doc
+      .moveTo(MARGIN, y - 3)
+      .lineTo(PAGE_WIDTH - MARGIN, y - 3)
+      .lineWidth(1)
+      .stroke();
+    doc.font('Helvetica').fontSize(8);
+  };
+
+  /** Said in words: a heading with nothing under it reads as a rendering fault. */
+  const nothingHere = (text: string) => {
+    doc.font('Helvetica-Oblique').fontSize(8);
+    doc.text(text, MARGIN, y);
+    doc.font('Helvetica').fontSize(8);
+    y += 16;
+  };
+
   if (isSummary(report)) {
-    for (const r of report.rows) {
-      ensure(14);
-      y = row(y, [
-        r.sku,
-        r.name,
-        r.weightLbs == null ? DASH : qty(r.weightLbs),
-        r.cases == null ? DASH : String(r.cases),
-        String(r.pieces),
-        r.avgWeightLbs == null ? DASH : qty(r.avgWeightLbs),
-        r.avgPricePerLb == null ? DASH : money(r.avgPricePerLb),
-        money(r.value),
-      ]);
+    for (const st of report.stores) {
+      storeHeading(st.storeName, st.rows.length === 0);
+      if (st.rows.length === 0) {
+        nothingHere('Nothing on hand.');
+        continue;
+      }
+      for (const r of st.rows) {
+        ensure(14);
+        y = row(y, [
+          r.sku,
+          r.name,
+          r.weightLbs == null ? DASH : qty(r.weightLbs),
+          r.cases == null ? DASH : String(r.cases),
+          String(r.pieces),
+          r.avgWeightLbs == null ? DASH : qty(r.avgWeightLbs),
+          r.avgPricePerLb == null ? DASH : money(r.avgPricePerLb),
+          money(r.value),
+        ]);
+      }
+      ensure(18);
+      y = row(
+        y,
+        [
+          st.storeName + ' subtotal',
+          '',
+          st.subtotal.weightLbs == null ? DASH : qty(st.subtotal.weightLbs),
+          String(st.subtotal.cases),
+          String(st.subtotal.pieces),
+          '',
+          '',
+          money(st.subtotal.value),
+        ],
+        true,
+      );
+      y += 8;
     }
     ensure(26);
     y += 4;
@@ -326,7 +423,7 @@ export function toPdf(report: AnyReport): Promise<Buffer> {
     y = row(
       y,
       [
-        'TOTAL',
+        'TOTAL - all stores',
         '',
         report.totals.weightLbs == null ? DASH : qty(report.totals.weightLbs),
         String(report.totals.cases),
@@ -340,46 +437,69 @@ export function toPdf(report: AnyReport): Promise<Buffer> {
   } else {
     const d = report as DetailReport;
     const soldReport = meta.kind === 'SOLD';
-    for (const g of d.groups) {
-      // Keep a product's heading with at least its first row, so a group never
-      // starts as a lone title at the bottom of a page.
-      ensure(40);
-      doc.font('Helvetica-Bold').fontSize(9);
-      doc.text(`${g.sku} — ${g.name}`, MARGIN, y, {
-        width: PAGE_WIDTH - MARGIN * 2,
-        lineBreak: false,
-        ellipsis: true,
-      });
-      y += 14;
+    for (const st of d.stores) {
+      storeHeading(st.storeName, st.groups.length === 0);
+      if (st.groups.length === 0) {
+        nothingHere(soldReport ? 'Nothing sold.' : 'Nothing on hand.');
+        continue;
+      }
+      for (const g of st.groups) {
+        // Keep a product's heading with at least its first row, so a group never
+        // starts as a lone title at the bottom of a page.
+        ensure(40);
+        doc.font('Helvetica-Bold').fontSize(9);
+        doc.text(g.sku + ' - ' + g.name, MARGIN, y, {
+          width: PAGE_WIDTH - MARGIN * 2,
+          lineBreak: false,
+          ellipsis: true,
+        });
+        y += 14;
 
-      for (const u of g.units) {
-        ensure(14);
-        y = row(y, [
-          u.serial,
-          u.caseSerial ?? '',
-          u.weightLbs == null ? DASH : qty(u.weightLbs),
-          u.locationName ?? '',
-          dateOnly(soldReport ? u.soldAt : u.receivedAt),
-          u.pricePerLb == null ? DASH : money(u.pricePerLb),
-          money(u.value),
-        ]);
+        for (const u of g.units) {
+          ensure(14);
+          y = row(y, [
+            u.serial,
+            u.caseSerial ?? '',
+            u.weightLbs == null ? DASH : qty(u.weightLbs),
+            u.locationName ?? '',
+            dateOnly(soldReport ? u.soldAt : u.receivedAt),
+            u.pricePerLb == null ? DASH : money(u.pricePerLb),
+            money(u.value),
+          ]);
+        }
+
+        ensure(16);
+        y = row(
+          y,
+          [
+            g.subtotal.pieces + ' piece(s)',
+            '',
+            g.subtotal.weightLbs == null ? DASH : qty(g.subtotal.weightLbs),
+            '',
+            '',
+            '',
+            money(g.subtotal.value),
+          ],
+          true,
+        );
+        y += 6;
       }
 
-      ensure(16);
+      ensure(18);
       y = row(
         y,
         [
-          `${g.subtotal.pieces} piece(s)`,
+          st.storeName + ' subtotal - ' + st.subtotal.pieces + ' piece(s)',
           '',
-          g.subtotal.weightLbs == null ? DASH : qty(g.subtotal.weightLbs),
+          st.subtotal.weightLbs == null ? DASH : qty(st.subtotal.weightLbs),
           '',
           '',
           '',
-          money(g.subtotal.value),
+          money(st.subtotal.value),
         ],
         true,
       );
-      y += 6;
+      y += 10;
     }
     ensure(26);
     doc.moveTo(MARGIN, y).lineTo(PAGE_WIDTH - MARGIN, y).stroke();
@@ -387,7 +507,7 @@ export function toPdf(report: AnyReport): Promise<Buffer> {
     y = row(
       y,
       [
-        `TOTAL — ${d.totals.pieces} piece(s)`,
+        'TOTAL - all stores, ' + d.totals.pieces + ' piece(s)',
         '',
         d.totals.weightLbs == null ? DASH : qty(d.totals.weightLbs),
         '',

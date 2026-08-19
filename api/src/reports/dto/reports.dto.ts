@@ -1,11 +1,28 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsInt,
   IsISO8601,
   IsOptional,
   IsPositive,
 } from 'class-validator';
+
+/**
+ * Query strings have no array type: one `storeIds` is a string, several is an array,
+ * and a comma-separated list is one string holding many. All three are normalised
+ * here so the rest of the code sees numbers.
+ */
+function toIdArray(value: unknown): number[] | undefined {
+  if (value == null || value === '') return undefined;
+  const raw = Array.isArray(value) ? value : [value];
+  const out = raw
+    .flatMap((v) => String(v).split(','))
+    .map((v) => Number(v.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return out.length ? [...new Set(out)] : undefined;
+}
 
 /**
  * Which report. Deliberately a closed list rather than a free-form "report name":
@@ -21,11 +38,23 @@ export type ReportFormat = (typeof REPORT_FORMATS)[number];
 
 export class ReportQuery {
   /**
-   * COMPANY_ADMIN may name a store, or omit it for every store. A store-scoped user's
-   * own store always wins — sending someone else's is not an error, it is ignored,
-   * because the scope comes from the token and not from the request.
+   * Which stores to cover. Omit for every store the caller can see.
+   *
+   * A store-scoped user's own store always wins — sending someone else's is not an
+   * error, it is ignored, because the scope comes from the token and not from the
+   * request.
+   *
+   * Accepts `storeIds=1&storeIds=3` or `storeIds=1,3`: a query string carrying one
+   * value arrives as a scalar, and a report that silently covered one store when two
+   * were asked for would be believed.
    */
-  @IsOptional() @Type(() => Number) @IsInt() @IsPositive() storeId?: number;
+  @IsOptional()
+  @Transform(({ value }) => toIdArray(value))
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  storeIds?: number[];
 
   /**
    * The primary filter in practice. The legacy reports were run per cooler — the
@@ -57,7 +86,12 @@ export interface ReportMeta {
   /** When it ran. The legacy calls this the Print Date. */
   generatedAt: string;
   companyName: string;
-  storeName: string | null;
+  /**
+   * The stores this report covers, named. Empty means every store — which is not
+   * the same as "no stores", and the header says so in words rather than printing
+   * an empty list.
+   */
+  storeNames: string[];
   locationName: string | null;
   from: string | null;
   to: string | null;
@@ -115,15 +149,36 @@ export interface ReportTotals {
   value: number;
 }
 
+/**
+ * A report is a list of STORES, each with its own rows and its own subtotal.
+ *
+ * Grouping happens here rather than in each renderer: the screen, the PDF and the
+ * CSV all need the same sections in the same order with the same subtotals, and
+ * three implementations of that is three chances to disagree.
+ */
+export interface SummaryStoreSection {
+  storeId: number;
+  storeName: string;
+  rows: SummaryRow[];
+  subtotal: ReportTotals;
+}
+
+export interface DetailStoreSection {
+  storeId: number;
+  storeName: string;
+  groups: DetailGroup[];
+  subtotal: ReportTotals;
+}
+
 export interface SummaryReport {
   meta: ReportMeta;
-  rows: SummaryRow[];
+  stores: SummaryStoreSection[];
   totals: ReportTotals;
 }
 
 export interface DetailReport {
   meta: ReportMeta;
-  groups: DetailGroup[];
+  stores: DetailStoreSection[];
   totals: ReportTotals;
 }
 
