@@ -53,7 +53,11 @@ function scopeLines(meta: ReportMeta): string[] {
   lines.push(
     `Stores: ${meta.storeNames.length ? meta.storeNames.join(', ') : 'All stores'}`,
   );
-  if (meta.locationName) lines.push(`Location: ${meta.locationName}`);
+  if (meta.locationNames.length)
+    lines.push(
+      `${meta.locationNames.length === 1 ? 'Location' : 'Locations'}: ` +
+        meta.locationNames.join(', '),
+    );
   if (meta.from && meta.to) lines.push(`Sold between ${meta.from} and ${meta.to}`);
   return lines;
 }
@@ -423,7 +427,7 @@ export function toPdf(report: AnyReport): Promise<Buffer> {
     y = row(
       y,
       [
-        'TOTAL - all stores',
+        report.stores.length === 1 ? 'TOTAL' : 'TOTAL - all stores',
         '',
         report.totals.weightLbs == null ? DASH : qty(report.totals.weightLbs),
         String(report.totals.cases),
@@ -507,7 +511,10 @@ export function toPdf(report: AnyReport): Promise<Buffer> {
     y = row(
       y,
       [
-        'TOTAL - all stores, ' + d.totals.pieces + ' piece(s)',
+        (d.stores.length === 1 ? 'TOTAL' : 'TOTAL - all stores') +
+          ', ' +
+          d.totals.pieces +
+          ' piece(s)',
         '',
         d.totals.weightLbs == null ? DASH : qty(d.totals.weightLbs),
         '',

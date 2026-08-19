@@ -233,8 +233,8 @@ export class ReportsService {
       eq(inventoryItems.status, status),
     ];
     if (storeIds.length) conds.push(inArray(inventoryItems.storeId, storeIds));
-    if (q.locationId != null)
-      conds.push(eq(inventoryItems.locationId, q.locationId));
+    if (q.locationIds?.length)
+      conds.push(inArray(inventoryItems.locationId, q.locationIds));
     if (q.productId != null)
       conds.push(eq(inventoryItems.productId, q.productId));
 
@@ -308,8 +308,8 @@ export class ReportsService {
   ): Promise<(SummaryRow & { storeId: number })[]> {
     const conds: SQL[] = [eq(inventoryStock.companyId, ctx.companyId)];
     if (storeIds.length) conds.push(inArray(inventoryStock.storeId, storeIds));
-    if (q.locationId != null)
-      conds.push(eq(inventoryStock.locationId, q.locationId));
+    if (q.locationIds?.length)
+      conds.push(inArray(inventoryStock.locationId, q.locationIds));
     if (q.productId != null)
       conds.push(eq(inventoryStock.productId, q.productId));
 
@@ -458,6 +458,51 @@ export class ReportsService {
   }
 
   /**
+   * The chosen locations, named, for the header.
+   *
+   * Names repeat across stores — every store has a "Backroom" — so a name that could
+   * mean several stores' locations is qualified with its store. Without that, a header
+   * reading "Locations: Backroom, Backroom" tells the reader nothing about which two.
+   */
+  private async locationNames(
+    tx: Tx,
+    ctx: DataContext,
+    locationIds: number[],
+  ): Promise<string[]> {
+    if (!locationIds.length) return [];
+    const rows = await tx
+      .select({
+        id: storeLocations.id,
+        name: storeLocations.name,
+        storeName: stores.name,
+      })
+      .from(storeLocations)
+      .innerJoin(stores, eq(stores.id, storeLocations.storeId))
+      .where(
+        and(
+          eq(storeLocations.companyId, ctx.companyId),
+          inArray(storeLocations.id, locationIds),
+        ),
+      )
+      .orderBy(asc(stores.name), asc(storeLocations.name));
+
+    if (rows.length !== locationIds.length) {
+      const found = new Set(rows.map((r) => r.id));
+      const missing = locationIds.filter((id) => !found.has(id));
+      throw new BadRequestException(`No such location: ${missing.join(', ')}.`);
+    }
+
+    const repeated = new Set(
+      rows
+        .map((r) => r.name)
+        .filter((n, i, all) => all.indexOf(n) !== i),
+    );
+    return rows.map((r) =>
+      repeated.has(r.name) ? `${r.storeName} ${r.name}` : r.name,
+    );
+  }
+
+  /**
    * Who to say the email is from.
    *
    * DataContext carries ids, not names, so this is a lookup rather than a guess.
@@ -490,21 +535,7 @@ export class ReportsService {
       .where(eq(companies.id, ctx.companyId))
       .limit(1);
 
-    let locationName: string | null = null;
-    if (q.locationId != null) {
-      const [l] = await tx
-        .select({ name: storeLocations.name })
-        .from(storeLocations)
-        .where(
-          and(
-            eq(storeLocations.companyId, ctx.companyId),
-            eq(storeLocations.id, q.locationId),
-          ),
-        )
-        .limit(1);
-      if (!l) throw new BadRequestException('That location does not exist.');
-      locationName = l.name;
-    }
+    const locationNames = await this.locationNames(tx, ctx, q.locationIds ?? []);
 
     return {
       kind,
@@ -515,7 +546,7 @@ export class ReportsService {
       // none was chosen would put a paragraph in the header to say "all of them" —
       // and each store has its own heading in the body regardless.
       storeNames: storeIds.length ? known.map(([, name]) => name) : [],
-      locationName,
+      locationNames,
       from: q.from ?? null,
       to: q.to ?? null,
     };
@@ -567,8 +598,11 @@ export class ReportsService {
           : 'All stores'
       }`,
     ];
-    if (report.meta.locationName)
-      scopeLines.push(`Location: ${report.meta.locationName}`);
+    if (report.meta.locationNames.length)
+      scopeLines.push(
+        `${report.meta.locationNames.length === 1 ? 'Location' : 'Locations'}: ` +
+          report.meta.locationNames.join(', '),
+      );
     if (report.meta.from && report.meta.to)
       scopeLines.push(`Sold between ${report.meta.from} and ${report.meta.to}`);
 

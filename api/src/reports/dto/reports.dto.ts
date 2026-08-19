@@ -57,10 +57,24 @@ export class ReportQuery {
   storeIds?: number[];
 
   /**
-   * The primary filter in practice. The legacy reports were run per cooler — the
-   * samples are titled after one — so this is the field people actually reach for.
+   * Which locations to cover, across whichever stores are in scope. Omit for all of
+   * them.
+   *
+   * The primary filter in practice — the legacy reports were run per cooler and the
+   * samples are titled after one — but several at once is the common ask, because a
+   * cooler is rarely the whole question ("both coolers, not the sales floor").
+   *
+   * Same three shapes as `storeIds`. Locations outside the company are refused, not
+   * ignored, for the same reason: a filter that quietly matched nothing would read
+   * as an empty cooler.
    */
-  @IsOptional() @Type(() => Number) @IsInt() @IsPositive() locationId?: number;
+  @IsOptional()
+  @Transform(({ value }) => toIdArray(value))
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  locationIds?: number[];
 
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() productId?: number;
 
@@ -92,7 +106,8 @@ export interface ReportMeta {
    * an empty list.
    */
   storeNames: string[];
-  locationName: string | null;
+  /** The locations covered, named. Empty means all of them, as with storeNames. */
+  locationNames: string[];
   from: string | null;
   to: string | null;
 }

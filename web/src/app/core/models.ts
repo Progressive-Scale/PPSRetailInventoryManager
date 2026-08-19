@@ -1168,7 +1168,8 @@ export interface ReportMeta {
   companyName: string;
   /** Named only when the scope was narrowed; empty means every store. */
   storeNames: string[];
-  locationName: string | null;
+  /** Likewise: empty means every location, not none. */
+  locationNames: string[];
   from: string | null;
   to: string | null;
 }
@@ -1243,7 +1244,8 @@ export interface DetailReport {
 export interface ReportFilters {
   /** Empty or omitted means every store the caller can see. */
   storeIds?: number[];
-  locationId?: number;
+  /** Empty or omitted means every location in those stores. */
+  locationIds?: number[];
   productId?: number;
   from?: string;
   to?: string;

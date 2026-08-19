@@ -15,6 +15,10 @@ import {
   SummaryReport,
   SummaryStoreSection,
 } from '../../core/models';
+import {
+  CheckboxOption,
+  CheckboxSelectComponent,
+} from '../../shared/checkbox-select';
 
 type AnyReport = SummaryReport | DetailReport;
 
@@ -36,7 +40,7 @@ const KINDS: { kind: ReportKind; label: string }[] = [
  */
 @Component({
   selector: 'app-reports',
-  imports: [DatePipe, FormsModule],
+  imports: [CheckboxSelectComponent, DatePipe, FormsModule],
   template: `
     <main class="container">
       <section class="card">
@@ -53,44 +57,30 @@ const KINDS: { kind: ReportKind; label: string }[] = [
           </label>
 
           @if (isCompanyAdmin) {
-            <!-- A native multiple select: ctrl/cmd-click picks several, and nothing
-                 selected means every store, which is the common case. -->
-            <label class="f">
-              Stores <small class="hint">(none = all)</small>
-              <select
-                name="rp-stores"
-                multiple
-                size="4"
-                [ngModel]="storeIds()"
-                (ngModelChange)="setStores($event)"
-              >
-                @for (s of stores(); track s.id) {
-                  <option [ngValue]="s.id">{{ s.name }}</option>
-                }
-              </select>
-            </label>
+            <div class="f">
+              <span>Stores</span>
+              <app-checkbox-select
+                label="Stores"
+                allLabel="All stores"
+                noun="stores"
+                [options]="storeOptions()"
+                [selected]="storeIds()"
+                (selectedChange)="setStores($event)"
+              />
+            </div>
           }
 
-          <!-- Locations belong to one store, so this only appears when the report is
-               aimed at exactly one: with several picked - or with none, meaning all -
-               the list mixes same-named locations from different stores ("Backroom"
-               five times) and picking one would mean nothing. A store user or manager
-               never picks a store, so for them it is always their own. -->
-          @if (oneStore()) {
-          <label class="f">
-            Location
-            <select
-              name="rp-location"
-              [ngModel]="locationId()"
-              (ngModelChange)="locationId.set($event)"
-            >
-              <option [ngValue]="null">All locations</option>
-              @for (l of locations(); track l.id) {
-                <option [ngValue]="l.id">{{ l.name }}</option>
-              }
-            </select>
-          </label>
-          }
+          <div class="f">
+            <span>Locations</span>
+            <app-checkbox-select
+              label="Locations"
+              allLabel="All locations"
+              noun="locations"
+              [options]="locationOptions()"
+              [selected]="locationIds()"
+              (selectedChange)="setLocations($event)"
+            />
+          </div>
 
           <!-- Only the sold report is bounded by dates, so the inputs appear with it
                rather than sitting empty and unexplained on the other two. -->
@@ -156,8 +146,11 @@ const KINDS: { kind: ReportKind; label: string }[] = [
                 Stores:
                 {{ r.meta.storeNames.length ? r.meta.storeNames.join(', ') : 'All stores' }}
               </span>
-              @if (r.meta.locationName) {
-                <span>Location: {{ r.meta.locationName }}</span>
+              @if (r.meta.locationNames.length) {
+                <span>
+                  {{ r.meta.locationNames.length === 1 ? 'Location' : 'Locations' }}:
+                  {{ r.meta.locationNames.join(', ') }}
+                </span>
               }
               @if (r.meta.from && r.meta.to) {
                 <span>Sold {{ r.meta.from }} → {{ r.meta.to }}</span>
@@ -223,7 +216,7 @@ const KINDS: { kind: ReportKind; label: string }[] = [
               </div>
             }
             <div class="grand">
-              <span>Total — all stores</span>
+              <span>{{ s.stores.length === 1 ? 'Total' : 'Total — all stores' }}</span>
               <span>{{ num(s.totals.weightLbs) }} lb</span>
               <span>{{ s.totals.pieces }} piece(s)</span>
               <span>{{ money(s.totals.value) }}</span>
@@ -295,7 +288,7 @@ const KINDS: { kind: ReportKind; label: string }[] = [
               </div>
             }
             <div class="grand">
-              <span>Total — all stores</span>
+              <span>{{ d.stores.length === 1 ? 'Total' : 'Total — all stores' }}</span>
               <span>{{ d.totals.pieces }} piece(s)</span>
               <span>{{ num(d.totals.weightLbs) }} lb</span>
               <span>{{ money(d.totals.value) }}</span>
@@ -593,17 +586,45 @@ export class ReportsComponent implements OnInit {
 
   readonly kind = signal<ReportKind>('SUMMARY');
   readonly storeIds = signal<number[]>([]);
-
-  /** Whether the report covers a single store, which is what gates the Location filter. */
-  readonly oneStore = computed(
-    () => this.storeIds().length === 1 || !this.isCompanyAdmin,
-  );
-  readonly locationId = signal<number | null>(null);
+  readonly locationIds = signal<number[]>([]);
   fromDate = '';
   toDate = '';
 
   readonly stores = signal<Store[]>([]);
+  /** Every location the caller can see, loaded once; the dropdown narrows it. */
   readonly locations = signal<StoreLocation[]>([]);
+
+  readonly storeOptions = computed<CheckboxOption[]>(() =>
+    this.stores().map((s) => ({ id: s.id, label: s.name })),
+  );
+
+  /**
+   * The locations offered, narrowed to whichever stores are in scope.
+   *
+   * Names repeat across stores - every store has a Backroom - so once more than one
+   * store is in play each location is filed under its store's name. Without that the
+   * list is five identical "Backroom" rows and ticking one is guesswork.
+   */
+  readonly locationOptions = computed<CheckboxOption[]>(() => {
+    const picked = new Set(this.storeIds());
+    const inScope = picked.size
+      ? this.locations().filter((l) => picked.has(l.storeId))
+      : this.locations();
+    const storeName = new Map(this.stores().map((s) => [s.id, s.name]));
+    const multi = new Set(inScope.map((l) => l.storeId)).size > 1;
+    return [...inScope]
+      .sort(
+        (a, b) =>
+          (storeName.get(a.storeId) ?? '').localeCompare(
+            storeName.get(b.storeId) ?? '',
+          ) || a.name.localeCompare(b.name),
+      )
+      .map((l) => ({
+        id: l.id,
+        label: l.name,
+        group: multi ? (storeName.get(l.storeId) ?? 'Store') : undefined,
+      }));
+  });
 
   readonly report = signal<AnyReport | null>(null);
   readonly loading = signal(false);
@@ -646,7 +667,7 @@ export class ReportsComponent implements OnInit {
   private filters(): ReportFilters {
     const f: ReportFilters = {};
     if (this.storeIds().length) f.storeIds = this.storeIds();
-    if (this.locationId() != null) f.locationId = this.locationId()!;
+    if (this.locationIds().length) f.locationIds = this.locationIds();
     if (this.kind() === 'SOLD') {
       if (this.fromDate) f.from = this.fromDate;
       if (this.toDate) f.to = this.toDate;
@@ -663,21 +684,25 @@ export class ReportsComponent implements OnInit {
     this.error.set(null);
   }
 
-  setStores(ids: number[] | null): void {
-    this.storeIds.set(ids ?? []);
-    // Locations belong to a store, so a location chosen under a different selection
-    // may no longer exist in it. Cleared rather than silently filtering nothing.
-    this.locationId.set(null);
+  setStores(ids: number[]): void {
+    this.storeIds.set(ids);
+    // A location ticked under an earlier store selection may no longer be in scope.
+    // Only those are dropped - clearing the lot would punish someone for adding a
+    // second store to a selection they had already built.
+    const live = new Set(this.locationOptions().map((o) => o.id));
+    this.locationIds.update((chosen) => chosen.filter((id) => live.has(id)));
     this.report.set(null);
-    this.loadLocations();
+  }
+
+  setLocations(ids: number[]): void {
+    this.locationIds.set(ids);
+    this.report.set(null);
   }
 
   private loadLocations(): void {
-    if (!this.oneStore()) {
-      this.locations.set([]);
-      return;
-    }
-    this.api.listLocations(this.storeIds()[0]).subscribe({
+    // Every location at once, not per store: the dropdown filters them locally, so
+    // changing the store selection does not cost a round trip.
+    this.api.listLocations().subscribe({
       next: (l) => this.locations.set(l.filter((x) => x.isActive)),
       error: () => this.locations.set([]),
     });
@@ -685,13 +710,12 @@ export class ReportsComponent implements OnInit {
 
   clear(): void {
     this.storeIds.set([]);
-    this.locationId.set(null);
+    this.locationIds.set([]);
     this.fromDate = '';
     this.toDate = '';
     this.report.set(null);
     this.error.set(null);
     this.notice.set(null);
-    this.loadLocations();
   }
 
   run(): void {

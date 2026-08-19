@@ -740,7 +740,7 @@ export class ApiService {
     // One value per id rather than a comma list: both are accepted server-side, and
     // repeated params are what a reader of the network tab expects.
     for (const id of f.storeIds ?? []) p = p.append('storeIds', String(id));
-    if (f.locationId != null) p = p.set('locationId', String(f.locationId));
+    for (const id of f.locationIds ?? []) p = p.append('locationIds', String(id));
     if (f.productId != null) p = p.set('productId', String(f.productId));
     if (f.from) p = p.set('from', f.from);
     if (f.to) p = p.set('to', f.to);
