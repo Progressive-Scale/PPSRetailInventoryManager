@@ -1,5 +1,6 @@
 import {
   InvitationEmailData,
+  ReportEmailData,
   PasswordResetEmailData,
   PRODUCT_NAME,
 } from './mail.types';
@@ -164,4 +165,57 @@ function fmtDateTime(d: Date): string {
     minute: '2-digit',
     timeZoneName: 'short',
   });
+}
+
+
+// ---- report ---------------------------------------------------------------
+
+export function reportSubject(d: ReportEmailData): string {
+  return `${d.reportTitle} — ${d.companyName}`;
+}
+
+export function reportHtml(d: ReportEmailData, filenames: string[]): string {
+  const scope = d.scopeLines
+    .map(
+      (l) =>
+        `<div style="font-size:14px;color:#6b7280;">${escapeHtml(l)}</div>`,
+    )
+    .join('');
+  const files = filenames
+    .map((f) => `<li style="font-size:14px;">${escapeHtml(f)}</li>`)
+    .join('');
+  const note = d.message
+    ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(
+        d.message,
+      )}</p>`
+    : '';
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f5f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+    <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e3e6ea;border-radius:12px;padding:28px;">
+      <h1 style="margin:0 0 12px;font-size:20px;color:#2563eb;">${escapeHtml(
+        d.reportTitle,
+      )}</h1>
+      ${scope}
+      <p style="margin:16px 0 8px;font-size:15px;line-height:1.5;">
+        ${escapeHtml(d.senderName)} sent you this report from ${PRODUCT_NAME}.
+      </p>
+      <ul style="margin:0 0 8px;padding-left:20px;">${files}</ul>
+      ${note}
+    </div>
+  </body>
+</html>`;
+}
+
+export function reportText(d: ReportEmailData, filenames: string[]): string {
+  return [
+    d.reportTitle,
+    ...d.scopeLines,
+    '',
+    `${d.senderName} sent you this report from ${PRODUCT_NAME}.`,
+    '',
+    'Attached:',
+    ...filenames.map((f) => `  - ${f}`),
+    ...(d.message ? ['', d.message] : []),
+  ].join('\n');
 }

@@ -1154,3 +1154,113 @@ export interface UpdateCompany {
   /** Moving a tenant between scanner channels. Audited on the tenant's own trail. */
   releaseChannelId?: number;
 }
+
+
+// ---- reports --------------------------------------------------------------
+
+export type ReportKind = 'SUMMARY' | 'DETAIL' | 'SOLD';
+
+export interface ReportMeta {
+  kind: ReportKind;
+  title: string;
+  /** When it ran — the legacy calls this the Print Date. */
+  generatedAt: string;
+  companyName: string;
+  /** Named only when the scope was narrowed; empty means every store. */
+  storeNames: string[];
+  /** Likewise: empty means every location, not none. */
+  locationNames: string[];
+  from: string | null;
+  to: string | null;
+}
+
+export interface SummaryRow {
+  productId: number;
+  sku: string;
+  name: string;
+  trackingType: 'SERIALIZED' | 'QUANTITY';
+  /** Null, not 0, when nothing was weighed — shown as a dash. */
+  weightLbs: number | null;
+  cases: number | null;
+  pieces: number;
+  avgWeightLbs: number | null;
+  avgPricePerLb: number | null;
+  value: number;
+}
+
+export interface ReportDetailUnit {
+  serial: string;
+  caseSerial: string | null;
+  weightLbs: number | null;
+  locationName: string | null;
+  receivedAt: string | null;
+  soldAt: string | null;
+  value: number;
+  pricePerLb: number | null;
+}
+
+export interface ReportDetailGroup {
+  productId: number;
+  sku: string;
+  name: string;
+  units: ReportDetailUnit[];
+  subtotal: { weightLbs: number | null; pieces: number; value: number };
+}
+
+export interface ReportTotals {
+  weightLbs: number | null;
+  cases: number;
+  pieces: number;
+  value: number;
+}
+
+/** A report is a list of stores, each with its own rows and its own subtotal. */
+export interface SummaryStoreSection {
+  storeId: number;
+  storeName: string;
+  rows: SummaryRow[];
+  subtotal: ReportTotals;
+}
+
+export interface DetailStoreSection {
+  storeId: number;
+  storeName: string;
+  groups: ReportDetailGroup[];
+  subtotal: ReportTotals;
+}
+
+export interface SummaryReport {
+  meta: ReportMeta;
+  stores: SummaryStoreSection[];
+  totals: ReportTotals;
+}
+
+export interface DetailReport {
+  meta: ReportMeta;
+  stores: DetailStoreSection[];
+  totals: ReportTotals;
+}
+
+export interface ReportFilters {
+  /** Empty or omitted means every store the caller can see. */
+  storeIds?: number[];
+  /** Empty or omitted means every location in those stores. */
+  locationIds?: number[];
+  productId?: number;
+  from?: string;
+  to?: string;
+}
+
+export interface EmailReportRequest extends ReportFilters {
+  kind: ReportKind;
+  /** Named recipients because `to` is the sold range's end date. */
+  recipients: string[];
+  formats?: ('pdf' | 'csv')[];
+  message?: string;
+}
+
+export interface EmailReportResult {
+  ok: boolean;
+  error?: string;
+  attached: string[];
+}
