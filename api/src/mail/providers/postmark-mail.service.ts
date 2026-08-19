@@ -2,9 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from '../mail.service';
 import {
   InvitationEmailData,
+  MailAttachment,
   MailResult,
   MAX_ERROR_LEN,
   PasswordResetEmailData,
+  ReportEmailData,
 } from '../mail.types';
 import {
   invitationHtml,
@@ -13,6 +15,9 @@ import {
   passwordResetHtml,
   passwordResetSubject,
   passwordResetText,
+  reportHtml,
+  reportSubject,
+  reportText,
 } from '../mail.templates';
 
 export interface PostmarkMailOptions {
@@ -81,10 +86,30 @@ export class PostmarkMailService extends MailService {
    * One transport for every message type, so the failure mapping below stays the
    * only copy of it. `label` appears in logs only.
    */
+  async sendReportEmail(
+    to: string[],
+    data: ReportEmailData,
+    attachments: MailAttachment[],
+  ): Promise<MailResult> {
+    const names = attachments.map((a) => a.filename);
+    return this.send(
+      'report',
+      // Postmark takes a comma-separated list, capped at 50 recipients.
+      to.join(','),
+      {
+        subject: reportSubject(data),
+        html: reportHtml(data, names),
+        text: reportText(data, names),
+      },
+      attachments,
+    );
+  }
+
   private async send(
     label: string,
     to: string,
     msg: { subject: string; html: string; text: string },
+    attachments: MailAttachment[] = [],
   ): Promise<MailResult> {
     try {
       const res = await fetch(this.opts.endpoint, {
@@ -101,6 +126,15 @@ export class PostmarkMailService extends MailService {
           HtmlBody: msg.html,
           TextBody: msg.text,
           MessageStream: this.opts.messageStream,
+          ...(attachments.length
+            ? {
+                Attachments: attachments.map((a) => ({
+                  Name: a.filename,
+                  Content: a.content.toString('base64'),
+                  ContentType: a.contentType,
+                })),
+              }
+            : {}),
         }),
       });
 

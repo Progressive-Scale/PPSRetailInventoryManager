@@ -512,6 +512,8 @@ export class App implements OnInit {
     alerts:
       'M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z',
     // Shopping cart: a request for more stock.
+    reports:
+      'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z',
     reorders:
       'M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
   };
@@ -529,6 +531,7 @@ export class App implements OnInit {
           { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
           { path: '/products', label: 'Products', icon: I.products },
           { path: '/reorders', label: 'Reorders', icon: I.reorders },
+          { path: '/reports', label: 'Reports', icon: I.reports },
           { path: '/manage', label: 'Manage', icon: I.manage },
           { path: '/notifications', label: 'Notifications', icon: I.alerts },
           { path: '/settings', label: 'Settings', icon: I.settings },
@@ -539,6 +542,8 @@ export class App implements OnInit {
           { path: '/cycle-counts', label: 'Cycle Counts', icon: I.cycle },
           { path: '/products', label: 'Products', icon: I.products },
           { path: '/reorders', label: 'Reorders', icon: I.reorders },
+          // Reports reach every store a manager can see, which is only their own.
+          { path: '/reports', label: 'Reports', icon: I.reports },
         ];
       default:
         return [

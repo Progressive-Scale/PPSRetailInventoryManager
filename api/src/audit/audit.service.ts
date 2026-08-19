@@ -22,7 +22,11 @@ export type AuditEntityType =
   | 'CYCLE_COUNT'
   | 'INVITATION'
   | 'USER'
-  | 'NOTIFICATION_SETTINGS';
+  | 'NOTIFICATION_SETTINGS'
+  // A report that was emailed. There is no report ROW to point at — a report is a
+  // query, not a record — so the entityId is the report kind. What matters in the
+  // trail is that company data left the building, and to whom.
+  | 'REPORT';
 
 /**
  * What happened to it. Also open: add a verb here and emit it, no migration.
@@ -47,7 +51,10 @@ export type AuditAction =
   | 'OPENED'
   | 'SUBMITTED'
   | 'CLOSED'
-  | 'REJECTED';
+  | 'REJECTED'
+  // Sent out of the system as an attachment. Worth its own verb: this is the one
+  // action here that puts company data somewhere nobody can revoke it from.
+  | 'EMAILED';
 
 export type AuditSource = 'WEB' | 'SCANNER' | 'SYNC' | 'JOB';
 

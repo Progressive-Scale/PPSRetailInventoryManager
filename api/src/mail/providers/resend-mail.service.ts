@@ -2,9 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from '../mail.service';
 import {
   InvitationEmailData,
+  MailAttachment,
   MailResult,
   MAX_ERROR_LEN,
   PasswordResetEmailData,
+  ReportEmailData,
 } from '../mail.types';
 import {
   invitationHtml,
@@ -13,6 +15,9 @@ import {
   passwordResetHtml,
   passwordResetSubject,
   passwordResetText,
+  reportHtml,
+  reportSubject,
+  reportText,
 } from '../mail.templates';
 
 export interface ResendMailOptions {
@@ -67,10 +72,31 @@ export class ResendMailService extends MailService {
    * One transport for every message type, so the sandbox detection below stays the
    * only copy of it. `label` appears in logs only.
    */
+  async sendReportEmail(
+    to: string[],
+    data: ReportEmailData,
+    attachments: MailAttachment[],
+  ): Promise<MailResult> {
+    const names = attachments.map((a) => a.filename);
+    return this.send(
+      'report',
+      // Joined here and split again below: `send` takes one string for the other
+      // two email kinds, and Resend wants an array either way.
+      to.join(','),
+      {
+        subject: reportSubject(data),
+        html: reportHtml(data, names),
+        text: reportText(data, names),
+      },
+      attachments,
+    );
+  }
+
   private async send(
     label: string,
     to: string,
     msg: { subject: string; html: string; text: string },
+    attachments: MailAttachment[] = [],
   ): Promise<MailResult> {
     try {
       const res = await fetch(this.opts.endpoint, {
@@ -81,10 +107,18 @@ export class ResendMailService extends MailService {
         },
         body: JSON.stringify({
           from: this.opts.from,
-          to: [to],
+          to: to.split(',').map((t) => t.trim()).filter(Boolean),
           subject: msg.subject,
           html: msg.html,
           text: msg.text,
+          ...(attachments.length
+            ? {
+                attachments: attachments.map((a) => ({
+                  filename: a.filename,
+                  content: a.content.toString('base64'),
+                })),
+              }
+            : {}),
         }),
       });
       if (res.ok) return { ok: true };

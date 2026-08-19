@@ -1,7 +1,9 @@
 import {
   InvitationEmailData,
+  MailAttachment,
   MailResult,
   PasswordResetEmailData,
+  ReportEmailData,
 } from './mail.types';
 
 /**
@@ -22,12 +24,32 @@ export abstract class MailService {
     to: string,
     data: PasswordResetEmailData,
   ): Promise<MailResult>;
+
+  /**
+   * A report, as attachments.
+   *
+   * Takes a LIST of recipients: sending one report to a manager and an accountant
+   * is the ordinary case, and looping per address would deliver several copies of
+   * the same 200 KB file and report several independent successes and failures for
+   * what the user did once.
+   *
+   * A provider that cannot carry attachments must FAIL, not deliver the covering
+   * note alone — an email that says "your report is attached" with nothing attached
+   * is worse than an error.
+   */
+  abstract sendReportEmail(
+    to: string[],
+    data: ReportEmailData,
+    attachments: MailAttachment[],
+  ): Promise<MailResult>;
 }
 
 // Re-exported so existing importers of '../mail/mail.service' keep working.
 export {
   InvitationEmailData,
+  MailAttachment,
   MailResult,
   PasswordResetEmailData,
+  ReportEmailData,
   PRODUCT_NAME,
 } from './mail.types';

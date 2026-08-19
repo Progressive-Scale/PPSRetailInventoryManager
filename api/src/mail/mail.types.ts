@@ -19,6 +19,31 @@ export interface PasswordResetEmailData {
   ttlMinutes: number;
 }
 
+/**
+ * A file to travel with an email.
+ *
+ * `content` is the raw bytes; each provider encodes them the way its API wants
+ * (base64 for both of ours). Kept as a Buffer here so nothing double-encodes.
+ */
+export interface MailAttachment {
+  filename: string;
+  contentType: string;
+  content: Buffer;
+}
+
+/** Everything the report email needs to render. */
+export interface ReportEmailData {
+  /** e.g. "Inventory Summary With Value". */
+  reportTitle: string;
+  companyName: string;
+  /** Store / location / date-range lines, already worded by the report itself. */
+  scopeLines: string[];
+  /** Who pressed send, so a surprised recipient knows who to ask. */
+  senderName: string;
+  /** Optional note typed by the sender. */
+  message?: string;
+}
+
 /** Outcome of a send attempt. Never throws — callers record the result. */
 export interface MailResult {
   ok: boolean;

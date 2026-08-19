@@ -2,14 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MailService } from '../mail.service';
 import {
   InvitationEmailData,
+  MailAttachment,
   MailResult,
   PasswordResetEmailData,
+  ReportEmailData,
 } from '../mail.types';
 import {
   invitationSubject,
   invitationText,
   passwordResetSubject,
   passwordResetText,
+  reportSubject,
+  reportText,
 } from '../mail.templates';
 
 /**
@@ -40,6 +44,30 @@ export class ConsoleMailService extends MailService {
       to,
       passwordResetSubject(data),
       passwordResetText(data),
+    );
+  }
+
+  async sendReportEmail(
+    to: string[],
+    data: ReportEmailData,
+    attachments: MailAttachment[],
+  ): Promise<MailResult> {
+    const names = attachments.map((a) => a.filename);
+    // The attachments are NAMED and SIZED in the log rather than passed over in
+    // silence. Console mode is where this feature gets developed, and "did it
+    // actually attach anything?" is the only question that matters here.
+    return this.log(
+      'report',
+      to.join(', '),
+      reportSubject(data),
+      [
+        reportText(data, names),
+        '',
+        'Attachments:',
+        ...attachments.map(
+          (a) => `  ${a.filename}  ${a.content.length} bytes  ${a.contentType}`,
+        ),
+      ].join('\n'),
     );
   }
 

@@ -58,6 +58,13 @@ export const routes: Routes = [
   // Old Review route now lives as a sub-tab of Products.
   { path: 'needs-review', redirectTo: 'products', pathMatch: 'full' },
   {
+    // Everyone except a store user. The API refuses them too — this only keeps a
+    // store user from landing on a page that would immediately 403.
+    path: 'reports',
+    canActivate: [authGuard, roleGuard(['COMPANY_ADMIN', 'STORE_MANAGER'])],
+    loadComponent: () => import('./pages/reports/reports').then((m) => m.ReportsComponent),
+  },
+  {
     path: 'manage',
     canActivate: [authGuard, roleGuard(['COMPANY_ADMIN'])],
     loadComponent: () => import('./pages/manage/manage').then((m) => m.ManageComponent),

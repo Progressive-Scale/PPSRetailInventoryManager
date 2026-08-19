@@ -1,4 +1,4 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
@@ -69,6 +69,12 @@ import {
   UpdateStore,
   UpdateUser,
   User,
+  ReportKind,
+  ReportFilters,
+  SummaryReport,
+  DetailReport,
+  EmailReportRequest,
+  EmailReportResult,
 } from './models';
 
 /**
@@ -724,5 +730,59 @@ export class ApiService {
 
   fleetVersions(): Observable<FleetResponse> {
     return this.http.get<FleetResponse>('/api/admin/device-versions');
+  }
+
+  // ---- reports ----
+
+  /** Query string shared by every report call, so the screen and the file agree. */
+  private reportParams(f: ReportFilters): HttpParams {
+    let p = new HttpParams();
+    if (f.storeId != null) p = p.set('storeId', String(f.storeId));
+    if (f.locationId != null) p = p.set('locationId', String(f.locationId));
+    if (f.productId != null) p = p.set('productId', String(f.productId));
+    if (f.from) p = p.set('from', f.from);
+    if (f.to) p = p.set('to', f.to);
+    return p;
+  }
+
+  private reportPath(kind: ReportKind): string {
+    if (kind === 'SUMMARY') return '/api/reports/inventory-summary';
+    if (kind === 'DETAIL') return '/api/reports/inventory-detail';
+    return '/api/reports/items-sold';
+  }
+
+  inventorySummaryReport(f: ReportFilters): Observable<SummaryReport> {
+    return this.http.get<SummaryReport>(this.reportPath('SUMMARY'), {
+      params: this.reportParams(f),
+    });
+  }
+
+  inventoryDetailReport(f: ReportFilters): Observable<DetailReport> {
+    return this.http.get<DetailReport>(this.reportPath('DETAIL'), {
+      params: this.reportParams(f),
+    });
+  }
+
+  itemsSoldReport(f: ReportFilters): Observable<DetailReport> {
+    return this.http.get<DetailReport>(this.reportPath('SOLD'), {
+      params: this.reportParams(f),
+    });
+  }
+
+  /** The bytes, so the caller can save them under the server's chosen name. */
+  downloadReport(
+    kind: ReportKind,
+    f: ReportFilters,
+    format: 'pdf' | 'csv',
+  ): Observable<HttpResponse<Blob>> {
+    return this.http.get(this.reportPath(kind), {
+      params: this.reportParams(f).set('format', format),
+      responseType: 'blob',
+      observe: 'response',
+    });
+  }
+
+  emailReport(dto: EmailReportRequest): Observable<EmailReportResult> {
+    return this.http.post<EmailReportResult>('/api/reports/email', dto);
   }
 }
